@@ -5,6 +5,21 @@
 indicator("[UAlgo] XAUUSD Heatmap v6", shorttitle="[UAlgo] Heatmap", overlay = true, max_boxes_count = 500, max_labels_count = 500)
 
 // ==========================================
+// Custom Functions (Fallbacks for compatibility)
+// ==========================================
+// Custom argmax function since array.argmax might not be available in all v6 environments
+f_array_argmax(float[] arr) =>
+    int best_idx = 0
+    float max_val = -1.0e30 // Start with a very small number
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            float val = array.get(arr, i)
+            if val > max_val
+                max_val := val
+                best_idx := i
+    best_idx
+
+// ==========================================
 // Inputs
 // ==========================================
 grp_zones = "Consolidation Zones"
@@ -51,9 +66,10 @@ calc_poc(int len) =>
         for i = 0 to len - 1
             float p = close[i]
             int idx = math.floor((p - l) / s)
+            // Manual clamp for compatibility
             idx := math.max(0, math.min(b - 1, idx))
             array.set(v_array, idx, array.get(v_array, idx) + volume[i])
-        int p_idx = array.argmax(v_array)
+        int p_idx = f_array_argmax(v_array)
         poc_val := l + (p_idx + 0.5) * s
     poc_val
 
@@ -92,6 +108,7 @@ if barstate.isconfirmed
                         float p = close[offset]
                         float v = volume[offset]
                         int b_idx = math.floor((p - z_lo) / bin_size)
+                        // Manual clamp for compatibility
                         b_idx := math.max(0, math.min(heatmap_bins - 1, b_idx))
                         array.set(zone_vols, b_idx, array.get(zone_vols, b_idx) + v)
 
