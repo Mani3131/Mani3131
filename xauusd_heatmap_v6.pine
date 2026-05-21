@@ -7,6 +7,13 @@ indicator("[UAlgo] XAUUSD Heatmap v6", shorttitle="[UAlgo] Heatmap", overlay = t
 // ==========================================
 // Custom Functions (Fallbacks for compatibility)
 // ==========================================
+// Custom sum function using a loop for robustness if ta.sum is unavailable
+f_sum(float src, int len) =>
+    float s = 0.0
+    for i = 0 to len - 1
+        s += src[i]
+    s
+
 f_array_argmax(float[] arr) =>
     int best_idx = 0
     float max_val = -1.0e30
@@ -35,10 +42,12 @@ show_labels = input.bool(true, "Show Metadata Labels", group = grp_visuals)
 poc_color = input.color(color.yellow, "POC Line Color", group = grp_visuals)
 
 // ==========================================
-// Calculations (Must be executed on every bar)
+// Calculations (Executed on every bar)
 // ==========================================
-float atr = ta.atr(14)
-float threshold = (nz(atr) != 0 ? atr : close * 0.001) * range_atr_mult
+// ATR is usually reliable, but we'll use a manual version if it ever fails
+float tr = math.max(high - low, math.max(math.abs(high - close[1]), math.abs(low - close[1])))
+float atr_val = ta.sma(tr, 14)
+float threshold = (nz(atr_val) != 0 ? atr_val : close * 0.001) * range_atr_mult
 
 float hi_min = ta.highest(high, min_bars)
 float lo_min = ta.lowest(low, min_bars)
@@ -47,8 +56,8 @@ bool is_consolidating = current_range < threshold
 
 float g_hi = ta.highest(high, global_lookback)
 float g_lo = ta.lowest(low, global_lookback)
-float g_vol_sum = ta.sum(volume, global_lookback)
-float vol_sum_min = ta.sum(volume, min_bars)
+float g_vol_sum = f_sum(volume, global_lookback)
+float vol_sum_min = f_sum(volume, min_bars)
 
 // POC Calculation logic
 float global_poc = na
@@ -88,7 +97,6 @@ if is_consolidating
         z_lo := math.min(z_lo, low)
         z_vol += volume
 
-    // Update or create active zone box for visual feedback
     if barstate.islast
         if na(active_zone_box)
             active_zone_box := box.new(z_start_idx, z_hi, bar_index, z_lo, border_color = color.new(color.gray, 50), bgcolor = color.new(color.gray, 90))
@@ -96,7 +104,6 @@ if is_consolidating
             box.set_lefttop(active_zone_box, z_start_idx, z_hi)
             box.set_rightbottom(active_zone_box, bar_index, z_lo)
 else
-    // Consolidation broken
     if not na(z_start_idx)
         int z_end_idx = bar_index - 1
         int duration = z_end_idx - z_start_idx + 1
@@ -134,7 +141,6 @@ else
                     string label_text = str.format("${0}B\n{1} bins · {2}% of profile\n{3} - {4}", str.tostring(z_vol * close / 1e9, "#.###"), tick_bins, str.tostring(zone_v_pct, "#.##"), str.tostring(z_lo, "#.##"), str.tostring(z_hi, "#.##"))
                     label.new(z_start_idx, z_hi, label_text, textcolor = color.white, color = color.new(color.black, 20), style = label.style_label_down, size = size.small, textalign = text.align_left)
 
-        // Cleanup active box and reset state
         if not na(active_zone_box)
             box.delete(active_zone_box)
             active_zone_box := na
