@@ -51,7 +51,7 @@ calc_poc(int len) =>
         for i = 0 to len - 1
             float p = close[i]
             int idx = math.floor((p - l) / s)
-            idx := math.clamp(idx, 0, b - 1)
+            idx := math.max(0, math.min(b - 1, idx))
             array.set(v_array, idx, array.get(v_array, idx) + volume[i])
         int p_idx = array.argmax(v_array)
         poc_val := l + (p_idx + 0.5) * s
@@ -92,7 +92,7 @@ if barstate.isconfirmed
                         float p = close[offset]
                         float v = volume[offset]
                         int b_idx = math.floor((p - z_lo) / bin_size)
-                        b_idx := math.clamp(b_idx, 0, heatmap_bins - 1)
+                        b_idx := math.max(0, math.min(heatmap_bins - 1, b_idx))
                         array.set(zone_vols, b_idx, array.get(zone_vols, b_idx) + v)
 
                     float max_zv = array.max(zone_vols)
