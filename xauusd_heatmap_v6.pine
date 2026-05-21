@@ -1,0 +1,153 @@
+//@version=6
+// This indicator implements a non-repainting Heatmap and Volume Profile based on market consolidation zones.
+// It identifies periods of price consolidation, calculates the volume distribution (heatmap) within those periods,
+// and displays metadata such as total volume value, price bins, and percentage of the global profile.
+indicator("[UAlgo] XAUUSD Heatmap v6", shorttitle="[UAlgo] Heatmap", overlay = true, max_boxes_count = 500, max_labels_count = 500)
+
+// ==========================================
+// Inputs
+// ==========================================
+grp_zones = "Consolidation Zones"
+min_bars = input.int(20, "Min Consolidation Bars", minval = 5, group = grp_zones, tooltip = "Minimum number of bars to qualify as a consolidation zone.")
+range_atr_mult = input.float(1.5, "Range Multiplier (ATR)", step = 0.1, group = grp_zones, tooltip = "Multiplier for ATR to define the maximum price range of a consolidation zone.")
+
+grp_visuals = "Visuals"
+heatmap_bins = input.int(20, "Heatmap Bins per Zone", minval = 5, maxval = 50, group = grp_visuals, tooltip = "Number of horizontal rows in the heatmap inside each zone.")
+global_lookback = input.int(500, "Global Profile Lookback", minval = 100, group = grp_visuals, tooltip = "Lookback period for calculating the global volume profile and POC.")
+hot_color = input.color(#ff5252, "Hot Color (Highest Vol)", group = grp_visuals)
+mid_color = input.color(#ffd700, "Mid Color", group = grp_visuals)
+cold_color = input.color(#4caf50, "Cold Color (Lowest Vol)", group = grp_visuals)
+show_labels = input.bool(true, "Show Metadata Labels", group = grp_visuals)
+poc_color = input.color(color.yellow, "POC Line Color", group = grp_visuals)
+
+// ==========================================
+// Variables & State
+// ==========================================
+var int z_start_idx = na
+var float z_hi = na
+var float z_lo = na
+var float z_vol = 0.0
+
+// ==========================================
+// Calculations
+// ==========================================
+float atr = ta.atr(14)
+float threshold = (nz(atr) != 0 ? atr : close * 0.001) * range_atr_mult
+
+// Detection of consolidation
+float current_range = ta.highest(high, min_bars) - ta.lowest(low, min_bars)
+bool is_consolidating = current_range < threshold
+
+// Non-repainting POC Calculation
+// Executed on every bar to ensure historical consistency.
+calc_poc(int len) =>
+    float h = ta.highest(high, len)
+    float l = ta.lowest(low, len)
+    int b = 50
+    float s = (h - l) / b
+    float poc_val = na
+    if s > 0
+        float[] v_array = array.new_float(b, 0.0)
+        for i = 0 to len - 1
+            float p = close[i]
+            int idx = math.floor((p - l) / s)
+            idx := math.clamp(idx, 0, b - 1)
+            array.set(v_array, idx, array.get(v_array, idx) + volume[i])
+        int p_idx = array.argmax(v_array)
+        poc_val := l + (p_idx + 0.5) * s
+    poc_val
+
+float global_poc = bar_index > global_lookback ? calc_poc(global_lookback) : na
+plot(global_poc, "Global POC", color = color.new(poc_color, 20), linewidth = 2, style = plot.style_stepped)
+
+// ==========================================
+// Zone & Heatmap Logic
+// ==========================================
+// We use barstate.isconfirmed to ensure we only draw and finalize on closed bars.
+if barstate.isconfirmed
+    if is_consolidating
+        if na(z_start_idx)
+            z_start_idx := bar_index - min_bars + 1
+            z_hi := ta.highest(high, min_bars)
+            z_lo := ta.lowest(low, min_bars)
+            z_vol := math.sum(volume, min_bars)
+        else
+            z_hi := math.max(z_hi, high)
+            z_lo := math.min(z_lo, low)
+            z_vol += volume
+    else
+        // Consolidation broken
+        if not na(z_start_idx)
+            int z_end_idx = bar_index - 1
+            int duration = z_end_idx - z_start_idx + 1
+
+            if duration >= min_bars
+                float z_range = z_hi - z_lo
+                if z_range > 0
+                    float bin_size = z_range / heatmap_bins
+                    float[] zone_vols = array.new_float(heatmap_bins, 0.0)
+
+                    for i = 0 to duration - 1
+                        int offset = (bar_index - 1) - (z_start_idx + i)
+                        float p = close[offset]
+                        float v = volume[offset]
+                        int b_idx = math.floor((p - z_lo) / bin_size)
+                        b_idx := math.clamp(b_idx, 0, heatmap_bins - 1)
+                        array.set(zone_vols, b_idx, array.get(zone_vols, b_idx) + v)
+
+                    float max_zv = array.max(zone_vols)
+                    float total_g_vol = math.sum(volume, global_lookback)
+                    float zone_v_pct = (z_vol / (total_g_vol > 0 ? total_g_vol : 1.0)) * 100
+
+                    // 1. Draw Heatmap Rows
+                    for j = 0 to heatmap_bins - 1
+                        float v_val = array.get(zone_vols, j)
+                        if v_val > 0
+                            float b_lo = z_lo + j * bin_size
+                            float b_hi = b_lo + bin_size
+                            float ratio = v_val / (max_zv > 0 ? max_zv : 1.0)
+
+                            color c = ratio > 0.6 ? color.from_gradient(ratio, 0.6, 1.0, mid_color, hot_color) :
+                                      color.from_gradient(ratio, 0.0, 0.6, cold_color, mid_color)
+
+                            box.new(z_start_idx, b_hi, z_end_idx, b_lo,
+                              bgcolor = color.new(c, 50), border_color = color.new(color.white, 100))
+
+                    // 2. Draw Main Zone Border (Yellowish as in some screenshots)
+                    box.new(z_start_idx, z_hi, z_end_idx, z_lo,
+                      bgcolor = color.new(color.gray, 100),
+                      border_color = color.new(color.yellow, 70),
+                      border_width = 1)
+
+                    // 3. Metadata Label
+                    if show_labels
+                        int tick_bins = math.round(z_range / (syminfo.mintick > 0 ? syminfo.mintick : 0.01))
+                        float est_val = z_vol * close
+
+                        string timeframe_suffix = timeframe.isintraday ? "m" : "d"
+                        string dur_str = str.tostring(duration * (timeframe.isintraday ? timeframe.multiplier : 1)) + timeframe_suffix
+
+                        string label_text = str.format("${0}B\n{1} bins · {2}% of profile · {3} - {4} · {5}",
+                          str.tostring(est_val / 1e9, "#.###"),
+                          tick_bins,
+                          str.tostring(zone_v_pct, "#.##"),
+                          str.tostring(z_lo, syminfo.mintick >= 1 ? "#" : "#.##"),
+                          str.tostring(z_hi, syminfo.mintick >= 1 ? "#" : "#.##"),
+                          dur_str)
+
+                        label.new(z_start_idx, z_hi, label_text,
+                          textcolor = color.white,
+                          color = color.new(color.black, 20),
+                          style = label.style_label_down,
+                          size = size.small,
+                          textalign = text.align_left)
+
+                        // Support/Resistance indicators
+                        label.new(z_end_idx, z_hi, "Resistance", textcolor=color.new(color.red, 20), style=label.style_none, size=size.small, yloc=yloc.abovebar)
+                        label.new(z_end_idx, z_lo, "Support", textcolor=color.new(color.green, 20), style=label.style_none, size=size.small, yloc=yloc.belowbar)
+
+            // Reset state
+            z_start_idx := na
+            z_vol := 0.0
+            z_hi := na
+            z_lo := na
