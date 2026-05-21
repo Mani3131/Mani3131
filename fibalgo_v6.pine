@@ -112,29 +112,31 @@ if not na(bot) and close < bot and barstate.isconfirmed
 
 // Update OB boxes and detect mitigation signals
 if show_ob
-    for i = 0 to (array.size(bull_obs) > 0 ? array.size(bull_obs) - 1 : na)
-        OB item = array.get(bull_obs, i)
-        if item.active
-            box.set_right(item.b, bar_index)
-            // Signal on first touch/mitigation
-            if low <= box.get_top(item.b) and low >= item.level and barstate.isconfirmed
-                if show_signals and not buy_signal
-                    buy_signal := true
-            if close < item.level
-                item.active := false
-                box.set_bgcolor(item.b, color.new(color.teal, 95))
+    if array.size(bull_obs) > 0
+        for i = 0 to array.size(bull_obs) - 1
+            OB item = array.get(bull_obs, i)
+            if item.active
+                box.set_right(item.b, bar_index)
+                // Signal on first touch/mitigation
+                if low <= box.get_top(item.b) and low >= item.level and barstate.isconfirmed
+                    if show_signals and not buy_signal
+                        buy_signal := true
+                if close < item.level
+                    item.active := false
+                    box.set_bgcolor(item.b, color.new(color.teal, 95))
 
-    for i = 0 to (array.size(bear_obs) > 0 ? array.size(bear_obs) - 1 : na)
-        OB item = array.get(bear_obs, i)
-        if item.active
-            box.set_right(item.b, bar_index)
-            // Signal on first touch/mitigation
-            if high >= box.get_bottom(item.b) and high <= item.level and barstate.isconfirmed
-                if show_signals and not sell_signal
-                    sell_signal := true
-            if close > item.level
-                item.active := false
-                box.set_bgcolor(item.b, color.new(color.red, 95))
+    if array.size(bear_obs) > 0
+        for i = 0 to array.size(bear_obs) - 1
+            OB item = array.get(bear_obs, i)
+            if item.active
+                box.set_right(item.b, bar_index)
+                // Signal on first touch/mitigation
+                if high >= box.get_bottom(item.b) and high <= item.level and barstate.isconfirmed
+                    if show_signals and not sell_signal
+                        sell_signal := true
+                if close > item.level
+                    item.active := false
+                    box.set_bgcolor(item.b, color.new(color.red, 95))
 
 // Draw Signals
 if buy_signal
@@ -178,7 +180,8 @@ if barstate.islast
 
     float z_score = (close - lr_val) / (stddev == 0 ? 1 : stddev)
     float prob = 50 + (z_score * 25)
-    prob := math.clamp(prob, 0, 100)
+    // Fallback for math.clamp
+    prob := math.max(0, math.min(100, prob))
 
     string txt = "UAlgo Trend Analysis\n"
     txt += "Probability: " + str.tostring(prob, "#.##") + "%\n"
