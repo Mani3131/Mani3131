@@ -29,24 +29,29 @@ float pl = ta.pivotlow(low, pivot_lookback, pivot_lookahead)
 // When a pivot is detected, it happened 'pivot_lookahead' bars ago.
 // To avoid repainting, we plot the label only after confirmation, at the correct historical bar.
 if not na(ph)
-    label.new(bar_index[pivot_lookahead], ph, "Peak", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
+    label.new(bar_index[pivot_lookahead], ph, "", style=label.style_triangle_down, color=color.red, size=size.small)
 
 if not na(pl)
-    label.new(bar_index[pivot_lookahead], pl, "Bottom", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small)
+    label.new(bar_index[pivot_lookahead], pl, "", style=label.style_triangle_up, color=color.green, size=size.small)
 
 // --- Probability and Signals ---
 // Probability of a Peak/Bottom based on price position relative to channel
 float price_range = linreg_upper - linreg_lower
 float pos_percent = (price_val - linreg_lower) / price_range * 100
 
-// We only show probability labels at confirmed pivots to match the visual and ensure non-repainting
-if not na(ph)
-    prob_text = "Probability of a Peak\n" + str.tostring(math.round(pos_percent[pivot_lookahead]), "0") + "%"
-    label.new(bar_index[pivot_lookahead], high[pivot_lookahead], prob_text, style=label.style_label_down, color=color.new(color.red, 20), textcolor=color.white, size=size.normal, yloc=yloc.abovebar)
+// Single Live Probability Label
+var label live_prob_label = na
+if barstate.islast
+    label.delete(live_prob_label)
+    bool is_high_side = pos_percent > 50
+    string live_text = (is_high_side ? "Probability of a Peak\n" : "Probability of a Bottom\n") +
+                       str.tostring(math.round(is_high_side ? pos_percent : 100 - pos_percent), "0") + "%"
+    color live_color = is_high_side ? color.new(color.red, 20) : color.new(color.green, 20)
+    live_prob_label := label.new(bar_index, is_high_side ? high : low, live_text,
+                                 style=is_high_side ? label.style_label_down : label.style_label_up,
+                                 color=live_color, textcolor=color.white, size=size.normal,
+                                 yloc=is_high_side ? yloc.abovebar : yloc.belowbar)
 
-if not na(pl)
-    prob_text = "Probability of a Bottom\n" + str.tostring(math.round(100 - pos_percent[pivot_lookahead]), "0") + "%"
-    label.new(bar_index[pivot_lookahead], low[pivot_lookahead], prob_text, style=label.style_label_up, color=color.new(color.green, 20), textcolor=color.white, size=size.normal, yloc=yloc.belowbar)
 
 // Breakout Signals
 bool is_break_up = ta.crossover(close, linreg_upper)
