@@ -29,10 +29,10 @@ float pl = ta.pivotlow(low, pivot_lookback, pivot_lookahead)
 // When a pivot is detected, it happened 'pivot_lookahead' bars ago.
 // To avoid repainting, we plot the label only after confirmation, at the correct historical bar.
 if not na(ph)
-    label.new(bar_index[pivot_lookahead], ph, "", style=label.style_triangle_down, color=color.red, size=size.small)
+    label.new(bar_index[pivot_lookahead], ph, "", style=label.style_triangledown, color=color.red, size=size.small)
 
 if not na(pl)
-    label.new(bar_index[pivot_lookahead], pl, "", style=label.style_triangle_up, color=color.green, size=size.small)
+    label.new(bar_index[pivot_lookahead], pl, "", style=label.style_triangleup, color=color.green, size=size.small)
 
 // --- Probability and Signals ---
 // Probability of a Peak/Bottom based on price position relative to channel
