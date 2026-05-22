@@ -1,0 +1,95 @@
+//@version=6
+indicator("FibAlgo - Smart Trading Clone", overlay=true, max_labels_count=500, max_boxes_count=500)
+
+// --- Inputs ---
+int   linreg_len  = input.int(100, "Linear Regression Length", minval=10)
+float linreg_mult = input.float(2.0, "Channel Deviation Multiplier", minval=0.1, step=0.1)
+
+// --- Linear Regression Channel ---
+float price_val = close
+float linreg_mid = ta.linreg(price_val, linreg_len, 0)
+float linreg_stdev = ta.stdev(price_val, linreg_len)
+float linreg_upper = linreg_mid + (linreg_stdev * linreg_mult)
+float linreg_lower = linreg_mid - (linreg_stdev * linreg_mult)
+
+plot(linreg_mid, "Midline", color=color.new(color.orange, 0), linewidth=2)
+plot(linreg_upper, "Upper Channel", color=color.new(color.orange, 50), linewidth=1)
+plot(linreg_lower, "Lower Channel", color=color.new(color.orange, 50), linewidth=1)
+
+// Fill between upper and lower
+fill(plot(linreg_upper, "Upper Plot", display=display.none), plot(linreg_lower, "Lower Plot", display=display.none), color=color.new(color.orange, 90), title="Channel Fill")
+
+// --- Swing Detection (Non-Repainting) ---
+int pivot_lookback = input.int(5, "Pivot Lookback", minval=1)
+int pivot_lookahead = input.int(5, "Pivot Lookahead (Confirmation Bars)", minval=1)
+
+float ph = ta.pivothigh(high, pivot_lookback, pivot_lookahead)
+float pl = ta.pivotlow(low, pivot_lookback, pivot_lookahead)
+
+// When a pivot is detected, it happened 'pivot_lookahead' bars ago.
+// Gating with barstate.isconfirmed ensures the pivot is mathematically finalized.
+if not na(ph) and barstate.isconfirmed
+    label.new(bar_index[pivot_lookahead], ph, "", style=label.style_triangledown, color=color.red, size=size.small)
+
+if not na(pl) and barstate.isconfirmed
+    label.new(bar_index[pivot_lookahead], pl, "", style=label.style_triangleup, color=color.green, size=size.small)
+
+// --- Probability and Signals ---
+// Probability of a Peak/Bottom based on price position relative to channel
+float price_range = linreg_upper - linreg_lower
+float pos_percent = (price_val - linreg_lower) / price_range * 100
+
+// Single Live Probability Label
+var label live_prob_label = na
+if barstate.islast
+    label.delete(live_prob_label)
+    bool is_high_side = pos_percent > 50
+    float bounded_prob = math.max(0, math.min(100, is_high_side ? pos_percent : 100 - pos_percent))
+    string live_text = (is_high_side ? "Probability of a Peak\n" : "Probability of a Bottom\n") +
+                       str.tostring(math.round(bounded_prob), "0") + "%"
+    color live_color = is_high_side ? color.new(color.red, 20) : color.new(color.green, 20)
+    live_prob_label := label.new(bar_index, is_high_side ? high : low, live_text,
+                                 style=is_high_side ? label.style_label_down : label.style_label_up,
+                                 color=live_color, textcolor=color.white, size=size.normal,
+                                 yloc=is_high_side ? yloc.abovebar : yloc.belowbar)
+
+
+// Breakout Signals
+bool is_break_up = ta.crossover(close, linreg_upper)
+bool is_break_down = ta.crossunder(close, linreg_lower)
+bool strong_break_up = is_break_up and volume > ta.sma(volume, 20) * 1.5
+bool strong_break_down = is_break_down and volume > ta.sma(volume, 20) * 1.5
+
+if is_break_up and barstate.isconfirmed
+    label.new(bar_index, high, "Break", style=label.style_label_down, color=color.teal, textcolor=color.white, size=size.tiny, yloc=yloc.abovebar)
+
+if strong_break_up and barstate.isconfirmed
+    label.new(bar_index, high, "Strong\nBreak", style=label.style_label_down, color=color.teal, textcolor=color.white, size=size.small, yloc=yloc.abovebar)
+
+if is_break_down and barstate.isconfirmed
+    label.new(bar_index, low, "Break", style=label.style_label_up, color=color.maroon, textcolor=color.white, size=size.tiny, yloc=yloc.belowbar)
+
+if strong_break_down and barstate.isconfirmed
+    label.new(bar_index, low, "Strong\nBreak", style=label.style_label_up, color=color.maroon, textcolor=color.white, size=size.small, yloc=yloc.belowbar)
+
+// --- Retracement Zones ---
+// Retracement Trend Zone (Purple Box)
+// Drawn between recent confirmed pivots
+if (not na(ph) or not na(pl)) and barstate.isconfirmed
+    float high_val = ta.valuewhen(not na(ph), ph, 0)
+    float low_val = ta.valuewhen(not na(pl), pl, 0)
+    int left_idx = int(math.min(ta.valuewhen(not na(ph), bar_index[pivot_lookahead], 0), ta.valuewhen(not na(pl), bar_index[pivot_lookahead], 0)))
+    int right_idx = int(math.max(ta.valuewhen(not na(ph), bar_index[pivot_lookahead], 0), ta.valuewhen(not na(pl), bar_index[pivot_lookahead], 0)))
+
+    if not na(high_val) and not na(low_val) and left_idx != right_idx
+        box.new(left_idx, high_val, right_idx, low_val,
+                bgcolor=color.new(color.purple, 80), border_color=color.purple,
+                text="Retracement Trend Zone", text_color=color.white, text_size=size.small, text_halign=text.align_center, text_valign=text.align_center)
+
+// "Retracement" (Green Box)
+// Triggered when price pulls back into the channel from above
+bool retracement_signal = ta.crossunder(close, linreg_upper) and close > linreg_mid
+if retracement_signal and barstate.isconfirmed
+    box.new(bar_index - 3, high, bar_index, low,
+            bgcolor=color.new(color.teal, 70), border_color=color.teal,
+            text="Retracement", text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
