@@ -136,11 +136,11 @@ if buy_signal or sell_signal
 
 // Update level positions
 if not na(entry_line) and barstate.islast
-    line.set_right(entry_line, bar_index + 10)
-    line.set_right(tp1_line, bar_index + 10)
-    line.set_right(tp2_line, bar_index + 10)
-    line.set_right(tp3_line, bar_index + 10)
-    line.set_right(target_line, bar_index + 10)
+    line.set_x2(entry_line, bar_index + 10)
+    line.set_x2(tp1_line, bar_index + 10)
+    line.set_x2(tp2_line, bar_index + 10)
+    line.set_x2(tp3_line, bar_index + 10)
+    line.set_x2(target_line, bar_index + 10)
 
     label.set_x(entry_label, bar_index + 10)
     label.set_x(tp1_label, bar_index + 10)
