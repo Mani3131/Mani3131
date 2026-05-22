@@ -44,8 +44,9 @@ var label live_prob_label = na
 if barstate.islast
     label.delete(live_prob_label)
     bool is_high_side = pos_percent > 50
+    float bounded_prob = math.max(0, math.min(100, is_high_side ? pos_percent : 100 - pos_percent))
     string live_text = (is_high_side ? "Probability of a Peak\n" : "Probability of a Bottom\n") +
-                       str.tostring(math.round(is_high_side ? pos_percent : 100 - pos_percent), "0") + "%"
+                       str.tostring(math.round(bounded_prob), "0") + "%"
     color live_color = is_high_side ? color.new(color.red, 20) : color.new(color.green, 20)
     live_prob_label := label.new(bar_index, is_high_side ? high : low, live_text,
                                  style=is_high_side ? label.style_label_down : label.style_label_up,
