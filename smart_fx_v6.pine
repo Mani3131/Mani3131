@@ -12,15 +12,22 @@ hmaTrend = ta.hma(close, trendLength)
 isBullish = close > hmaTrend
 isBearish = close < hmaTrend
 
-// Cyan for Bullish, Fuchsia for Bearish
 candleColor = isBullish ? #00ffff : isBearish ? #ff00ff : #808080
 plotcandle(open, high, low, close, "Candle Colors", color=candleColor, wickcolor=candleColor, bordercolor=candleColor, editable=true)
 
-// --- Support/Resistance & Supply/Demand Logic ---
+// --- Non-Repainting Level Tracking ---
+var float lastResLevel = na
+var float lastSupLevel = na
+
 ph = ta.pivothigh(high, pivotLeft, pivotRight)
 pl = ta.pivotlow(low, pivotLeft, pivotRight)
 
-// Use persistent variables to manage levels without repainting
+if not na(ph)
+    lastResLevel := ph
+if not na(pl)
+    lastSupLevel := pl
+
+// --- Visual Objects ---
 var line resLine = na
 var label resLabel = na
 var line supLine = na
@@ -30,9 +37,8 @@ var label demLabel = na
 var line supportLine = na
 var label supportLabel = na
 
-// Draw Levels (Resistance, Supply, Demand, Support)
+// Draw/Update Levels
 if not na(ph)
-    // Update Resistance (Highest visible pivot)
     if na(resLine)
         resLine := line.new(bar_index - pivotRight, ph, bar_index, ph, color=#ff0000, width=2)
         resLabel := label.new(bar_index, ph, "RESISTANCE", color=#ff0000, textcolor=#ffffff, style=label.style_label_left, size=size.small)
@@ -41,7 +47,7 @@ if not na(ph)
         line.set_xy2(resLine, bar_index + 10, ph)
         label.set_xy(resLabel, bar_index + 10, ph)
 
-    // Update Supply
+    // Supply logic (using ph as well)
     if na(supLine)
         supLine := line.new(bar_index - pivotRight, ph * 0.999, bar_index, ph * 0.999, color=#0000ff, width=2)
         supLabel := label.new(bar_index, ph * 0.999, "SUPPLY", color=#0000ff, textcolor=#ffffff, style=label.style_label_left, size=size.small)
@@ -51,7 +57,6 @@ if not na(ph)
         label.set_xy(supLabel, bar_index + 10, ph * 0.999)
 
 if not na(pl)
-    // Update Support
     if na(supportLine)
         supportLine := line.new(bar_index - pivotRight, pl, bar_index, pl, color=#ffa500, width=2)
         supportLabel := label.new(bar_index, pl, "SUPPORT", color=#ffa500, textcolor=#ffffff, style=label.style_label_left, size=size.small)
@@ -60,7 +65,6 @@ if not na(pl)
         line.set_xy2(supportLine, bar_index + 10, pl)
         label.set_xy(supportLabel, bar_index + 10, pl)
 
-    // Update Demand
     if na(demLine)
         demLine := line.new(bar_index - pivotRight, pl * 1.001, bar_index, pl * 1.001, color=#008000, width=2)
         demLabel := label.new(bar_index, pl * 1.001, "DEMAND", color=#008000, textcolor=#ffffff, style=label.style_label_left, size=size.small)
@@ -69,7 +73,7 @@ if not na(pl)
         line.set_xy2(demLine, bar_index + 10, pl * 1.001)
         label.set_xy(demLabel, bar_index + 10, pl * 1.001)
 
-// Extend lines to the right in real-time
+// Real-time Extension
 if barstate.islast
     line.set_x2(resLine, bar_index + 20)
     label.set_x(resLabel, bar_index + 20)
@@ -80,21 +84,16 @@ if barstate.islast
     line.set_x2(supportLine, bar_index + 20)
     label.set_x(supportLabel, bar_index + 20)
 
-// --- BUY/SELL Signal Logic ---
-buySignal = isBullish and ta.crossover(close, line.get_y2(supportLine))
-sellSignal = isBearish and ta.crossunder(close, line.get_y2(resLine))
+// --- BUY/SELL Signal Logic (Non-Repainting) ---
+// We use the series variables lastSupLevel and lastResLevel instead of line.get_y2()
+buySignal = isBullish and ta.crossover(close, lastSupLevel)
+sellSignal = isBearish and ta.crossunder(close, lastResLevel)
 
-// Use confirmation to prevent repainting
-if buySignal and barstate.isconfirmed
-    label.new(bar_index, low, "BUY", color=#0000ff, textcolor=#ffffff, style=label.style_label_up, size=size.small)
-
-if sellSignal and barstate.isconfirmed
-    label.new(bar_index, high, "SELL", color=#ff0000, textcolor=#ffffff, style=label.style_label_down, size=size.small)
-
-// --- Entry Box and Targets ---
 atr = ta.atr(atrLength)
 
 if buySignal and barstate.isconfirmed
+    label.new(bar_index, low, "BUY", color=#0000ff, textcolor=#ffffff, style=label.style_label_up, size=size.small)
+
     entryPrice = close
     tp1 = entryPrice + atr * 1.5
     tp2 = entryPrice + atr * 3.0
@@ -109,6 +108,8 @@ if buySignal and barstate.isconfirmed
     label.new(bar_index + 5, high + atr*3, txt, color=color.new(#0000ff, 20), textcolor=#ffffff, style=label.style_label_down, size=size.normal)
 
 if sellSignal and barstate.isconfirmed
+    label.new(bar_index, high, "SELL", color=#ff0000, textcolor=#ffffff, style=label.style_label_down, size=size.small)
+
     entryPrice = close
     tp1 = entryPrice - atr * 1.5
     tp2 = entryPrice - atr * 3.0
