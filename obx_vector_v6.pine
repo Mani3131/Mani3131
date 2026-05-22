@@ -1,0 +1,232 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("OBX VECTOR [Mani3131]", overlay = true, max_labels_count = 500, max_boxes_count = 500)
+
+// --- Inputs ---
+short_len = input.int(20, "Short EMA Length", minval = 1)
+long_len = input.int(50, "Long EMA Length", minval = 1)
+atr_len = input.int(14, "ATR Length", minval = 1)
+rr_tp1 = input.float(1.0, "TP1 Risk:Reward", minval = 0.1)
+rr_tp2 = input.float(2.0, "TP2 Risk:Reward", minval = 0.1)
+rr_tp3 = input.float(3.0, "TP3 Risk:Reward", minval = 0.1)
+rr_target = input.float(4.0, "Final Target Risk:Reward", minval = 0.1)
+
+// --- Calculations ---
+ema_short = ta.ema(close, short_len)
+ema_long = ta.ema(close, long_len)
+atr = ta.atr(atr_len)
+
+// Bias - Using a more robust trend detection (ema crossover + price relative to long ema)
+bias_bullish = close > ema_long and ema_short > ema_long
+bias_bearish = close < ema_long and ema_short < ema_long
+bias_text = bias_bullish ? "BULLISH" : bias_bearish ? "BEARISH" : "NEUTRAL"
+bias_color = bias_bullish ? color.rgb(76, 175, 80) : bias_bearish ? color.rgb(255, 82, 82) : color.gray
+
+// Strength - Using ADX for trend strength and EMA slope for momentum
+[diplus, diminus, adx] = ta.dmi(14, 14)
+ema_slope = (ema_short - ema_short[5]) / (5 * atr)
+strength_val = (adx + math.abs(ema_slope) * 50) / 2
+strength_text = strength_val > 25 ? "STRONG" : strength_val > 15 ? "MEDIUM" : "WEAK"
+strength_display = str.format("{0,number,#.#} {1}", strength_val, strength_text)
+
+// --- Market Structure & Signals ---
+// Find Swing Points for Zones and Structure
+lb = 3, rb = 3
+ph = ta.pivothigh(high, lb, rb)
+pl = ta.pivotlow(low, lb, rb)
+
+var float last_ph = na
+var float last_pl = na
+var int last_ph_idx = na
+var int last_pl_idx = na
+
+if not na(ph)
+    last_ph := ph
+    last_ph_idx := bar_index[rb]
+if not na(pl)
+    last_pl := pl
+    last_pl_idx := bar_index[rb]
+
+// Signals (Non-repainting using confirmed bars and structural breaks)
+buy_signal = bias_bullish and close > last_ph and close[1] <= last_ph and barstate.isconfirmed
+sell_signal = bias_bearish and close < last_pl and close[1] >= last_pl and barstate.isconfirmed
+
+// --- Trade Levels & Zones ---
+var float entry_price = na
+var float sl_price = na
+var float tp1_price = na
+var float tp2_price = na
+var float tp3_price = na
+var float target_price = na
+var string active_status = "WAITING"
+var int signal_bar = 0
+
+// Track active boxes and labels to prevent spam and manage persistence
+var box active_zone = na
+
+if buy_signal
+    entry_price := close
+    sl_price := math.min(low, low[1], low[2])
+    risk = entry_price - sl_price
+    tp1_price := entry_price + risk * rr_tp1
+    tp2_price := entry_price + risk * rr_tp2
+    tp3_price := entry_price + risk * rr_tp3
+    target_price := entry_price + risk * rr_target
+    active_status := "BUY ACTIVE"
+    signal_bar := bar_index
+    label.new(bar_index, low, "BUY", color=color.rgb(33, 150, 243), textcolor=color.white, style=label.style_label_up, yloc=yloc.belowbar)
+    active_zone := box.new(bar_index, entry_price, bar_index + 5, sl_price, bgcolor=color.new(color.blue, 85), border_color=color.new(color.blue, 40))
+
+if sell_signal
+    entry_price := close
+    sl_price := math.max(high, high[1], high[2])
+    risk = sl_price - entry_price
+    tp1_price := entry_price - risk * rr_tp1
+    tp2_price := entry_price - risk * rr_tp2
+    tp3_price := entry_price - risk * rr_tp3
+    target_price := entry_price - risk * rr_target
+    active_status := "SELL ACTIVE"
+    signal_bar := bar_index
+    label.new(bar_index, high, "SELL", color=color.rgb(255, 82, 82), textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar)
+    active_zone := box.new(bar_index, entry_price, bar_index + 5, sl_price, bgcolor=color.new(color.red, 85), border_color=color.new(color.red, 40))
+
+// Update zone right edge
+if not na(active_zone)
+    box.set_right(active_zone, bar_index)
+
+// Draw Levels for active signal
+var line entry_line = na
+var line tp1_line = na
+var line tp2_line = na
+var line tp3_line = na
+var line target_line = na
+
+var label entry_label = na
+var label tp1_label = na
+var label tp2_label = na
+var label tp3_label = na
+var label target_label = na
+
+if buy_signal or sell_signal
+    line.delete(entry_line)
+    line.delete(tp1_line)
+    line.delete(tp2_line)
+    line.delete(tp3_line)
+    line.delete(target_line)
+
+    label.delete(entry_label)
+    label.delete(tp1_label)
+    label.delete(tp2_label)
+    label.delete(tp3_label)
+    label.delete(target_label)
+
+    entry_line := line.new(signal_bar, entry_price, bar_index + 10, entry_price, color=color.new(color.gray, 50), style=line.style_dashed, xloc=xloc.bar_index)
+    tp1_line := line.new(signal_bar, tp1_price, bar_index + 10, tp1_price, color=color.new(color.green, 50), xloc=xloc.bar_index)
+    tp2_line := line.new(signal_bar, tp2_price, bar_index + 10, tp2_price, color=color.new(color.green, 50), xloc=xloc.bar_index)
+    tp3_line := line.new(signal_bar, tp3_price, bar_index + 10, tp3_price, color=color.new(color.green, 50), xloc=xloc.bar_index)
+    target_line := line.new(signal_bar, target_price, bar_index + 10, target_price, color=color.new(color.white, 20), width=2, xloc=xloc.bar_index)
+
+    entry_label := label.new(bar_index + 10, entry_price, "ENTRY", color=color.rgb(33, 150, 243, 80), textcolor=color.white, style=label.style_label_left, size=size.small)
+    tp1_label := label.new(bar_index + 10, tp1_price, "TP1", color=color.new(color.black, 100), textcolor=color.rgb(129, 212, 250), style=label.style_label_left, size=size.small)
+    tp2_label := label.new(bar_index + 10, tp2_price, "TP2", color=color.new(color.black, 100), textcolor=color.rgb(129, 212, 250), style=label.style_label_left, size=size.small)
+    tp3_label := label.new(bar_index + 10, tp3_price, "TP3", color=color.new(color.black, 100), textcolor=color.rgb(129, 212, 250), style=label.style_label_left, size=size.small)
+    target_label := label.new(bar_index + 10, target_price, "Target", color=color.rgb(66, 66, 66, 80), textcolor=color.white, style=label.style_label_left, size=size.small)
+
+// Update level positions
+if not na(entry_line) and barstate.islast
+    line.set_right(entry_line, bar_index + 10)
+    line.set_right(tp1_line, bar_index + 10)
+    line.set_right(tp2_line, bar_index + 10)
+    line.set_right(tp3_line, bar_index + 10)
+    line.set_right(target_line, bar_index + 10)
+
+    label.set_x(entry_label, bar_index + 10)
+    label.set_x(tp1_label, bar_index + 10)
+    label.set_x(tp2_label, bar_index + 10)
+    label.set_x(tp3_label, bar_index + 10)
+    label.set_x(target_label, bar_index + 10)
+
+// --- Performance & PnL Logic (Simplified for Dashboard) ---
+var float total_wins = 0.0
+var float total_losses = 0.0
+var int win_count = 0
+var int loss_count = 0
+var int total_setups = 0
+
+// Simplified backtest for dashboard
+if (buy_signal or sell_signal) and barstate.isconfirmed
+    total_setups += 1
+
+// Check for TP/SL hits to update stats (Non-repainting check at bar close)
+if active_status != "WAITING" and barstate.isconfirmed
+    bool hit_tp = false
+    bool hit_sl = false
+    float pnl_pips = 0.0
+
+    if active_status == "BUY ACTIVE"
+        if high >= tp3_price
+            hit_tp := true
+            pnl_pips := (tp3_price - entry_price) / syminfo.mintick / 10
+        else if low <= sl_price
+            hit_sl := true
+            pnl_pips := (sl_price - entry_price) / syminfo.mintick / 10
+
+    else if active_status == "SELL ACTIVE"
+        if low <= tp3_price
+            hit_tp := true
+            pnl_pips := (entry_price - tp3_price) / syminfo.mintick / 10
+        else if high >= sl_price
+            hit_sl := true
+            pnl_pips := (entry_price - sl_price) / syminfo.mintick / 10
+
+    if hit_tp
+        total_wins += pnl_pips
+        win_count += 1
+        active_status := "WAITING"
+    else if hit_sl
+        total_losses += math.abs(pnl_pips)
+        loss_count += 1
+        active_status := "WAITING"
+
+// Live PnL calculation
+float live_pnl = 0.0
+if active_status != "WAITING"
+    if active_status == "BUY ACTIVE"
+        live_pnl := (close - entry_price) / syminfo.mintick / 10
+    else
+        live_pnl := (entry_price - close) / syminfo.mintick / 10
+
+// Risk calculation in pips
+float current_risk = not na(entry_price) and not na(sl_price) ? math.abs(entry_price - sl_price) / syminfo.mintick / 10 : 0.0
+
+// --- Dashboard ---
+var table main_table = table.new(position.top_right, 4, 6, border_width = 1, frame_color=color.new(color.gray, 50), frame_width=1)
+if barstate.islast
+    // Header
+    table.cell(main_table, 0, 0, "OBX VECTOR", bgcolor=color.rgb(18, 18, 18), text_color=color.white, text_size=size.small)
+    table.cell(main_table, 1, 0, syminfo.ticker + " (" + timeframe.period + ")", bgcolor=color.rgb(30, 30, 30), text_color=color.white, text_size=size.small)
+    table.cell(main_table, 2, 0, "LONDON", bgcolor=color.rgb(18, 18, 18), text_color=color.white, text_size=size.small)
+    table.cell(main_table, 3, 0, str.format("{0,date,dd/MM/yy}", timenow), bgcolor=color.rgb(30, 30, 30), text_color=color.white, text_size=size.small)
+
+    // Rows
+    table.cell(main_table, 0, 1, "BIAS", bgcolor=color.rgb(30, 30, 30), text_color=color.rgb(200, 200, 200), text_size=size.small)
+    table.cell(main_table, 1, 1, bias_text, bgcolor=bias_color, text_color=color.white, text_size=size.small)
+    table.cell(main_table, 2, 1, "STRENGTH", bgcolor=color.rgb(30, 30, 30), text_color=color.rgb(200, 200, 200), text_size=size.small)
+    table.cell(main_table, 3, 1, strength_display, bgcolor=color.rgb(18, 18, 18), text_color=color.white, text_size=size.small)
+
+    table.cell(main_table, 0, 2, "STATUS", bgcolor=color.rgb(30, 30, 30), text_color=color.rgb(200, 200, 200), text_size=size.small)
+    table.cell(main_table, 1, 2, active_status, bgcolor=active_status == "WAITING" ? color.gray : color.rgb(33, 150, 243), text_color=color.white, text_size=size.small)
+    table.cell(main_table, 2, 2, "RISK", bgcolor=color.rgb(30, 30, 30), text_color=color.rgb(200, 200, 200), text_size=size.small)
+    table.cell(main_table, 3, 2, str.format("{0,number,#.#} p", current_risk), bgcolor=color.rgb(27, 33, 27), text_color=color.rgb(76, 175, 80), text_size=size.small)
+
+    table.cell(main_table, 0, 3, "W/L", bgcolor=color.rgb(30, 30, 30), text_color=color.rgb(200, 200, 200), text_size=size.small)
+    table.cell(main_table, 1, 3, str.format("{0,number,#.#} / -{1,number,#.#}", total_wins, total_losses), bgcolor=color.rgb(18, 18, 18), text_color=color.white, text_size=size.small)
+    table.cell(main_table, 2, 3, "LIVE", bgcolor=color.rgb(30, 30, 30), text_color=color.rgb(200, 200, 200), text_size=size.small)
+    table.cell(main_table, 3, 3, str.format("{0}{1,number,#.#} p", live_pnl >= 0 ? "+" : "", live_pnl), bgcolor=live_pnl >= 0 ? color.new(color.green, 50) : color.new(color.red, 50), text_color=color.white, text_size=size.small)
+
+    table.cell(main_table, 0, 4, "NET RESULT", bgcolor=color.rgb(30, 30, 30), text_color=color.rgb(200, 200, 200), text_size=size.small)
+    table.cell(main_table, 1, 4, str.format("{0}{1,number,#.#} p", (total_wins - total_losses) >= 0 ? "+" : "", total_wins - total_losses), bgcolor=color.new(color.green, 50), text_color=color.white, text_size=size.small)
+    table.cell(main_table, 2, 4, "SETUPS", bgcolor=color.rgb(30, 30, 30), text_color=color.rgb(200, 200, 200), text_size=size.small)
+    table.cell(main_table, 3, 4, str.format("{0} / {1}", win_count, total_setups), bgcolor=color.rgb(18, 18, 18), text_color=color.white, text_size=size.small)
