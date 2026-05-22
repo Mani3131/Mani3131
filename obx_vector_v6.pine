@@ -13,6 +13,16 @@ rr_tp2 = input.float(2.0, "TP2 Risk:Reward", minval = 0.1)
 rr_tp3 = input.float(3.0, "TP3 Risk:Reward", minval = 0.1)
 rr_target = input.float(4.0, "Final Target Risk:Reward", minval = 0.1)
 
+// --- State Variables (Declared early for visibility) ---
+var string active_status = "WAITING"
+var float entry_price = na
+var float sl_price = na
+var float tp1_price = na
+var float tp2_price = na
+var float tp3_price = na
+var float target_price = na
+var int signal_bar = 0
+
 // --- Calculations ---
 ema_short = ta.ema(close, short_len)
 ema_long = ta.ema(close, long_len)
@@ -50,21 +60,22 @@ if not na(pl)
     last_pl_idx := bar_index[rb]
 
 // Signals (Non-repainting using confirmed bars and structural breaks)
-buy_signal = bias_bullish and close > last_ph and close[1] <= last_ph and barstate.isconfirmed
-sell_signal = bias_bearish and close < last_pl and close[1] >= last_pl and barstate.isconfirmed
+buy_signal = active_status == "WAITING" and bias_bullish and close > last_ph and close[1] <= last_ph and barstate.isconfirmed
+sell_signal = active_status == "WAITING" and bias_bearish and close < last_pl and close[1] >= last_pl and barstate.isconfirmed
 
 // --- Trade Levels & Zones ---
-var float entry_price = na
-var float sl_price = na
-var float tp1_price = na
-var float tp2_price = na
-var float tp3_price = na
-var float target_price = na
-var string active_status = "WAITING"
-var int signal_bar = 0
-
 // Track active boxes and labels to prevent spam and manage persistence
 var box active_zone = na
+var line entry_line = na
+var line tp1_line = na
+var line tp2_line = na
+var line tp3_line = na
+var line target_line = na
+var label entry_label = na
+var label tp1_label = na
+var label tp2_label = na
+var label tp3_label = na
+var label target_label = na
 
 if buy_signal
     entry_price := close
@@ -76,51 +87,9 @@ if buy_signal
     target_price := entry_price + risk * rr_target
     active_status := "BUY ACTIVE"
     signal_bar := bar_index
+    last_ph := na // Reset pivot to prevent multiple signals
     label.new(bar_index, low, "BUY", color=color.rgb(33, 150, 243), textcolor=color.white, style=label.style_label_up, yloc=yloc.belowbar)
     active_zone := box.new(bar_index, entry_price, bar_index + 5, sl_price, bgcolor=color.new(color.blue, 85), border_color=color.new(color.blue, 40))
-
-if sell_signal
-    entry_price := close
-    sl_price := math.max(high, high[1], high[2])
-    risk = sl_price - entry_price
-    tp1_price := entry_price - risk * rr_tp1
-    tp2_price := entry_price - risk * rr_tp2
-    tp3_price := entry_price - risk * rr_tp3
-    target_price := entry_price - risk * rr_target
-    active_status := "SELL ACTIVE"
-    signal_bar := bar_index
-    label.new(bar_index, high, "SELL", color=color.rgb(255, 82, 82), textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar)
-    active_zone := box.new(bar_index, entry_price, bar_index + 5, sl_price, bgcolor=color.new(color.red, 85), border_color=color.new(color.red, 40))
-
-// Update zone right edge
-if not na(active_zone)
-    box.set_right(active_zone, bar_index)
-
-// Draw Levels for active signal
-var line entry_line = na
-var line tp1_line = na
-var line tp2_line = na
-var line tp3_line = na
-var line target_line = na
-
-var label entry_label = na
-var label tp1_label = na
-var label tp2_label = na
-var label tp3_label = na
-var label target_label = na
-
-if buy_signal or sell_signal
-    line.delete(entry_line)
-    line.delete(tp1_line)
-    line.delete(tp2_line)
-    line.delete(tp3_line)
-    line.delete(target_line)
-
-    label.delete(entry_label)
-    label.delete(tp1_label)
-    label.delete(tp2_label)
-    label.delete(tp3_label)
-    label.delete(target_label)
 
     entry_line := line.new(signal_bar, entry_price, bar_index + 10, entry_price, color=color.new(color.gray, 50), style=line.style_dashed, xloc=xloc.bar_index)
     tp1_line := line.new(signal_bar, tp1_price, bar_index + 10, tp1_price, color=color.new(color.green, 50), xloc=xloc.bar_index)
@@ -134,19 +103,47 @@ if buy_signal or sell_signal
     tp3_label := label.new(bar_index + 10, tp3_price, "TP3", color=color.new(color.black, 100), textcolor=color.rgb(129, 212, 250), style=label.style_label_left, size=size.small)
     target_label := label.new(bar_index + 10, target_price, "Target", color=color.rgb(66, 66, 66, 80), textcolor=color.white, style=label.style_label_left, size=size.small)
 
-// Update level positions
-if not na(entry_line) and barstate.islast
-    line.set_x2(entry_line, bar_index + 10)
-    line.set_x2(tp1_line, bar_index + 10)
-    line.set_x2(tp2_line, bar_index + 10)
-    line.set_x2(tp3_line, bar_index + 10)
-    line.set_x2(target_line, bar_index + 10)
+if sell_signal
+    entry_price := close
+    sl_price := math.max(high, high[1], high[2])
+    risk = sl_price - entry_price
+    tp1_price := entry_price - risk * rr_tp1
+    tp2_price := entry_price - risk * rr_tp2
+    tp3_price := entry_price - risk * rr_tp3
+    target_price := entry_price - risk * rr_target
+    active_status := "SELL ACTIVE"
+    signal_bar := bar_index
+    last_pl := na // Reset pivot to prevent multiple signals
+    label.new(bar_index, high, "SELL", color=color.rgb(255, 82, 82), textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar)
+    active_zone := box.new(bar_index, entry_price, bar_index + 5, sl_price, bgcolor=color.new(color.red, 85), border_color=color.new(color.red, 40))
 
-    label.set_x(entry_label, bar_index + 10)
-    label.set_x(tp1_label, bar_index + 10)
-    label.set_x(tp2_label, bar_index + 10)
-    label.set_x(tp3_label, bar_index + 10)
-    label.set_x(target_label, bar_index + 10)
+    entry_line := line.new(signal_bar, entry_price, bar_index + 10, entry_price, color=color.new(color.gray, 50), style=line.style_dashed, xloc=xloc.bar_index)
+    tp1_line := line.new(signal_bar, tp1_price, bar_index + 10, tp1_price, color=color.new(color.green, 50), xloc=xloc.bar_index)
+    tp2_line := line.new(signal_bar, tp2_price, bar_index + 10, tp2_price, color=color.new(color.green, 50), xloc=xloc.bar_index)
+    tp3_line := line.new(signal_bar, tp3_price, bar_index + 10, tp3_price, color=color.new(color.green, 50), xloc=xloc.bar_index)
+    target_line := line.new(signal_bar, target_price, bar_index + 10, target_price, color=color.new(color.white, 20), width=2, xloc=xloc.bar_index)
+
+    entry_label := label.new(bar_index + 10, entry_price, "ENTRY", color=color.rgb(33, 150, 243, 80), textcolor=color.white, style=label.style_label_left, size=size.small)
+    tp1_label := label.new(bar_index + 10, tp1_price, "TP1", color=color.new(color.black, 100), textcolor=color.rgb(129, 212, 250), style=label.style_label_left, size=size.small)
+    tp2_label := label.new(bar_index + 10, tp2_price, "TP2", color=color.new(color.black, 100), textcolor=color.rgb(129, 212, 250), style=label.style_label_left, size=size.small)
+    tp3_label := label.new(bar_index + 10, tp3_price, "TP3", color=color.new(color.black, 100), textcolor=color.rgb(129, 212, 250), style=label.style_label_left, size=size.small)
+    target_label := label.new(bar_index + 10, target_price, "Target", color=color.rgb(66, 66, 66, 80), textcolor=color.white, style=label.style_label_left, size=size.small)
+
+// Update active zone and levels positions
+if active_status != "WAITING"
+    box.set_right(active_zone, bar_index)
+    if barstate.islast
+        line.set_x2(entry_line, bar_index + 10)
+        line.set_x2(tp1_line, bar_index + 10)
+        line.set_x2(tp2_line, bar_index + 10)
+        line.set_x2(tp3_line, bar_index + 10)
+        line.set_x2(target_line, bar_index + 10)
+
+        label.set_x(entry_label, bar_index + 10)
+        label.set_x(tp1_label, bar_index + 10)
+        label.set_x(tp2_label, bar_index + 10)
+        label.set_x(tp3_label, bar_index + 10)
+        label.set_x(target_label, bar_index + 10)
 
 // --- Performance & PnL Logic (Simplified for Dashboard) ---
 var float total_wins = 0.0
