@@ -30,10 +30,10 @@ var int last_pl_idx = 0
 ph = ta.pivothigh(high, pivot_len, pivot_len)
 pl = ta.pivotlow(low, pivot_len, pivot_len)
 
-if ph
+if not na(ph)
     hi_val := ph
     last_ph_idx := bar_index[pivot_len]
-if pl
+if not na(pl)
     lo_val := pl
     last_pl_idx := bar_index[pivot_len]
 
@@ -70,6 +70,21 @@ if barstate.isconfirmed and show_smc
 // --- Order Blocks & Zones ---
 var box[] bull_obs = array.new_box()
 var box[] bear_obs = array.new_box()
+
+if barstate.isconfirmed
+    if not na(ph) and show_ob
+        // Potential Bearish OB
+        box b = box.new(bar_index[pivot_len], high[pivot_len], bar_index, low[pivot_len], bgcolor=color.new(color.red, 90), border_color=color.red)
+        array.push(bear_obs, b)
+        if array.size(bear_obs) > ob_max_count
+            box.delete(array.shift(bear_obs))
+
+    if not na(pl) and show_ob
+        // Potential Bullish OB
+        box b = box.new(bar_index[pivot_len], high[pivot_len], bar_index, low[pivot_len], bgcolor=color.new(color.green, 90), border_color=color.green)
+        array.push(bull_obs, b)
+        if array.size(bull_obs) > ob_max_count
+            box.delete(array.shift(bull_obs))
 
 // OB Logic: Created on BOS/CHoCH
 if barstate.isconfirmed and show_ob
