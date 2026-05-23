@@ -1,0 +1,201 @@
+//@version=6
+indicator("[UAlgo] Wyckoff Strategy v6", overlay = true, max_boxes_count = 500, max_labels_count = 500)
+
+// --- Inputs ---
+pivot_lookback = input.int(5, "Pivot Lookback", minval = 2)
+vol_threshold  = input.float(1.5, "Volume Spike Threshold", minval = 1.0, step = 0.1)
+benchmark_sym  = input.symbol("BTCUSD", "Benchmark Index (Relative Strength)")
+show_labels    = input.bool(true, "Show Event Labels")
+show_boxes     = input.bool(true, "Show Trading Ranges")
+show_table     = input.bool(true, "Show Dashboard Table")
+
+// Colors
+color_acc = input.color(color.new(color.green, 85), "Accumulation Color")
+color_dist = input.color(color.new(color.red, 85), "Distribution Color")
+color_label = input.color(color.gray, "Label Color")
+
+// --- Global Variables ---
+var float tr_high = na
+var float tr_low  = na
+var string current_phase = "None"
+var string current_bias = "Neutral"
+
+// --- Utilities ---
+f_label(_text, _style, _color, _yloc, _offset = 0) =>
+    if show_labels and barstate.isconfirmed
+        label.new(bar_index - _offset, na, _text, style = _style, color = _color, textcolor = color.white, yloc = _yloc)
+
+// --- Logic ---
+ph = ta.pivothigh(high, pivot_lookback, pivot_lookback)
+pl = ta.pivotlow(low, pivot_lookback, pivot_lookback)
+
+// Volume Spike Detection
+avg_vol = ta.sma(volume, 20)
+vol_spike = volume > avg_vol * vol_threshold
+
+// Event Detection Flags
+var bool is_sc = false
+var bool is_bc = false
+var bool is_ar = false
+
+// Signal variables (non-persistent series)
+confirmed_buy = false
+confirmed_sell = false
+
+// All state-changing logic must be protected by barstate.isconfirmed to prevent repainting
+if barstate.isconfirmed
+    // Detect Selling Climax (SC) - High volume, sharp drop
+    if not na(pl) and vol_spike[pivot_lookback] and close[pivot_lookback] < open[pivot_lookback]
+        is_sc := true
+        is_bc := false
+        is_ar := false
+        tr_low := low[pivot_lookback]
+        current_phase := "Phase A"
+        current_bias := "Accumulation?"
+
+    // Detect Buying Climax (BC) - High volume, sharp rise
+    if not na(ph) and vol_spike[pivot_lookback] and close[pivot_lookback] > open[pivot_lookback]
+        is_bc := true
+        is_sc := false
+        is_ar := false
+        tr_high := high[pivot_lookback]
+        current_phase := "Phase A"
+        current_bias := "Distribution?"
+
+    // Detect Automatic Rally (AR) following SC
+    if is_sc and not na(ph) and ph > tr_low
+        is_ar := true
+        tr_high := high[pivot_lookback]
+        current_phase := "Phase A"
+        is_sc := false
+        f_label("AR", label.style_label_down, color.blue, yloc.abovebar, pivot_lookback)
+
+    // Detect Automatic Reaction (AR) following BC
+    if is_bc and not na(pl) and pl < tr_high
+        is_ar := true
+        tr_low := low[pivot_lookback]
+        current_phase := "Phase A"
+        is_bc := false
+        f_label("AR", label.style_label_up, color.blue, yloc.belowbar, pivot_lookback)
+
+    // Detect Secondary Test (ST)
+    if is_ar and not na(pl) and pl >= tr_low and pl < tr_low + (tr_high - tr_low) * 0.25
+        current_phase := "Phase B"
+        is_ar := false
+        f_label("ST", label.style_label_up, color.blue, yloc.belowbar, pivot_lookback)
+
+    if is_ar and not na(ph) and ph <= tr_high and ph > tr_high - (tr_high - tr_low) * 0.25
+        current_phase := "Phase B"
+        is_ar := false
+        f_label("ST", label.style_label_down, color.blue, yloc.abovebar, pivot_lookback)
+
+    // Detect Phase C: Spring (Accumulation)
+    is_spring = current_phase == "Phase B" and low < tr_low and close > tr_low
+    if is_spring
+        current_phase := "Phase C"
+        current_bias := "Bullish (Spring)"
+        f_label("Spring", label.style_label_up, color.orange, yloc.belowbar)
+
+    // Detect Phase C: Upthrust (Distribution)
+    is_ut = current_phase == "Phase B" and high > tr_high and close < tr_high
+    if is_ut
+        current_phase := "Phase C"
+        current_bias := "Bearish (Upthrust)"
+        f_label("UT", label.style_label_down, color.orange, yloc.abovebar)
+
+    // Detect Phase D: Sign of Strength (SOS) Breakout
+    is_sos = (current_phase == "Phase B" or current_phase == "Phase C") and close > tr_high and volume > avg_vol
+    if is_sos
+        current_phase := "Phase D"
+        current_bias := "Strongly Bullish"
+        f_label("SOS", label.style_label_up, color.green, yloc.belowbar)
+
+    // Detect Phase D: Sign of Weakness (SOW) Breakout
+    is_sow = (current_phase == "Phase B" or current_phase == "Phase C") and close < tr_low and volume > avg_vol
+    if is_sow
+        current_phase := "Phase D"
+        current_bias := "Strongly Bearish"
+        f_label("SOW", label.style_label_down, color.red, yloc.abovebar)
+
+    // Detect Phase E: Sustained Trend
+    if current_phase == "Phase D"
+        if current_bias == "Strongly Bullish" and close > tr_high
+            current_phase := "Phase E"
+        else if current_bias == "Strongly Bearish" and close < tr_low
+            current_phase := "Phase E"
+
+    // Phase B/C Monitoring: Price remains within TR
+    is_in_tr = close <= tr_high and close >= tr_low
+    if (current_phase == "Phase B" or current_phase == "Phase C") and not is_in_tr
+        // If it breaks without being a Spring/UT, it might be moving to Phase D or failing
+        if close > tr_high
+            current_bias := "Bullish"
+        else if close < tr_low
+            current_bias := "Bearish"
+
+    // Buy/Sell Signal Logic (set based on confirmed phase events)
+    confirmed_buy := is_spring or is_sos or (current_phase == "Phase E" and current_bias == "Strongly Bullish" and current_phase != current_phase[1])
+    confirmed_sell := is_ut or is_sow or (current_phase == "Phase E" and current_bias == "Strongly Bearish" and current_phase != current_phase[1])
+
+// --- Relative Strength (Wyckoff Step 2) ---
+benchmark_close = request.security(benchmark_sym, timeframe.period, close)
+rel_strength = benchmark_close != 0 ? close / benchmark_close : 1.0
+rs_ma = ta.sma(rel_strength, 20)
+rs_status = rel_strength > rs_ma ? "Outperforming" : "Underperforming"
+
+// --- Effort vs Result Logic ---
+spread = high - low
+effort_vs_result = "Harmony"
+if volume > avg_vol * 1.5 and spread < ta.sma(spread, 20)
+    effort_vs_result := "Divergence (Supply/Demand Absorption)"
+else if volume < avg_vol * 0.5 and spread > ta.sma(spread, 20)
+    effort_vs_result := "Divergence (Lack of Interest)"
+
+// --- Visualization ---
+
+// Boxes for TR
+var box tr_box = na
+if show_boxes and not na(tr_high) and not na(tr_low) and barstate.isconfirmed
+    if na(tr_box) or tr_high != tr_high[1] or tr_low != tr_low[1]
+        tr_box := box.new(bar_index, tr_high, bar_index, tr_low,
+             bgcolor = str.contains(current_bias, "Bullish") ? color_acc : color_dist,
+             border_style = line.style_dotted)
+    else
+        box.set_right(tr_box, bar_index)
+
+if barstate.isconfirmed
+    if not na(pl) and vol_spike[pivot_lookback] and close[pivot_lookback] < open[pivot_lookback]
+        f_label("SC", label.style_label_up, color.red, yloc.belowbar, pivot_lookback)
+    if not na(ph) and vol_spike[pivot_lookback] and close[pivot_lookback] > open[pivot_lookback]
+        f_label("BC", label.style_label_down, color.green, yloc.abovebar, pivot_lookback)
+
+// --- Table Dashboard ---
+var table status_table = table.new(position.top_right, 2, 5, border_width = 1)
+if show_table and barstate.islast
+    table.cell(status_table, 0, 0, "Wyckoff Phase", bgcolor = color.gray, text_color = color.white)
+    table.cell(status_table, 1, 0, current_phase, bgcolor = color.rgb(50, 50, 50), text_color = color.white)
+
+    table.cell(status_table, 0, 1, "Market Bias", bgcolor = color.gray, text_color = color.white)
+    table.cell(status_table, 1, 1, current_bias, bgcolor = color.rgb(50, 50, 50), text_color = current_bias == "Strongly Bullish" or current_bias == "Bullish" ? color.green : current_bias == "Strongly Bearish" or current_bias == "Bearish" ? color.red : color.white)
+
+    table.cell(status_table, 0, 2, "Effort vs Result", bgcolor = color.gray, text_color = color.white)
+    table.cell(status_table, 1, 2, effort_vs_result, bgcolor = color.rgb(50, 50, 50), text_color = effort_vs_result == "Harmony" ? color.green : color.orange)
+
+    table.cell(status_table, 0, 3, "Rel. Strength vs Index", bgcolor = color.gray, text_color = color.white)
+    table.cell(status_table, 1, 3, rs_status, bgcolor = color.rgb(50, 50, 50), text_color = rs_status == "Outperforming" ? color.green : color.red)
+
+    table.cell(status_table, 0, 4, "Composite Man", bgcolor = color.gray, text_color = color.white)
+    comp_man = current_bias == "Strongly Bullish" or current_bias == "Bullish" ? "Accumulating" : current_bias == "Strongly Bearish" or current_bias == "Bearish" ? "Distributing" : "Observing"
+    table.cell(status_table, 1, 4, comp_man, bgcolor = color.rgb(50, 50, 50), text_color = color.white)
+
+// --- Buy/Sell Signal Visualization ---
+plotshape(confirmed_buy, title = "Buy Signal", style = shape.triangleup, location = location.belowbar, color = color.green, size = size.small, text = "BUY", textcolor = color.green)
+plotshape(confirmed_sell, title = "Sell Signal", style = shape.triangledown, location = location.abovebar, color = color.red, size = size.small, text = "SELL", textcolor = color.red)
+
+// --- Alerts ---
+alertcondition(confirmed_buy, title = "Wyckoff Buy Signal", message = "Wyckoff Buy Signal detected on {{ticker}}")
+alertcondition(confirmed_sell, title = "Wyckoff Sell Signal", message = "Wyckoff Sell Signal detected on {{ticker}}")
+
+// Plot TR Boundaries
+plot(tr_high, "TR High", color = color.new(color.red, 50), style = plot.style_stepline)
+plot(tr_low, "TR Low", color = color.new(color.green, 50), style = plot.style_stepline)
