@@ -1,5 +1,5 @@
 //@version=6
-indicator("Smart Money Concepts [Jules]", overlay=true, max_boxes_count=500, max_labels_count=500)
+indicator("Smart Money Concepts [Jules]", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=500)
 
 // --- Inputs ---
 show_smc = input.bool(true, "Show Market Structure", group="Market Structure")
@@ -74,14 +74,14 @@ var box[] bear_obs = array.new_box()
 if barstate.isconfirmed
     if not na(ph) and show_ob
         // Potential Bearish OB
-        box b = box.new(bar_index[pivot_len], high[pivot_len], bar_index, low[pivot_len], bgcolor=color.new(color.red, 90), border_color=color.red)
+        box b = box.new(bar_index[pivot_len], high[pivot_len], bar_index, low[pivot_len], bgcolor=color.new(color_bear, 90), border_color=color_bear)
         array.push(bear_obs, b)
         if array.size(bear_obs) > ob_max_count
             box.delete(array.shift(bear_obs))
 
     if not na(pl) and show_ob
         // Potential Bullish OB
-        box b = box.new(bar_index[pivot_len], high[pivot_len], bar_index, low[pivot_len], bgcolor=color.new(color.green, 90), border_color=color.green)
+        box b = box.new(bar_index[pivot_len], high[pivot_len], bar_index, low[pivot_len], bgcolor=color.new(color_bull, 90), border_color=color_bull)
         array.push(bull_obs, b)
         if array.size(bull_obs) > ob_max_count
             box.delete(array.shift(bull_obs))
@@ -98,7 +98,7 @@ if barstate.isconfirmed and show_ob
                     ob_idx := bar_index - i
                     break
 
-            box b = box.new(ob_idx, high[bar_index - ob_idx], ob_idx + 1, low[bar_index - ob_idx], bgcolor=color.new(color.green, 90), border_color=color.green, extend=extend.right)
+            box b = box.new(ob_idx, high[bar_index - ob_idx], ob_idx + 1, low[bar_index - ob_idx], bgcolor=color.new(color_bull, 90), border_color=color_bull, extend=extend.right)
             array.push(bull_obs, b)
             if array.size(bull_obs) > ob_max_count
                 box.delete(array.shift(bull_obs))
@@ -110,7 +110,7 @@ if barstate.isconfirmed and show_ob
                     ob_idx := bar_index - i
                     break
 
-            box b = box.new(ob_idx, high[bar_index - ob_idx], ob_idx + 1, low[bar_index - ob_idx], bgcolor=color.new(color.red, 90), border_color=color.red, extend=extend.right)
+            box b = box.new(ob_idx, high[bar_index - ob_idx], ob_idx + 1, low[bar_index - ob_idx], bgcolor=color.new(color_bear, 90), border_color=color_bear, extend=extend.right)
             array.push(bear_obs, b)
             if array.size(bear_obs) > ob_max_count
                 box.delete(array.shift(bear_obs))
@@ -191,11 +191,14 @@ if barstate.isconfirmed
             label.new(bar_index, high, "Sell", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
 
 // Equal Highs / Lows (EQL) and Liquidity
+hi_10 = ta.highest(high, 10)
+lo_20 = ta.lowest(low, 20)
+
 if barstate.isconfirmed
-    if ta.highest(high, 10) == high and (high == high[1] or high == high[2])
+    if hi_10 == high and (high == high[1] or high == high[2])
         label.new(bar_index, high, "EQL", yloc=yloc.abovebar, style=label.style_none, textcolor=color_eql, size=size.tiny)
 
-    if low < ta.lowest(low, 20)[1] and close > low
+    if low < lo_20[1] and close > low
         label.new(bar_index, low, "Weak Low", yloc=yloc.belowbar, style=label.style_none, textcolor=color_liq, size=size.tiny)
 
 plot(close, color=color.new(color.white, 100))
