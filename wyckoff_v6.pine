@@ -142,9 +142,9 @@ else if volume < avg_vol * 0.5 and spread > ta.sma(spread, 20)
 // Boxes for TR
 var box tr_box = na
 if show_boxes and not na(tr_high) and not na(tr_low) and barstate.isconfirmed
-    if na(tr_box) or ta.change(tr_high) or ta.change(tr_low)
+    if na(tr_box) or tr_high != tr_high[1] or tr_low != tr_low[1]
         tr_box := box.new(bar_index, tr_high, bar_index, tr_low,
-             bgcolor = current_bias == "Strongly Bullish" or current_bias == "Bullish" ? color_acc : color_dist,
+             bgcolor = str.contains(current_bias, "Bullish") ? color_acc : color_dist,
              border_style = line.style_dotted)
     else
         box.set_right(tr_box, bar_index)
