@@ -1,0 +1,127 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © MiraajTech
+
+//@version=6
+indicator("SimpliTradeAI Powered by MiraajTech", overlay = true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500)
+
+// --- Inputs ---
+// Group: Strategy Settings
+s1_len = input.int(9, "S1 EMA Length", group = "Strategy Settings")
+s2_len = input.int(21, "S2 EMA Length", group = "Strategy Settings")
+rsi_len = input.int(14, "RSI Length", group = "Strategy Settings")
+
+// Group: Multi-Timeframe Dashboard
+show_dashboard = input.bool(true, "Show Dashboard", group = "Multi-Timeframe Dashboard")
+
+// Group: Visuals
+tp_sl_multiplier = input.float(1.5, "ATR Multiplier for TP/SL", group = "Visuals")
+
+// --- Calculations ---
+s1 = ta.ema(close, s1_len)
+s2 = ta.ema(close, s2_len)
+rsi = ta.rsi(close, rsi_len)
+atr = ta.atr(14)
+
+// --- Multi-Timeframe Fetching ---
+f_get_tf_data(tf) =>
+    request.security(syminfo.tickerid, tf, [ta.rsi(close, rsi_len), ta.ema(close, s1_len), ta.ema(close, s2_len)])
+
+[rsi_1m, s1_1m, s2_1m] = f_get_tf_data("1")
+[rsi_5m, s1_5m, s2_5m] = f_get_tf_data("5")
+[rsi_15m, s1_15m, s2_15m] = f_get_tf_data("15")
+[rsi_30m, s1_30m, s2_30m] = f_get_tf_data("30")
+[rsi_1h, s1_1h, s2_1h] = f_get_tf_data("60")
+[rsi_4h, s1_4h, s2_4h] = f_get_tf_data("240")
+[rsi_1d, s1_1d, s2_1d] = f_get_tf_data("D")
+
+// --- Trendline Breakout Logic ---
+pivot_lookback = input.int(5, "Pivot Lookback", group = "Trendline Settings")
+ph = ta.pivothigh(high, pivot_lookback, pivot_lookback)
+
+var int ph1_idx = na
+var float ph1_val = na
+var int ph2_idx = na
+var float ph2_val = na
+
+if not na(ph)
+    ph2_idx := ph1_idx
+    ph2_val := ph1_val
+    ph1_idx := bar_index[pivot_lookback]
+    ph1_val := ph
+
+// Calculate trendline
+float tl_val = na
+bool is_descending = ph1_val < ph2_val
+
+if not na(ph1_val) and not na(ph2_val)
+    slope = (ph1_val - ph2_val) / (ph1_idx - ph2_idx)
+    tl_val := ph1_val + slope * (bar_index - ph1_idx)
+
+bool breakout = ta.crossover(close, tl_val) and is_descending and s1 > s2
+
+// --- Dashboard Table ---
+var table dash = table.new(position.top_right, 4, 9, bgcolor = color.new(color.black, 20), border_width = 1, border_color = color.gray)
+
+f_set_cell(r, tf, rsi_val, s1_val, s2_val) =>
+    rsi_col = rsi_val > 70 ? color.green : rsi_val < 30 ? color.red : color.white
+    gc_text = s1_val > s2_val ? "S1 > S2" : "S1 < S2"
+    gc_col  = s1_val > s2_val ? color.green : color.red
+    alert_text = s1_val > s2_val ? "BUY" : "WAIT"
+    alert_col  = s1_val > s2_val ? color.green : color.gray
+
+    table.cell(dash, 0, r, tf, text_color = color.white)
+    table.cell(dash, 1, r, str.tostring(rsi_val, "#.0"), text_color = rsi_col)
+    table.cell(dash, 2, r, gc_text, text_color = gc_col)
+    table.cell(dash, 3, r, alert_text, text_color = color.white, bgcolor = alert_col)
+
+if barstate.islast and show_dashboard
+    table.merge_cells(dash, 0, 0, 3, 0)
+    table.cell(dash, 0, 0, "▤ HAPPY TRADING ▤", text_color = color.green, text_size = size.small)
+
+    table.cell(dash, 0, 1, "TF", text_color = color.white)
+    table.cell(dash, 1, 1, "Rsi 14", text_color = color.white)
+    table.cell(dash, 2, 1, "Golden Cross", text_color = color.white)
+    table.cell(dash, 3, 1, "Alerts", text_color = color.white)
+
+    f_set_cell(2, "1m", rsi_1m, s1_1m, s2_1m)
+    f_set_cell(3, "5m", rsi_5m, s1_5m, s2_5m)
+    f_set_cell(4, "15m", rsi_15m, s1_15m, s2_15m)
+    f_set_cell(5, "30m", rsi_30m, s1_30m, s2_30m)
+    f_set_cell(6, "1h", rsi_1h, s1_1h, s2_1h)
+    f_set_cell(7, "4h", rsi_4h, s1_4h, s2_4h)
+    f_set_cell(8, "1D", rsi_1d, s1_1d, s2_1d)
+
+// --- Visual Signals and Targets ---
+// Function defined at global scope to avoid syntax error
+f_draw_signal(p, txt, col) =>
+    line.new(bar_index, p, bar_index + 10, p, color = color.new(col, 50), style = line.style_dashed)
+    label.new(bar_index + 10, p, txt + " " + str.tostring(p, format.mintick), color = col, textcolor = color.white, style = label.style_label_left)
+
+var line tl_line = na
+if not na(tl_val)
+    if na(tl_line)
+        tl_line := line.new(ph2_idx, ph2_val, bar_index, tl_val, color = color.gray, width = 2)
+    else
+        line.set_xy1(tl_line, ph2_idx, ph2_val)
+        line.set_xy2(tl_line, bar_index, tl_val)
+
+if breakout and barstate.isconfirmed
+    entry_price = close
+    sl_price = entry_price - atr * tp_sl_multiplier
+    tp1_price = entry_price + atr * tp_sl_multiplier
+    tp2_price = entry_price + atr * tp_sl_multiplier * 2
+    tp3_price = entry_price + atr * tp_sl_multiplier * 3
+
+    label.new(bar_index, high, "BUY BREAKOUT", style = label.style_label_down, color = color.green, textcolor = color.white)
+
+    // Labels and Lines for Entry/TP/SL
+    f_draw_signal(tp3_price, "TP3", color.green)
+    f_draw_signal(tp2_price, "TP2", color.green)
+    f_draw_signal(tp1_price, "TP1", color.green)
+    f_draw_signal(entry_price, "ENTRY", color.gray)
+    f_draw_signal(sl_price, "SL", color.red)
+
+// Plot EMAs
+p1 = plot(s1, color = color.new(color.blue, 0), title = "S1 EMA")
+p2 = plot(s2, color = color.new(color.red, 0), title = "S2 EMA")
+fill(p1, p2, color = s1 > s2 ? color.new(color.blue, 80) : color.new(color.red, 80), title = "EMA Fill")
