@@ -30,46 +30,59 @@ var int last_pl_idx = 0
 ph = ta.pivothigh(high, pivot_len, pivot_len)
 pl = ta.pivotlow(low, pivot_len, pivot_len)
 
-if not na(ph)
-    hi_val := ph
-    last_ph_idx := bar_index[pivot_len]
-if not na(pl)
-    lo_val := pl
-    last_pl_idx := bar_index[pivot_len]
+if barstate.isconfirmed
+    if not na(ph)
+        hi_val := ph
+        last_ph_idx := bar_index[pivot_len]
+    if not na(pl)
+        lo_val := pl
+        last_pl_idx := bar_index[pivot_len]
 
 // Detect Breakouts
 bool bos_occured = false
 bool choch_occured = false
 
+var bool hi_broken = false
+var bool lo_broken = false
+
 if barstate.isconfirmed and show_smc
     if bull_trend
-        if not na(hi_val) and close > hi_val
+        if not na(hi_val) and close > hi_val and not hi_broken
             line.new(last_ph_idx, hi_val, bar_index, hi_val, color=color.new(color_bos, 50), style=line.style_dashed)
             label.new(int((last_ph_idx + bar_index) / 2), hi_val, "BOS", style=label.style_none, textcolor=color_bos, size=size.tiny)
-            hi_val := high // Update internal high to latest confirmed
             bos_occured := true
+            hi_broken := true
         else if not na(lo_val) and close < lo_val
             line.new(last_pl_idx, lo_val, bar_index, lo_val, color=color.new(color_choch, 50), style=line.style_dashed)
             label.new(int((last_pl_idx + bar_index) / 2), lo_val, "CHoCH", style=label.style_none, textcolor=color_choch, size=size.tiny)
             bull_trend := false
             lo_val := low
             choch_occured := true
+            hi_broken := false
+            lo_broken := false
     else
-        if not na(lo_val) and close < lo_val
+        if not na(lo_val) and close < lo_val and not lo_broken
             line.new(last_pl_idx, lo_val, bar_index, lo_val, color=color.new(color_bos, 50), style=line.style_dashed)
             label.new(int((last_pl_idx + bar_index) / 2), lo_val, "BOS", style=label.style_none, textcolor=color_bos, size=size.tiny)
-            lo_val := low
             bos_occured := true
+            lo_broken := true
         else if not na(hi_val) and close > hi_val
             line.new(last_ph_idx, hi_val, bar_index, hi_val, color=color.new(color_choch, 50), style=line.style_dashed)
             label.new(int((last_ph_idx + bar_index) / 2), hi_val, "CHoCH", style=label.style_none, textcolor=color_choch, size=size.tiny)
             bull_trend := true
             hi_val := high
             choch_occured := true
+            hi_broken := false
+            lo_broken := false
+
+if not na(ph)
+    hi_broken := false
+if not na(pl)
+    lo_broken := false
 
 // --- Order Blocks & Zones ---
-var box[] bull_obs = array.new_box()
-var box[] bear_obs = array.new_box()
+var bull_obs = array.new<box>()
+var bear_obs = array.new<box>()
 
 if barstate.isconfirmed
     if not na(ph) and show_ob
@@ -115,20 +128,21 @@ if barstate.isconfirmed and show_ob
             if array.size(bear_obs) > ob_max_count
                 box.delete(array.shift(bear_obs))
 
-    // OB Mitigation
-    if array.size(bull_obs) > 0
-        for i = array.size(bull_obs) - 1 to 0
-            box b = array.get(bull_obs, i)
-            if low < box.get_bottom(b)
-                box.delete(b)
-                array.remove(bull_obs, i)
+    // OB Mitigation - Only on confirmed bars to prevent repainting
+    if barstate.isconfirmed
+        if array.size(bull_obs) > 0
+            for i = array.size(bull_obs) - 1 to 0
+                box b = array.get(bull_obs, i)
+                if low < box.get_bottom(b)
+                    box.set_right(b, bar_index)
+                    array.remove(bull_obs, i)
 
-    if array.size(bear_obs) > 0
-        for i = array.size(bear_obs) - 1 to 0
-            box b = array.get(bear_obs, i)
-            if high > box.get_top(b)
-                box.delete(b)
-                array.remove(bear_obs, i)
+        if array.size(bear_obs) > 0
+            for i = array.size(bear_obs) - 1 to 0
+                box b = array.get(bear_obs, i)
+                if high > box.get_top(b)
+                    box.set_right(b, bar_index)
+                    array.remove(bear_obs, i)
 
 // Premium/Discount Zones
 var box premium_zone = na
@@ -146,31 +160,30 @@ if show_zones and not na(hi_val) and not na(lo_val)
         equilibrium_zone := box.new(bar_index - 100, mid + (hi_val-lo_val)*0.01, bar_index + 50, mid - (hi_val-lo_val)*0.01, bgcolor=color.new(color.gray, 80), border_color=color.new(color.gray, 60), text="Equilibrium", text_size=size.small, text_halign=text.align_right, text_color=color.gray)
 
 // --- HTF Liquidity Levels ---
-[pdh, pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead=barmerge.lookahead_on)
-[pwh, pwl] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead=barmerge.lookahead_on)
+// Non-repainting HTF levels
+pdh_val = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+pdl_val = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_on)
+pwl_val = request.security(syminfo.tickerid, "W", low[1], lookahead=barmerge.lookahead_on)
 
-var line pdh_line = na
-var line pdl_line = na
-var line pwl_line = na
-var label pdh_lab = na
-var label pdl_lab = na
-var label pwl_lab = na
+var line pdh_line = line.new(na, na, na, na, color=color.gray, width=1, style=line.style_solid)
+var line pdl_line = line.new(na, na, na, na, color=color.gray, width=1, style=line.style_solid)
+var line pwl_line = line.new(na, na, na, na, color=color.blue, width=1, style=line.style_solid)
+var label pdh_lab = label.new(na, na, "PDH", style=label.style_none, textcolor=color.gray, size=size.tiny, text_align=text.align_left)
+var label pdl_lab = label.new(na, na, "PDL", style=label.style_none, textcolor=color.gray, size=size.tiny, text_align=text.align_left)
+var label pwl_lab = label.new(na, na, "PWL", style=label.style_none, textcolor=color.blue, size=size.tiny, text_align=text.align_left)
 
 if show_htf and barstate.islast
-    line.delete(pdh_line)
-    line.delete(pdl_line)
-    line.delete(pwl_line)
-    label.delete(pdh_lab)
-    label.delete(pdl_lab)
-    label.delete(pwl_lab)
-    pdh_line := line.new(bar_index - 100, pdh, bar_index + 50, pdh, color=color.gray, width=1, style=line.style_solid)
-    pdh_lab := label.new(bar_index + 50, pdh, "PDH", style=label.style_none, textcolor=color.gray, size=size.tiny, textalign=text.align_left)
+    line.set_xy1(pdh_line, bar_index - 50, pdh_val)
+    line.set_xy2(pdh_line, bar_index + 20, pdh_val)
+    label.set_xy(pdh_lab, bar_index + 20, pdh_val)
 
-    pdl_line := line.new(bar_index - 100, pdl, bar_index + 50, pdl, color=color.gray, width=1, style=line.style_solid)
-    pdl_lab := label.new(bar_index + 50, pdl, "PDL", style=label.style_none, textcolor=color.gray, size=size.tiny, textalign=text.align_left)
+    line.set_xy1(pdl_line, bar_index - 50, pdl_val)
+    line.set_xy2(pdl_line, bar_index + 20, pdl_val)
+    label.set_xy(pdl_lab, bar_index + 20, pdl_val)
 
-    pwl_line := line.new(bar_index - 100, pwl, bar_index + 50, pwl, color=color.blue, width=1, style=line.style_solid)
-    pwl_lab := label.new(bar_index + 50, pwl, "PWL", style=label.style_none, textcolor=color.blue, size=size.tiny, textalign=text.align_left)
+    line.set_xy1(pwl_line, bar_index - 50, pwl_val)
+    line.set_xy2(pwl_line, bar_index + 20, pwl_val)
+    label.set_xy(pwl_lab, bar_index + 20, pwl_val)
 
 // --- Watermark ---
 var table watermark = table.new(position.middle_center, 1, 1)
