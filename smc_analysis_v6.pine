@@ -1,0 +1,155 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("SMC Multi-TF Analysis", overlay=true, max_boxes_count=500, max_labels_count=500)
+
+// --- Inputs ---
+htf_tf = input.timeframe("240", "Higher Timeframe (HTF)")
+mtf_tf = input.timeframe("60", "Medium Timeframe (MTF)")
+ltf_tf = input.timeframe("15", "Lower Timeframe (LTF)")
+
+// --- Functions ---
+f_get_htf_data() =>
+    float _ph = ta.pivothigh(high, 5, 5)
+    float _pl = ta.pivotlow(low, 5, 5)
+    [_ph, _pl, time]
+
+f_get_mtf_data() =>
+    float _ph = ta.pivothigh(high, 5, 5)
+    float _pl = ta.pivotlow(low, 5, 5)
+    bool _fvg_bull = low > high[2]
+    bool _fvg_bear = high < low[2]
+    bool _eqh = math.abs(high - high[1]) < syminfo.mintick * 10
+    bool _eql = math.abs(low - low[1]) < syminfo.mintick * 10
+    [_ph, _pl, _fvg_bull, _fvg_bear, high[2], low[2], low, high, close, time, time[2], _eqh, _eql, open[1], high[1], low[1]]
+
+f_get_ltf_data() =>
+    float _ph = ta.pivothigh(high, 3, 3)
+    float _pl = ta.pivotlow(low, 3, 3)
+    bool _conf_bull = close > open and close[1] < open[1] and close > open[1] and open < close[1]
+    bool _conf_bear = close < open and close[1] > open[1] and close < open[1] and open > close[1]
+    [_ph, _pl, _conf_bull, _conf_bear, close]
+
+// --- Execution ---
+
+// HTF Data
+[htf_ph, htf_pl, htf_time] = request.security(syminfo.tickerid, htf_tf, f_get_htf_data())
+
+var htf_dir = 0
+var float htf_last_ph = na
+var float htf_last_pl = na
+
+if not na(htf_ph)
+    htf_dir := htf_ph > htf_last_ph ? 1 : htf_dir
+    htf_last_ph := htf_ph
+
+if not na(htf_pl)
+    htf_dir := htf_pl < htf_last_pl ? -1 : htf_dir
+    htf_last_pl := htf_pl
+
+// MTF Data
+[mtf_ph, mtf_pl, mtf_fvg_bull, mtf_fvg_bear, mtf_fvg_h2, mtf_fvg_l2, mtf_low, mtf_high, mtf_close, mtf_time, mtf_time2, mtf_eqh, mtf_eql, mtf_open1, mtf_high1, mtf_low1] = request.security(syminfo.tickerid, mtf_tf, f_get_mtf_data())
+
+var mtf_trend = 0
+var float mtf_last_ph = na
+var float mtf_last_pl = na
+bool is_new_mtf_bar = ta.change(time(mtf_tf)) != 0
+
+if not na(mtf_ph)
+    if mtf_close > mtf_last_ph
+        mtf_trend := 1
+    mtf_last_ph := mtf_ph
+
+if not na(mtf_pl)
+    if mtf_close < mtf_last_pl
+        mtf_trend := -1
+    mtf_last_pl := mtf_pl
+
+// LTF Data
+[ltf_ph, ltf_pl, ltf_conf_bull, ltf_conf_bear, ltf_close] = request.security(syminfo.tickerid, ltf_tf, f_get_ltf_data())
+
+var ltf_trend = 0
+var float ltf_last_ph = na
+var float ltf_last_pl = na
+var ltf_signal = "WAIT"
+
+if not na(ltf_ph)
+    ltf_trend := ltf_close > ltf_last_ph ? 1 : ltf_trend
+    ltf_last_ph := ltf_ph
+
+if not na(ltf_pl)
+    ltf_trend := ltf_close < ltf_last_pl ? -1 : ltf_trend
+    ltf_last_pl := ltf_pl
+
+if ltf_trend == 1 and ltf_conf_bull
+    ltf_signal := "BUY"
+else if ltf_trend == -1 and ltf_conf_bear
+    ltf_signal := "SELL"
+else if ltf_trend == 1
+    ltf_signal := "BULLISH"
+else if ltf_trend == -1
+    ltf_signal := "BEARISH"
+
+// --- Dashboard ---
+var table smc_dash = table.new(position.top_right, 2, 4, border_width=1, border_color=color.gray)
+
+if barstate.islast
+    table.cell(smc_dash, 0, 0, "Timeframe", bgcolor=color.gray, text_color=color.white)
+    table.cell(smc_dash, 1, 0, "Status", bgcolor=color.gray, text_color=color.white)
+
+    table.cell(smc_dash, 0, 1, "4H (HTF) Direction", bgcolor=color.black, text_color=color.white)
+    table.cell(smc_dash, 1, 1, htf_dir == 1 ? "BULLISH" : htf_dir == -1 ? "BEARISH" : "NEUTRAL", bgcolor=htf_dir == 1 ? color.new(color.green, 50) : htf_dir == -1 ? color.new(color.red, 50) : color.gray)
+
+    table.cell(smc_dash, 0, 2, "1H (MTF) Trend", bgcolor=color.black, text_color=color.white)
+    table.cell(smc_dash, 1, 2, mtf_trend == 1 ? "BULLISH" : mtf_trend == -1 ? "BEARISH" : "NEUTRAL", bgcolor=mtf_trend == 1 ? color.new(color.green, 50) : mtf_trend == -1 ? color.new(color.red, 50) : color.gray)
+
+    table.cell(smc_dash, 0, 3, "15m (LTF) Signal", bgcolor=color.black, text_color=color.white)
+    table.cell(smc_dash, 1, 3, ltf_signal, bgcolor=ltf_trend == 1 ? color.new(color.green, 50) : ltf_trend == -1 ? color.new(color.red, 50) : color.gray)
+
+// --- Visualizations ---
+
+if is_new_mtf_bar
+    // FVG using bar_time
+    if mtf_fvg_bull
+        box.new(mtf_time2, mtf_fvg_h2, mtf_time, mtf_low, xloc=xloc.bar_time, border_color=color.new(color.orange, 60), bgcolor=color.new(color.orange, 80))
+    if mtf_fvg_bear
+        box.new(mtf_time2, mtf_fvg_l2, mtf_time, mtf_high, xloc=xloc.bar_time, border_color=color.new(color.orange, 60), bgcolor=color.new(color.orange, 80))
+
+    // BOS/CHoCH Labels
+    bool mtf_is_bos_bull = not na(mtf_ph) and mtf_close > mtf_last_ph
+    bool mtf_is_bos_bear = not na(mtf_pl) and mtf_close < mtf_last_pl
+
+    if mtf_is_bos_bull
+        label.new(bar_index, high, "BOS", style=label.style_label_down, color=color.green, textcolor=color.white, size=size.small)
+        // Order Block (last candle before BOS)
+        box.new(mtf_time - (mtf_time - mtf_time2)/2, mtf_high1, mtf_time, mtf_low1, xloc=xloc.bar_time, border_color=color.new(color.green, 60), bgcolor=color.new(color.green, 80), extend=extend.right)
+    if mtf_is_bos_bear
+        label.new(bar_index, low, "BOS", style=label.style_label_up, color=color.red, textcolor=color.white, size=size.small)
+        // Order Block (last candle before BOS)
+        box.new(mtf_time - (mtf_time - mtf_time2)/2, mtf_high1, mtf_time, mtf_low1, xloc=xloc.bar_time, border_color=color.new(color.red, 60), bgcolor=color.new(color.red, 80), extend=extend.right)
+
+    // Liquidity
+    if mtf_eqh
+        label.new(bar_index, high, "EQH (Liq)", style=label.style_label_down, color=color.purple, textcolor=color.white, size=size.tiny)
+    if mtf_eql
+        label.new(bar_index, low, "EQL (Liq)", style=label.style_label_up, color=color.purple, textcolor=color.white, size=size.tiny)
+
+// LTF Confirmation
+if ltf_conf_bull
+    label.new(bar_index, low, "✓", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small)
+if ltf_conf_bear
+    label.new(bar_index, high, "✓", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
+
+// HTF S/D zones
+var box htf_supply = na
+var box htf_demand = na
+
+if ta.change(time(htf_tf)) != 0
+    if not na(htf_ph)
+        htf_supply := box.new(mtf_time, htf_ph * 1.0005, mtf_time + 1000 * 60 * 60 * 10, htf_ph * 0.9995, xloc=xloc.bar_time, border_color=color.new(color.red, 60), bgcolor=color.new(color.red, 80), extend=extend.right)
+    if not na(htf_pl)
+        htf_demand := box.new(mtf_time, htf_pl * 1.0005, mtf_time + 1000 * 60 * 60 * 10, htf_pl * 0.9995, xloc=xloc.bar_time, border_color=color.new(color.green, 60), bgcolor=color.new(color.green, 80), extend=extend.right)
+
+// Final Plot
+plot(close, color=color.new(color.blue, 100))
