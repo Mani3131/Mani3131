@@ -45,24 +45,24 @@ if barstate.isconfirmed and show_smc
     if bull_trend
         if not na(hi_val) and close > hi_val
             line.new(last_ph_idx, hi_val, bar_index, hi_val, color=color.new(color_bos, 50), style=line.style_dashed)
-            label.new(math.avg(last_ph_idx, bar_index), hi_val, "BOS", style=label.style_none, textcolor=color_bos, size=size.tiny)
+            label.new(int(math.avg(last_ph_idx, bar_index)), hi_val, "BOS", style=label.style_none, textcolor=color_bos, size=size.tiny)
             hi_val := high // Update internal high to latest confirmed
             bos_occured := true
         else if not na(lo_val) and close < lo_val
             line.new(last_pl_idx, lo_val, bar_index, lo_val, color=color.new(color_choch, 50), style=line.style_dashed)
-            label.new(math.avg(last_pl_idx, bar_index), lo_val, "CHoCH", style=label.style_none, textcolor=color_choch, size=size.tiny)
+            label.new(int(math.avg(last_pl_idx, bar_index)), lo_val, "CHoCH", style=label.style_none, textcolor=color_choch, size=size.tiny)
             bull_trend := false
             lo_val := low
             choch_occured := true
     else
         if not na(lo_val) and close < lo_val
             line.new(last_pl_idx, lo_val, bar_index, lo_val, color=color.new(color_bos, 50), style=line.style_dashed)
-            label.new(math.avg(last_pl_idx, bar_index), lo_val, "BOS", style=label.style_none, textcolor=color_bos, size=size.tiny)
+            label.new(int(math.avg(last_pl_idx, bar_index)), lo_val, "BOS", style=label.style_none, textcolor=color_bos, size=size.tiny)
             lo_val := low
             bos_occured := true
         else if not na(hi_val) and close > hi_val
             line.new(last_ph_idx, hi_val, bar_index, hi_val, color=color.new(color_choch, 50), style=line.style_dashed)
-            label.new(math.avg(last_ph_idx, bar_index), hi_val, "CHoCH", style=label.style_none, textcolor=color_choch, size=size.tiny)
+            label.new(int(math.avg(last_ph_idx, bar_index)), hi_val, "CHoCH", style=label.style_none, textcolor=color_choch, size=size.tiny)
             bull_trend := true
             hi_val := high
             choch_occured := true
