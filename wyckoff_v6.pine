@@ -38,6 +38,10 @@ var bool is_sc = false
 var bool is_bc = false
 var bool is_ar = false
 
+// Signal variables (non-persistent series)
+confirmed_buy = false
+confirmed_sell = false
+
 // All state-changing logic must be protected by barstate.isconfirmed to prevent repainting
 if barstate.isconfirmed
     // Detect Selling Climax (SC) - High volume, sharp drop
@@ -129,6 +133,10 @@ if barstate.isconfirmed
         else if close < tr_low
             current_bias := "Bearish"
 
+    // Buy/Sell Signal Logic (set based on confirmed phase events)
+    confirmed_buy := is_spring or is_sos or (current_phase == "Phase E" and current_bias == "Strongly Bullish" and current_phase != current_phase[1])
+    confirmed_sell := is_ut or is_sow or (current_phase == "Phase E" and current_bias == "Strongly Bearish" and current_phase != current_phase[1])
+
 // --- Relative Strength (Wyckoff Step 2) ---
 benchmark_close = request.security(benchmark_sym, timeframe.period, close)
 rel_strength = benchmark_close != 0 ? close / benchmark_close : 1.0
@@ -179,6 +187,14 @@ if show_table and barstate.islast
     table.cell(status_table, 0, 4, "Composite Man", bgcolor = color.gray, text_color = color.white)
     comp_man = current_bias == "Strongly Bullish" or current_bias == "Bullish" ? "Accumulating" : current_bias == "Strongly Bearish" or current_bias == "Bearish" ? "Distributing" : "Observing"
     table.cell(status_table, 1, 4, comp_man, bgcolor = color.rgb(50, 50, 50), text_color = color.white)
+
+// --- Buy/Sell Signal Visualization ---
+plotshape(confirmed_buy, title = "Buy Signal", style = shape.triangleup, location = location.belowbar, color = color.green, size = size.small, text = "BUY", textcolor = color.green)
+plotshape(confirmed_sell, title = "Sell Signal", style = shape.triangledown, location = location.abovebar, color = color.red, size = size.small, text = "SELL", textcolor = color.red)
+
+// --- Alerts ---
+alertcondition(confirmed_buy, title = "Wyckoff Buy Signal", message = "Wyckoff Buy Signal detected on {{ticker}}")
+alertcondition(confirmed_sell, title = "Wyckoff Sell Signal", message = "Wyckoff Sell Signal detected on {{ticker}}")
 
 // Plot TR Boundaries
 plot(tr_high, "TR High", color = color.new(color.red, 50), style = plot.style_stepline)
