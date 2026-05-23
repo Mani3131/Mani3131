@@ -164,13 +164,13 @@ if show_htf and barstate.islast
     label.delete(pdl_lab)
     label.delete(pwl_lab)
     pdh_line := line.new(bar_index - 100, pdh, bar_index + 50, pdh, color=color.gray, width=1, style=line.style_solid)
-    pdh_lab := label.new(bar_index + 50, pdh, "PDH", style=label.style_none, textcolor=color.gray, size=size.tiny, text_halign=text.align_left)
+    pdh_lab := label.new(bar_index + 50, pdh, "PDH", style=label.style_none, textcolor=color.gray, size=size.tiny, textalign=text.align_left)
 
     pdl_line := line.new(bar_index - 100, pdl, bar_index + 50, pdl, color=color.gray, width=1, style=line.style_solid)
-    pdl_lab := label.new(bar_index + 50, pdl, "PDL", style=label.style_none, textcolor=color.gray, size=size.tiny, text_halign=text.align_left)
+    pdl_lab := label.new(bar_index + 50, pdl, "PDL", style=label.style_none, textcolor=color.gray, size=size.tiny, textalign=text.align_left)
 
     pwl_line := line.new(bar_index - 100, pwl, bar_index + 50, pwl, color=color.blue, width=1, style=line.style_solid)
-    pwl_lab := label.new(bar_index + 50, pwl, "PWL", style=label.style_none, textcolor=color.blue, size=size.tiny, text_halign=text.align_left)
+    pwl_lab := label.new(bar_index + 50, pwl, "PWL", style=label.style_none, textcolor=color.blue, size=size.tiny, textalign=text.align_left)
 
 // --- Watermark ---
 var table watermark = table.new(position.middle_center, 1, 1)
