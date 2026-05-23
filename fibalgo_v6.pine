@@ -49,10 +49,10 @@ if not na(pl)
 f_label(x, y, txt, l_color, l_style, l_textcolor) =>
     label.new(x, y, txt, xloc.bar_index, yloc.price, l_color, l_style, l_textcolor, size.small)
 
-if ph and barstate.isconfirmed
+if not na(ph) and barstate.isconfirmed
     f_label(bar_index - pivot_len, high[pivot_len], "Probability of a Peak\n" + str.format("{0,number,#}%", prob_high[pivot_len]), color.red, label.style_label_down, color.white)
 
-if pl and barstate.isconfirmed
+if not na(pl) and barstate.isconfirmed
     f_label(bar_index - pivot_len, low[pivot_len], "Probability of a Bottom\n" + str.format("{0,number,#}%", prob_low[pivot_len]), color.teal, label.style_label_up, color.white)
 
 // Buy/Sell Zones (simplified as boxes around recent pivots)
@@ -61,13 +61,13 @@ var box sell_zone = na
 var label buy_label = na
 var label sell_label = na
 
-if ph and barstate.isconfirmed
+if not na(ph) and barstate.isconfirmed
     box.delete(sell_zone)
     label.delete(sell_label)
     sell_zone := box.new(bar_index - pivot_len, high[pivot_len] * 1.001, bar_index, high[pivot_len], bgcolor=color.new(color.red, 80), border_color=color.red)
     sell_label := label.new(bar_index, high[pivot_len], "Sell Zone", textcolor=color.white, style=label.style_none)
 
-if pl and barstate.isconfirmed
+if not na(pl) and barstate.isconfirmed
     box.delete(buy_zone)
     label.delete(buy_label)
     buy_zone := box.new(bar_index - pivot_len, low[pivot_len], bar_index, low[pivot_len] * 0.999, bgcolor=color.new(color.teal, 80), border_color=color.teal)
@@ -83,7 +83,7 @@ if ta.crossunder(low, last_low) and not na(last_low) and barstate.isconfirmed
     last_low := na // Reset
 
 // Risk:Reward Labels
-if ph and not na(last_low[pivot_len]) and barstate.isconfirmed
+if not na(ph) and not na(last_low[pivot_len]) and barstate.isconfirmed
     // Use price points for RR: (High - Low) / (Range as Stop)
     // Here we define a dummy stop of 1 ATR for RR logic
     atr = ta.atr(14)
