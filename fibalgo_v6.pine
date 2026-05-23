@@ -1,0 +1,130 @@
+//@version=6
+indicator("FibAlgo - R:R Trading System", overlay=true, max_labels_count=500, max_boxes_count=500, max_lines_count=500)
+
+// --- Inputs ---
+group_reg = "Linear Regression Channel"
+reg_len = input.int(100, "Channel Length", minval=5, group=group_reg)
+reg_mult = input.float(2.0, "Standard Deviation", minval=0.1, step=0.1, group=group_reg)
+reg_source = input.source(close, "Source", group_reg)
+
+group_dash = "Performance Dashboard"
+risk_per_trade = input.float(0.5, "Risk per Trade (%)", minval=0.0, step=0.1, group=group_dash)
+
+// --- Linear Regression Channel ---
+center = ta.linreg(reg_source, reg_len, 0)
+stdev = ta.stdev(reg_source, reg_len)
+upper = center + stdev * reg_mult
+lower = center - stdev * reg_mult
+
+plot(center, "Center Line", color.new(color.gray, 50))
+p_upper = plot(upper, "Upper Band", color.new(color.orange, 0))
+p_lower = plot(lower, "Lower Band", color.new(color.orange, 0))
+fill(p_upper, p_lower, color.new(color.orange, 90))
+
+// --- Reversal Detection and Probability ---
+pivot_len = input.int(5, "Pivot Lookback", minval=1)
+
+ph = ta.pivothigh(high, pivot_len, pivot_len)
+pl = ta.pivotlow(low, pivot_len, pivot_len)
+
+// Simple probability heuristic based on RSI overbought/oversold and price position relative to channel
+rsi_val = ta.rsi(close, 14)
+prob_high = math.min(100, math.max(10, rsi_val + (high - center) / (upper - center) * 20))
+prob_low = math.min(100, math.max(10, (100 - rsi_val) + (center - low) / (center - lower) * 20))
+
+// Variables to store trade stats
+var float last_high = na
+var float last_low = na
+var int wins = 0
+var int losses = 0
+var float total_r = 0.0
+var int total_trades = 0
+
+if not na(ph)
+    last_high := ph
+if not na(pl)
+    last_low := pl
+
+// --- Visual Annotations and Zones ---
+f_label(x, y, txt, l_color, l_style, l_textcolor) =>
+    label.new(x, y, txt, xloc.bar_index, yloc.price, l_color, l_style, l_textcolor, size.small)
+
+if ph and barstate.isconfirmed
+    f_label(bar_index - pivot_len, high[pivot_len], "Probability of a Peak\n" + str.format("{0,number,#}%", prob_high[pivot_len]), color.red, label.style_label_down, color.white)
+
+if pl and barstate.isconfirmed
+    f_label(bar_index - pivot_len, low[pivot_len], "Probability of a Bottom\n" + str.format("{0,number,#}%", prob_low[pivot_len]), color.teal, label.style_label_up, color.white)
+
+// Buy/Sell Zones (simplified as boxes around recent pivots)
+var box buy_zone = na
+var box sell_zone = na
+var label buy_label = na
+var label sell_label = na
+
+if ph and barstate.isconfirmed
+    box.delete(sell_zone)
+    label.delete(sell_label)
+    sell_zone := box.new(bar_index - pivot_len, high[pivot_len] * 1.001, bar_index, high[pivot_len], bgcolor=color.new(color.red, 80), border_color=color.red)
+    sell_label := label.new(bar_index, high[pivot_len], "Sell Zone", textcolor=color.white, style=label.style_none)
+
+if pl and barstate.isconfirmed
+    box.delete(buy_zone)
+    label.delete(buy_label)
+    buy_zone := box.new(bar_index - pivot_len, low[pivot_len], bar_index, low[pivot_len] * 0.999, bgcolor=color.new(color.teal, 80), border_color=color.teal)
+    buy_label := label.new(bar_index, low[pivot_len], "Buy Zone", textcolor=color.white, style=label.style_none)
+
+// Break Detection
+if ta.crossover(high, last_high) and not na(last_high) and barstate.isconfirmed
+    label.new(bar_index, high, "Break", color=color.red, style=label.style_label_down, textcolor=color.white, size=size.tiny)
+    last_high := na // Reset
+
+if ta.crossunder(low, last_low) and not na(last_low) and barstate.isconfirmed
+    label.new(bar_index, low, "Break", color=color.teal, style=label.style_label_up, textcolor=color.white, size=size.tiny)
+    last_low := na // Reset
+
+// Risk:Reward Labels
+if ph and not na(last_low[pivot_len]) and barstate.isconfirmed
+    // Use price points for RR: (High - Low) / (Range as Stop)
+    // Here we define a dummy stop of 1 ATR for RR logic
+    atr = ta.atr(14)
+    risk = atr[pivot_len] > 0 ? atr[pivot_len] : syminfo.mintick * 100
+    reward = math.abs(high[pivot_len] - last_low[pivot_len])
+    rr = reward / risk
+
+    label.new(bar_index - pivot_len, (high[pivot_len] + last_low[pivot_len])/2, "R:R 1:" + str.format("{0,number,#.##}", rr), style=label.style_none, textcolor=color.white, size=size.large)
+
+    // Update stats for dashboard
+    total_trades += 1
+    if rr > 1.5 // Benchmark for win
+        wins += 1
+        total_r += rr
+    else
+        losses += 1
+        total_r -= 1
+
+// --- Performance Dashboard ---
+var table perf_table = table.new(position.top_right, 2, 7, bgcolor=color.new(color.black, 50), border_width=1, border_color=color.gray)
+
+if barstate.islast
+    table.cell(perf_table, 0, 0, "Performance", text_color=color.white, bgcolor=color.gray)
+    table.cell(perf_table, 1, 0, "Overview", text_color=color.white, bgcolor=color.gray)
+
+    win_rate = total_trades > 0 ? (wins / float(total_trades)) * 100 : 0
+
+    table.cell(perf_table, 0, 1, "Win Rate", text_color=color.white)
+    table.cell(perf_table, 1, 1, str.format("{0,number,#.##}%", win_rate), text_color=color.white)
+
+    table.cell(perf_table, 0, 2, "Net R", text_color=color.white)
+    table.cell(perf_table, 1, 2, str.format("{0,number,#.##}R", total_r), text_color=color.white)
+
+    table.cell(perf_table, 0, 3, "Wins", text_color=color.white)
+    table.cell(perf_table, 1, 3, str.tostring(wins), text_color=color.white)
+
+    table.cell(perf_table, 0, 4, "Losses", text_color=color.white)
+    table.cell(perf_table, 1, 4, str.tostring(losses), text_color=color.white)
+
+    table.cell(perf_table, 0, 5, "Total Trades", text_color=color.white)
+    table.cell(perf_table, 1, 5, str.tostring(total_trades), text_color=color.white)
+
+    table.cell(perf_table, 0, 6, "Est. PnL", text_color=color.white)
+    table.cell(perf_table, 1, 6, str.format("{0,number,#.##}%", total_r * risk_per_trade), text_color=color.white)
