@@ -168,20 +168,20 @@ if is_sow
 var table status_table = table.new(position.top_right, 2, 5, border_width = 1)
 if show_table and barstate.islast
     table.cell(status_table, 0, 0, "Wyckoff Phase", bgcolor = color.gray, text_color = color.white)
-    table.cell(status_table, 1, 0, current_phase, bgcolor = color.darkgray, text_color = color.white)
+    table.cell(status_table, 1, 0, current_phase, bgcolor = color.rgb(50, 50, 50), text_color = color.white)
 
     table.cell(status_table, 0, 1, "Market Bias", bgcolor = color.gray, text_color = color.white)
-    table.cell(status_table, 1, 1, current_bias, bgcolor = color.darkgray, text_color = current_bias == "Strongly Bullish" or current_bias == "Bullish" ? color.green : current_bias == "Strongly Bearish" or current_bias == "Bearish" ? color.red : color.white)
+    table.cell(status_table, 1, 1, current_bias, bgcolor = color.rgb(50, 50, 50), text_color = current_bias == "Strongly Bullish" or current_bias == "Bullish" ? color.green : current_bias == "Strongly Bearish" or current_bias == "Bearish" ? color.red : color.white)
 
     table.cell(status_table, 0, 2, "Effort vs Result", bgcolor = color.gray, text_color = color.white)
-    table.cell(status_table, 1, 2, effort_vs_result, bgcolor = color.darkgray, text_color = effort_vs_result == "Harmony" ? color.green : color.orange)
+    table.cell(status_table, 1, 2, effort_vs_result, bgcolor = color.rgb(50, 50, 50), text_color = effort_vs_result == "Harmony" ? color.green : color.orange)
 
     table.cell(status_table, 0, 3, "Rel. Strength vs Index", bgcolor = color.gray, text_color = color.white)
-    table.cell(status_table, 1, 3, rs_status, bgcolor = color.darkgray, text_color = rs_status == "Outperforming" ? color.green : color.red)
+    table.cell(status_table, 1, 3, rs_status, bgcolor = color.rgb(50, 50, 50), text_color = rs_status == "Outperforming" ? color.green : color.red)
 
     table.cell(status_table, 0, 4, "Composite Man", bgcolor = color.gray, text_color = color.white)
     comp_man = current_bias == "Strongly Bullish" or current_bias == "Bullish" ? "Accumulating" : current_bias == "Strongly Bearish" or current_bias == "Bearish" ? "Distributing" : "Observing"
-    table.cell(status_table, 1, 4, comp_man, bgcolor = color.darkgray, text_color = color.white)
+    table.cell(status_table, 1, 4, comp_man, bgcolor = color.rgb(50, 50, 50), text_color = color.white)
 
 // Plot TR Boundaries
 plot(tr_high, "TR High", color = color.new(color.red, 50), style = plot.style_stepline)
