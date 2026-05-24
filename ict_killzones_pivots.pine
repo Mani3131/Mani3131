@@ -82,7 +82,7 @@ manage_limit(int limit, array<box> b_ids, array<label> l_ids, array<line> li_ids
     if array.size(li_ids) > limit * 2
         line.delete(array.shift(li_ids))
         line.delete(array.shift(li_ids))
-    na
+    float(na)
 
 type SessionState
     float h = na
@@ -139,7 +139,7 @@ update_session(SessionState sess, string sess_str, bool enabled, string name, co
 
         sess.active := false
         manage_limit(limit, b_ids, l_ids, li_ids)
-    na
+    float(na)
 
 var asia_state = SessionState.new()
 var lon_state = SessionState.new()
