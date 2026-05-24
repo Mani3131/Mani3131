@@ -1,0 +1,154 @@
+//@version=6
+indicator("ICT Killzones & Pivots [TFO]", shorttitle="Killzones [TFO]", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=500)
+
+// --- Inputs ---
+grp_gen = "Settings"
+drawing_limit = input.int(40, "Session Drawing Limit", minval=1, group=grp_gen)
+tf_limit = input.string("60", "Timeframe Limit", options=["1", "5", "15", "30", "60", "240"], group=grp_gen)
+timezone = input.string("UTC+3", "Timezone", group=grp_gen)
+label_size_inp = input.string("Large", "Label Size", options=["Tiny", "Small", "Normal", "Large", "Huge"], group=grp_gen)
+text_color_inp = input.color(color.black, "Text Color", group=grp_gen)
+
+cutoff_enabled = input.bool(true, "Drawing Cutoff Time", group=grp_gen, inline="cutoff")
+cutoff_sess = input.session("1801-1800", "", group=grp_gen, inline="cutoff")
+
+grp_kill = "KILLZONES"
+show_text = input.bool(true, "Display Text", group=grp_kill, inline="hdr")
+show_boxes = input.bool(true, "Show Killzone Boxes", group=grp_kill, inline="hdr")
+
+// Asia
+enable_asia = input.bool(true, "", group=grp_kill, inline="asia")
+asia_color = input.color(color.blue, "", group = grp_kill, inline="asia")
+asia_sess = input.session("2000-0000", "Asia", group=grp_kill, inline="asia")
+
+// London
+enable_lon = input.bool(true, "", group=grp_kill, inline="lon")
+lon_color = input.color(color.red, "", group = grp_kill, inline="lon")
+lon_sess = input.session("0200-0500", "London", group=grp_kill, inline="lon")
+
+// NY AM
+enable_nyam = input.bool(true, "", group=grp_kill, inline="nyam")
+nyam_color = input.color(color.green, "", group = grp_kill, inline="nyam")
+nyam_sess = input.session("0830-1100", "NY AM", group=grp_kill, inline="nyam")
+
+// NY Lunch
+enable_nyl = input.bool(true, "", group=grp_kill, inline="nyl")
+nyl_color = input.color(color.yellow, "", group = grp_kill, inline="nyl")
+nyl_sess = input.session("1200-1300", "NY Lunch", group=grp_kill, inline="nyl")
+
+// NY PM
+enable_nypm = input.bool(false, "", group=grp_kill, inline="nypm")
+nypm_color = input.color(color.purple, "", group = grp_kill, inline="nypm")
+nypm_sess = input.session("1330-1600", "NY PM", group=grp_kill, inline="nypm")
+
+box_transp = input.int(72, "Box Transparency", minval=0, maxval=100, group=grp_kill)
+text_transp = input.int(71, "Text Transparency", minval=0, maxval=100, group=grp_kill)
+
+// Helper for label size
+get_label_size(s) =>
+    switch s
+        "Tiny"   => size.tiny
+        "Small"  => size.small
+        "Normal" => size.normal
+        "Large"  => size.large
+        "Huge"   => size.huge
+        => size.normal
+
+// --- Logic ---
+
+is_tf_ok() =>
+    res = if not timeframe.isintraday
+        false
+    else
+        current_tf_min = timeframe.multiplier * (timeframe.isminutes ? 1.0 : (timeframe.isseconds ? 1.0/60.0 : 60.0))
+        limit_tf_min = str.tonumber(tf_limit)
+        current_tf_min <= limit_tf_min
+    res
+
+is_cutoff() =>
+    not cutoff_enabled or not na(time(timeframe.period, cutoff_sess, timezone))
+
+// FIFO Arrays
+var box_ids = array.new<box>()
+var label_ids = array.new<label>()
+var line_ids = array.new<line>()
+
+manage_limit(int limit, array<box> b_ids, array<label> l_ids, array<line> li_ids) =>
+    if array.size(b_ids) > limit
+        box.delete(array.shift(b_ids))
+    if array.size(l_ids) > limit * 2
+        label.delete(array.shift(l_ids))
+        label.delete(array.shift(l_ids))
+    if array.size(li_ids) > limit * 2
+        line.delete(array.shift(li_ids))
+        line.delete(array.shift(li_ids))
+    float(na)
+
+type SessionState
+    float h = na
+    float l = na
+    int h_idx = na
+    int l_idx = na
+    int start_idx = na
+    bool active = false
+
+update_session(SessionState sess, string sess_str, bool enabled, string name, color col, string prefix, int limit, array<box> b_ids, array<label> l_ids, array<line> li_ids, color t_col, int b_transp, int t_transp, string lab_size, bool s_box, bool s_text) =>
+    in_sess = enabled and not na(time(timeframe.period, sess_str, timezone)) and is_tf_ok() and is_cutoff()
+
+    if in_sess
+        if not sess.active
+            sess.active := true
+            sess.h := high
+            sess.l := low
+            sess.h_idx := bar_index
+            sess.l_idx := bar_index
+            sess.start_idx := bar_index
+        else
+            if high >= sess.h
+                sess.h := high
+                sess.h_idx := bar_index
+            if low <= sess.l
+                sess.l := low
+                sess.l_idx := bar_index
+    else if sess.active
+        // Session ended
+        end_idx = bar_index - 1
+
+        if s_box
+            bx = box.new(sess.start_idx, sess.h, end_idx, sess.l,
+                 bgcolor = color.new(col, b_transp), border_color = col,
+                 text = s_text ? name : "", text_color = color.new(t_col, t_transp),
+                 text_halign = text.align_center, text_valign = text.align_center)
+            array.push(b_ids, bx)
+
+        if s_text
+            // High Line and Label
+            li_h = line.new(sess.start_idx, sess.h, end_idx, sess.h, color = col, style = line.style_solid, extend = extend.right)
+            la_h = label.new(sess.h_idx, sess.h, prefix + ".H",
+                   style = label.style_none, textcolor = t_col, size = get_label_size(lab_size), yloc = yloc.abovebar)
+
+            // Low Line and Label
+            li_l = line.new(sess.start_idx, sess.l, end_idx, sess.l, color = col, style = line.style_solid, extend = extend.right)
+            la_l = label.new(sess.l_idx, sess.l, prefix + ".L",
+                   style = label.style_none, textcolor = t_col, size = get_label_size(lab_size), yloc = yloc.belowbar)
+
+            array.push(li_ids, li_h)
+            array.push(li_ids, li_l)
+            array.push(l_ids, la_h)
+            array.push(l_ids, la_l)
+
+        sess.active := false
+        manage_limit(limit, b_ids, l_ids, li_ids)
+    float(na)
+
+var asia_state = SessionState.new()
+var lon_state = SessionState.new()
+var nyam_state = SessionState.new()
+var nyl_state = SessionState.new()
+var nypm_state = SessionState.new()
+
+update_session(asia_state, asia_sess, enable_asia, "Asia", asia_color, "ASIA", drawing_limit, box_ids, label_ids, line_ids, text_color_inp, box_transp, text_transp, label_size_inp, show_boxes, show_text)
+update_session(lon_state, lon_sess, enable_lon, "London", lon_color, "LO", drawing_limit, box_ids, label_ids, line_ids, text_color_inp, box_transp, text_transp, label_size_inp, show_boxes, show_text)
+update_session(nyam_state, nyam_sess, enable_nyam, "NY AM", nyam_color, "NYAM", drawing_limit, box_ids, label_ids, line_ids, text_color_inp, box_transp, text_transp, label_size_inp, show_boxes, show_text)
+update_session(nyl_state, nyl_sess, enable_nyl, "NY Lunch", nyl_color, "NYL", drawing_limit, box_ids, label_ids, line_ids, text_color_inp, box_transp, text_transp, label_size_inp, show_boxes, show_text)
+update_session(nypm_state, nypm_sess, enable_nypm, "NY PM", nypm_color, "NYPM", drawing_limit, box_ids, label_ids, line_ids, text_color_inp, box_transp, text_transp, label_size_inp, show_boxes, show_text)
