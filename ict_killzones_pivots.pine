@@ -29,7 +29,7 @@ lon_sess = input.session("0200-0500", "London", group=grp_kill, inline="lon")
 // NY AM
 enable_nyam = input.bool(true, "", group=grp_kill, inline="nyam")
 nyam_color = input.color(color.green, "", group = grp_kill, inline="nyam")
-nyam_sess = input.session("0930-1100", "NY AM", group=grp_kill, inline="nyam")
+nyam_sess = input.session("0830-1100", "NY AM", group=grp_kill, inline="nyam")
 
 // NY Lunch
 enable_nyl = input.bool(true, "", group=grp_kill, inline="nyl")
@@ -57,12 +57,13 @@ get_label_size(s) =>
 // --- Logic ---
 
 is_tf_ok() =>
-    if not timeframe.isintraday
+    res = if not timeframe.isintraday
         false
     else
         current_tf_min = timeframe.multiplier * (timeframe.isminutes ? 1.0 : (timeframe.isseconds ? 1.0/60.0 : 60.0))
         limit_tf_min = str.tonumber(tf_limit)
         current_tf_min <= limit_tf_min
+    res
 
 is_cutoff() =>
     not cutoff_enabled or not na(time(timeframe.period, cutoff_sess, timezone))
@@ -81,6 +82,7 @@ manage_limit(int limit, array<box> b_ids, array<label> l_ids, array<line> li_ids
     if array.size(li_ids) > limit * 2
         line.delete(array.shift(li_ids))
         line.delete(array.shift(li_ids))
+    na
 
 type SessionState
     float h = na
@@ -137,6 +139,7 @@ update_session(SessionState sess, string sess_str, bool enabled, string name, co
 
         sess.active := false
         manage_limit(limit, b_ids, l_ids, li_ids)
+    na
 
 var asia_state = SessionState.new()
 var lon_state = SessionState.new()
