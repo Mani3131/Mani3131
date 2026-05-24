@@ -5,7 +5,7 @@ indicator("ICT Killzones & Pivots [TFO]", shorttitle="Killzones [TFO]", overlay=
 grp_gen = "Settings"
 drawing_limit = input.int(40, "Session Drawing Limit", minval=1, group=grp_gen)
 tf_limit = input.string("60", "Timeframe Limit", options=["1", "5", "15", "30", "60", "240"], group=grp_gen)
-timezone = input.string("America/New_York", "Timezone", group=grp_gen)
+timezone = input.string("UTC+3", "Timezone", group=grp_gen)
 label_size_inp = input.string("Large", "Label Size", options=["Tiny", "Small", "Normal", "Large", "Huge"], group=grp_gen)
 text_color_inp = input.color(color.black, "Text Color", group=grp_gen)
 
