@@ -116,9 +116,9 @@ if barstate.islast and position_side != 0
     label.delete(target_lbl)
     label.delete(stop_lbl)
 
-    target_line := line.new(bar_index, tp_price, bar_index + 5, tp_price, color=color.new(color.cyan, 0), width=2, style=line.style_dashed)
+    target_line := line.new(bar_index, tp_price, bar_index + 5, tp_price, color=color.new(color.aqua, 0), width=2, style=line.style_dashed)
     stop_line   := line.new(bar_index, sl_price, bar_index + 5, sl_price, color=color.new(color.red, 0), width=2, style=line.style_dashed)
-    target_lbl  := label.new(bar_index + 5, tp_price, "TP: " + str.tostring(tp_price, "#.##"), color=color.cyan, textcolor=color.white, style=label.style_label_left)
+    target_lbl  := label.new(bar_index + 5, tp_price, "TP: " + str.tostring(tp_price, "#.##"), color=color.aqua, textcolor=color.white, style=label.style_label_left)
     stop_lbl    := label.new(bar_index + 5, sl_price, "SL: " + str.tostring(sl_price, "#.##"), color=color.red,  textcolor=color.white, style=label.style_label_left)
 
 // --- Dashboard Table ---
