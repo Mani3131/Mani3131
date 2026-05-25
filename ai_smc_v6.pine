@@ -38,6 +38,7 @@ p2 = plot(smooth_slow, "Ribbon Slow", color=ribbon_color)
 fill(p1, p2, color=ribbon_color, title="Trend Ribbon")
 
 // --- Market Structure ---
+atr = ta.atr(14)
 var float last_hi = na
 var float last_lo = na
 var bool hi_broken = false
@@ -47,14 +48,14 @@ ph = ta.pivothigh(high, pivot_len, pivot_len)
 pl = ta.pivotlow(low, pivot_len, pivot_len)
 
 if not na(ph)
-    is_eqh = math.abs(ph - last_hi) < (ta.atr(14) * 0.2)
+    is_eqh = math.abs(ph - last_hi) < (atr * 0.2)
     last_hi := ph
     hi_broken := false
     if show_ms
         label.new(bar_index - pivot_len, ph, is_eqh ? "EQH" : "LO.H", color=color.new(color.gray, 100), textcolor=color.gray, style=label.style_label_down, size=size.small)
 
 if not na(pl)
-    is_eql = math.abs(pl - last_lo) < (ta.atr(14) * 0.2)
+    is_eql = math.abs(pl - last_lo) < (atr * 0.2)
     last_lo := pl
     lo_broken := false
     if show_ms
@@ -96,13 +97,13 @@ if not na(ph)
     bsl_level := ph
     bsl_swept := false
     if show_liq
-        label.new(bar_index - pivot_len, ph + (ta.atr(14) * 0.5), "BSL", color=color.new(color_bear, 100), textcolor=color_bear, style=label.style_label_down, size=size.tiny)
+        label.new(bar_index - pivot_len, ph + (atr * 0.5), "BSL", color=color.new(color_bear, 100), textcolor=color_bear, style=label.style_label_down, size=size.tiny)
 
 if not na(pl)
     ssl_level := pl
     ssl_swept := false
     if show_liq
-        label.new(bar_index - pivot_len, pl - (ta.atr(14) * 0.5), "SSL", color=color.new(color_bull, 100), textcolor=color_bull, style=label.style_label_up, size=size.tiny)
+        label.new(bar_index - pivot_len, pl - (atr * 0.5), "SSL", color=color.new(color_bull, 100), textcolor=color_bull, style=label.style_label_up, size=size.tiny)
 
 if not bsl_swept and not na(bsl_level) and high > bsl_level
     bsl_swept := true
@@ -134,8 +135,8 @@ if show_range and not na(last_hi) and not na(last_lo)
 t_pdh = request.security(syminfo.tickerid, "D", high[1])
 t_pdl = request.security(syminfo.tickerid, "D", low[1])
 
-plot(t_pdh, "PDH", color=color.new(color.blue, 50), style=plot.style_stepline_br)
-plot(t_pdl, "PDL", color=color.new(color.blue, 50), style=plot.style_stepline_br)
+plot(t_pdh, "PDH", color=color.new(color.blue, 50), style=plot.style_stepline)
+plot(t_pdl, "PDL", color=color.new(color.blue, 50), style=plot.style_stepline)
 
 // Monday labels
 is_monday = dayofweek == dayofweek.monday
