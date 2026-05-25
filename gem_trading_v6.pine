@@ -1,0 +1,130 @@
+//@version=6
+indicator("Gem Trading by Bea Dashboard", overlay=true, max_boxes_count=500, max_labels_count=500)
+
+// --- Functions ---
+f_add_row(tbl, row, label, value, val_color) =>
+    table.cell(tbl, 0, row, label, bgcolor=color.new(#1a1a1a, 0), text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+    table.cell(tbl, 1, row, value, bgcolor=color.new(#1a1a1a, 0), text_color=val_color, text_halign=text.align_right, text_size=size.small)
+
+// --- Inputs ---
+grp_sess = "Session Settings"
+session_time = input.session("0830-1100", "NY Session Time", group=grp_sess)
+session_tz   = input.string("UTC-4", "Timezone", group=grp_sess)
+
+grp_trend = "Trend Settings"
+ma_len   = input.int(50, "Trend MA Length", minval=1, group=grp_trend)
+ma_type  = input.string("EMA", "Trend MA Type", options=["EMA", "SMA", "HMA", "WMA"], group=grp_trend)
+ma_color = input.color(color.aqua, "Trend MA Color", group=grp_trend)
+
+grp_risk = "Risk Management"
+risk_amt = input.float(250.0, "Risk Amount ($)", minval=0, group=grp_risk)
+contracts = input.int(8, "Contracts (Cts)", minval=1, group=grp_risk)
+tp_mult  = input.float(2.0, "TP Multiplier (Risk:Reward)", minval=0.1, group=grp_risk)
+sl_atr   = input.float(2.0, "SL ATR Multiplier", minval=0.1, group=grp_risk)
+
+grp_ui = "UI Settings"
+show_header = input.bool(true, "Show Community Header", group=grp_ui)
+show_dash   = input.bool(true, "Show Dashboard", group=grp_ui)
+
+// --- Calculations ---
+f_ma(type, len) =>
+    switch type
+        "EMA" => ta.ema(close, len)
+        "SMA" => ta.sma(close, len)
+        "HMA" => ta.hma(close, len)
+        "WMA" => ta.wma(close, len)
+        => ta.ema(close, len)
+
+trend_ma = f_ma(ma_type, ma_len)
+plot(trend_ma, "Trend MA", color=ma_color, linewidth=2)
+
+// Session Detection
+is_in_session = not na(time(timeframe.period, session_time, session_tz))
+
+// Signal Logic: NY BUY
+// Typical signal: Trend is up (price > MA) and we are in session, and we get a bullish confirmation (e.g. close > open)
+long_condition = is_in_session and ta.crossover(close, trend_ma)
+
+// --- Trade Tracking & State ---
+var float entry_price = na
+var float sl_price = na
+var float tp_price = na
+var string trade_status = "IDLE"
+var int setups_count = 0
+var int wins = 0
+var int losses = 0
+
+atr = ta.atr(14)
+
+if long_condition and trade_status == "IDLE"
+    entry_price := close
+    sl_price := close - (atr * sl_atr)
+    tp_price := close + (tp_mult * (close - sl_price))
+    trade_status := "ACTIVE"
+    setups_count += 1
+
+// Check Exit
+if trade_status == "ACTIVE"
+    if high >= tp_price
+        trade_status := "TP ✅"
+        wins += 1
+        trade_status := "IDLE" // Reset for next setup simulation
+    else if low <= sl_price
+        trade_status := "SL ❌"
+        losses += 1
+        trade_status := "IDLE" // Reset for next setup simulation
+
+// For display purposes, we want to keep the LAST trade info if status is IDLE
+var float last_entry = na
+var float last_sl = na
+var float last_tp = na
+var string last_status = "WAITING"
+
+if long_condition
+    last_entry := close
+    last_sl := close - (atr * sl_atr)
+    last_tp := close + (tp_mult * (close - last_sl))
+    last_status := "ACTIVE"
+
+if last_status == "ACTIVE"
+    if high >= last_tp
+        last_status := "TP ✅"
+    else if low <= last_sl
+        last_status := "SL ❌"
+
+// --- UI Elements ---
+
+// 1. Header Table
+if show_header
+    var header_tbl = table.new(position.top_center, 1, 1)
+    table.cell(header_tbl, 0, 0, "GEM TRADING COMMUNITY", bgcolor=color.new(color.black, 0), text_color=color.aqua, text_size=size.large, width=40)
+
+// 2. Dashboard Table
+if show_dash
+    var dash_tbl = table.new(position.top_right, 2, 13, border_width=1, border_color=color.gray)
+
+    // Header Cell
+    table.cell(dash_tbl, 0, 0, "GEM TRADING BY BEA", bgcolor=color.blue, text_color=color.white, text_size=size.small, width=15)
+    table.merge_cells(dash_tbl, 0, 0, 1, 0)
+
+    // Data Rows
+    sl_pts = not na(last_entry) and not na(last_sl) ? math.abs(last_entry - last_sl) : 0.0
+
+    f_add_row(dash_tbl, 1, "Session", "NY", color.white)
+    f_add_row(dash_tbl, 2, "Dir", "BUY", color.green)
+    f_add_row(dash_tbl, 3, "Rating", "★★★", color.aqua)
+    f_add_row(dash_tbl, 4, "Status", last_status, last_status == "TP ✅" ? color.green : last_status == "SL ❌" ? color.red : color.white)
+    f_add_row(dash_tbl, 5, "Entry", str.tostring(last_entry, format.mintick), color.white)
+    f_add_row(dash_tbl, 6, "SL", str.tostring(last_sl, format.mintick), color.red)
+    f_add_row(dash_tbl, 7, "TP", str.tostring(last_tp, format.mintick), color.green)
+    f_add_row(dash_tbl, 8, "SL Pts", str.tostring(sl_pts / syminfo.mintick / 10, "#.#"), color.white)
+    f_add_row(dash_tbl, 9, "Cts", str.tostring(contracts), color.white)
+    f_add_row(dash_tbl, 10, "Risk", "$" + str.tostring(risk_amt, "#"), color.white)
+    f_add_row(dash_tbl, 11, "Setups", str.tostring(setups_count), color.white)
+    f_add_row(dash_tbl, 12, "W/L", str.tostring(wins) + " / " + str.tostring(losses), color.white)
+
+// --- Visual Drawings ---
+if long_condition and barstate.isconfirmed
+    label.new(bar_index, low, "NY BUY", color=color.green, textcolor=color.white, style=label.style_label_up, size=size.small)
+    box.new(bar_index, last_tp, bar_index + 10, last_entry, bgcolor=color.new(color.green, 80), border_color=color.green)
+    box.new(bar_index, last_entry, bar_index + 10, last_sl, bgcolor=color.new(color.red, 80), border_color=color.red)
