@@ -9,7 +9,7 @@ f_add_row(tbl, row, label, value, val_color) =>
 // --- Inputs ---
 grp_sess = "Session Settings"
 session_time = input.session("0830-1100", "NY Session Time", group=grp_sess)
-session_tz   = input.string("UTC-4", "Timezone", group=grp_sess)
+session_tz   = input.string("UTC+3", "Timezone", group=grp_sess)
 
 grp_trend = "Trend Settings"
 ma_len   = input.int(50, "Trend MA Length", minval=1, group=grp_trend)
