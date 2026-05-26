@@ -1,0 +1,124 @@
+//@version=6
+indicator("KILLSHOT BY IQONIC", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=500)
+
+// --- Trend Ribbon ---
+ema_len1 = input.int(20, "EMA Length 1", minval=1)
+ema_len2 = input.int(50, "EMA Length 2", minval=1)
+
+ema1 = ta.ema(close, ema_len1)
+ema2 = ta.ema(close, ema_len2)
+
+plot_ema1 = plot(ema1, color=color.new(color.aqua, 0), title="EMA 1")
+plot_ema2 = plot(ema2, color=color.new(color.blue, 0), title="EMA 2")
+fill(plot_ema1, plot_ema2, color=ema1 > ema2 ? color.new(color.aqua, 80) : color.new(color.blue, 80), title="Ribbon Fill")
+
+// --- Pivot & ZigZag ---
+left_len = input.int(5, "Pivot Left", minval=1)
+right_len = input.int(5, "Pivot Right", minval=1)
+
+ph = ta.pivothigh(high, left_len, right_len)
+pl = ta.pivotlow(low, left_len, right_len)
+
+var float last_ph_price = na
+var int last_ph_index = na
+var float last_pl_price = na
+var int last_pl_index = na
+var bool last_was_ph = na
+
+if ph
+    if not na(last_pl_price)
+        line.new(last_pl_index, last_pl_price, bar_index[right_len], high[right_len], color=color.new(color.blue, 50), style=line.style_dotted, width=2)
+        diff = high[right_len] - last_pl_price
+        label.new(bar_index[right_len], high[right_len], "(5) 1.618 (" + str.tostring(high[right_len] + diff * 0.618, "#.##") + ")\n(5) 1.303 (" + str.tostring(high[right_len] + diff * 0.303, "#.##") + ")", color=color.new(color.blue, 0), textcolor=color.white, style=label.style_label_down)
+    last_ph_price := high[right_len]
+    last_ph_index := bar_index[right_len]
+    last_was_ph := true
+
+if pl
+    if not na(last_ph_price)
+        line.new(last_ph_index, last_ph_price, bar_index[right_len], low[right_len], color=color.new(color.blue, 50), style=line.style_dotted, width=2)
+        diff = last_ph_price - low[right_len]
+        label.new(bar_index[right_len], low[right_len], "(a) 0.618 (" + str.tostring(low[right_len] - diff * 0.382, "#.##") + ")\n(a) 0.5 (" + str.tostring(low[right_len] - diff * 0.5, "#.##") + ")", color=color.new(color.blue, 0), textcolor=color.white, style=label.style_label_up)
+    last_pl_price := low[right_len]
+    last_pl_index := bar_index[right_len]
+    last_was_ph := false
+
+// --- SMC Zones (FVG) ---
+fvg_up = low > high[2]
+fvg_down = high < low[2]
+
+if fvg_up
+    box.new(bar_index[2], high[2], bar_index, low, color=color.new(color.green, 80), bgcolor=color.new(color.green, 80), border_color=color.new(color.green, 50), text="FVG", text_color=color.white, text_size=size.tiny)
+
+if fvg_down
+    box.new(bar_index[2], low[2], bar_index, high, color=color.new(color.red, 80), bgcolor=color.new(color.red, 80), border_color=color.new(color.red, 50), text="FVG", text_color=color.white, text_size=size.tiny)
+
+// --- Signal Levels ---
+atr = ta.atr(14)
+
+process_signal(type) =>
+    float entry = close
+    float sl = type == "BUY" ? entry - atr * 2 : entry + atr * 2
+    float tp1 = type == "BUY" ? entry + atr * 2 : entry - atr * 2
+    float tp2 = type == "BUY" ? entry + atr * 4 : entry - atr * 4
+    float tp3 = type == "BUY" ? entry + atr * 6 : entry - atr * 6
+    float warning = type == "BUY" ? entry + atr * 1 : entry - atr * 1
+
+    label.new(bar_index, entry, "ENTRY: " + str.tostring(entry, "#.##"), color=color.new(color.red, 20), textcolor=color.white, style=label.style_label_left, xloc=xloc.bar_index)
+    label.new(bar_index, sl, "SL: 1.7 - " + str.tostring(sl, "#.##"), color=color.new(color.blue, 20), textcolor=color.white, style=label.style_label_left, xloc=xloc.bar_index)
+    label.new(bar_index, tp1, "TP 1: 1.7 - " + str.tostring(tp1, "#.##"), color=color.new(color.red, 20), textcolor=color.white, style=label.style_label_left, xloc=xloc.bar_index)
+    label.new(bar_index, tp2, "TP 2: 3.3 - " + str.tostring(tp2, "#.##"), color=color.new(color.red, 20), textcolor=color.white, style=label.style_label_left, xloc=xloc.bar_index)
+    label.new(bar_index, warning, "WARNING: " + str.tostring(warning, "#.##"), color=color.new(color.blue, 20), textcolor=color.white, style=label.style_label_left, xloc=xloc.bar_index)
+
+if ta.crossover(ema1, ema2)
+    process_signal("BUY")
+if ta.crossunder(ema1, ema2)
+    process_signal("SELL")
+
+// --- Pivot Point Levels (R5-R7) ---
+high_d = request.security(syminfo.tickerid, "D", high[1])
+low_d = request.security(syminfo.tickerid, "D", low[1])
+close_d = request.security(syminfo.tickerid, "D", close[1])
+
+pp = (high_d + low_d + close_d) / 3
+r1 = 2 * pp - low_d
+r2 = pp + (high_d - low_d)
+r3 = high_d + 2 * (pp - low_d)
+r4 = r3 + (r2 - r1)
+r5 = r4 + (r2 - r1)
+r6 = r5 + (r2 - r1)
+r7 = r6 + (r2 - r1)
+
+var label r5_label = na
+var label r6_label = na
+var label r7_label = na
+
+if barstate.islast
+    label.delete(r5_label)
+    label.delete(r6_label)
+    label.delete(r7_label)
+    r5_label := label.new(bar_index, r5, "R5 -- " + str.tostring(r5, "#.##"), style=label.style_label_left, textcolor=color.white, color=color.new(color.gray, 100))
+    r6_label := label.new(bar_index, r6, "R6 -- " + str.tostring(r6, "#.##"), style=label.style_label_left, textcolor=color.white, color=color.new(color.gray, 100))
+    r7_label := label.new(bar_index, r7, "R7 -- " + str.tostring(r7, "#.##"), style=label.style_label_left, textcolor=color.white, color=color.new(color.gray, 100))
+
+// --- Session Highlights ---
+is_asia = not na(time(timeframe.period, "2000-0000:23456", "UTC+3"))
+is_london = not na(time(timeframe.period, "0200-0500:23456", "UTC+3"))
+is_ny = not na(time(timeframe.period, "0830-1100:23456", "UTC+3"))
+
+bgcolor(is_asia ? color.new(color.blue, 90) : na)
+bgcolor(is_london ? color.new(color.orange, 90) : na)
+bgcolor(is_ny ? color.new(color.red, 90) : na)
+
+// --- Dashboard Table ---
+var table board = table.new(position.bottom_right, 4, 6, bgcolor=color.new(color.black, 0), border_color=color.new(color.gray, 50), border_width=1)
+
+if barstate.islast
+    table.cell(board, 0, 0, "Trend", text_color=color.white)
+    table.cell(board, 1, 0, "M1", text_color=color.white)
+    table.cell(board, 0, 1, syminfo.ticker, text_color=color.white)
+    table.cell(board, 1, 1, ema1 > ema2 ? "UP" : "DOWN", text_color=ema1 > ema2 ? color.aqua : color.red)
+    table.cell(board, 0, 2, "POC", text_color=color.white)
+    table.cell(board, 1, 2, "M15", text_color=color.white)
+    table.cell(board, 0, 3, "Price", text_color=color.white)
+    table.cell(board, 1, 3, "ABOVE", text_color=color.aqua)
