@@ -1,0 +1,120 @@
+//@version=6
+indicator("CRT by Nelson", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=500)
+
+// --- Inputs ---
+tf = input.timeframe("240", "Reference Timeframe (e.g. 240 for 4H)")
+show_zones = input.bool(true, "Show CRT Zones")
+zone_col_res = input.color(color.new(color.red, 80), "Resistance Zone Color")
+zone_col_sup = input.color(color.new(color.green, 80), "Support Zone Color")
+
+// --- MTF Data ---
+[ref_high, ref_low, ref_close, ref_open] = request.security(syminfo.tickerid, tf, [high[1], low[1], close[1], open[1]], lookahead=barmerge.lookahead_on)
+
+// Identify new reference candle start
+new_ref_bar = ta.change(time(tf)) != 0
+
+// Variables to store current reference range
+var float current_ref_high = na
+var float current_ref_low = na
+var float current_ref_open = na
+
+if new_ref_bar
+    current_ref_high := ref_high
+    current_ref_low := ref_low
+    current_ref_open := ref_open
+
+// Plotting reference levels for debugging
+plot(current_ref_high, "Ref High", color=color.gray, style=plot.style_stepline)
+plot(current_ref_low, "Ref Low", color=color.gray, style=plot.style_stepline)
+
+// --- CRT Logic ---
+var bool is_swept_low = false
+var bool is_swept_high = false
+bull_crt = false
+bear_crt = false
+
+// Reset on new reference bar
+if new_ref_bar
+    is_swept_low := false
+    is_swept_high := false
+
+// Detect Sweep (Price penetrates the reference level)
+if not na(current_ref_low) and low < current_ref_low
+    is_swept_low := true
+
+if not na(current_ref_high) and high > current_ref_high
+    is_swept_high := true
+
+// Detect Confirmation (Price closes back inside the range after a sweep)
+if is_swept_low and close > current_ref_low and close[1] <= current_ref_low
+    bull_crt := true
+    is_swept_low := false // Reset to avoid multiple signals
+
+if is_swept_high and close < current_ref_high and close[1] >= current_ref_high
+    bear_crt := true
+    is_swept_high := false // Reset to avoid multiple signals
+
+// Visualizing Sweeps (Orange Circles as seen in Image 2)
+plotshape(bull_crt, "Bull Sweep", shape.circle, location.belowbar, color.orange, size=size.normal)
+plotshape(bear_crt, "Bear Sweep", shape.circle, location.abovebar, color.orange, size=size.normal)
+
+// --- Zones ---
+var box_array = array.new<box>()
+
+if show_zones and new_ref_bar
+    float ref_range = current_ref_high - current_ref_low
+    float z_height = ref_range * 0.1
+
+    box b_res = box.new(bar_index, current_ref_high, bar_index + 5, current_ref_high - z_height,
+                         border_color=color.new(color.gray, 80),
+                         bgcolor=zone_col_res)
+    box b_sup = box.new(bar_index, current_ref_low + z_height, bar_index + 5, current_ref_low,
+                         border_color=color.new(color.gray, 80),
+                         bgcolor=zone_col_sup)
+
+    array.push(box_array, b_res)
+    array.push(box_array, b_sup)
+
+    if array.size(box_array) > 500
+        box.delete(array.shift(box_array))
+
+// Update boxes and S/R flip logic (Improved to maintain historical context)
+if array.size(box_array) > 0
+    for i = 0 to array.size(box_array) - 1
+        box b = array.get(box_array, i)
+
+        // Extend only the most recent boxes
+        if barstate.islast and box.get_right(b) >= bar_index[5]
+            box.set_right(b, bar_index + 10)
+
+        float b_top = box.get_top(b)
+        float b_btm = box.get_bottom(b)
+
+        // S/R Flip: Only flip if the box is "active" (nearby)
+        // This avoids flipping very old boxes based on current price
+        if bar_index - box.get_left(b) < 500
+            if close > b_top and low > b_top // Decisive break above
+                box.set_bgcolor(b, color.new(color.green, 85))
+            else if close < b_btm and high < b_btm // Decisive break below
+                box.set_bgcolor(b, color.new(color.red, 85))
+
+// --- Signals and Labels ---
+// Entry Signals
+plotshape(bull_crt, "Buy +1 Shape", shape.arrowup, location.belowbar, color.green, size=size.normal)
+if bull_crt
+    label.new(bar_index, low, "Buy\n+1", color=color.new(color.green, 100), textcolor=color.green, style=label.style_label_up)
+
+plotshape(bear_crt, "Sell -1 Shape", shape.arrowdown, location.abovebar, color.red, size=size.normal)
+if bear_crt
+    label.new(bar_index, high, "-1\nSell", color=color.new(color.red, 100), textcolor=color.red, style=label.style_label_down)
+
+// Simple Exit Logic for visualization
+// Re-using the logic: an exit occurs if price crosses back against the trade direction
+exit_buy = ta.crossunder(close, current_ref_low)
+exit_sell = ta.crossover(close, current_ref_high)
+
+if exit_buy
+    label.new(bar_index, low, "Exit Buy\n⟘", color=color.new(color.purple, 100), textcolor=color.purple, style=label.style_label_up)
+
+if exit_sell
+    label.new(bar_index, high, "⟙\nExit Sell\n+1", color=color.new(color.purple, 100), textcolor=color.purple, style=label.style_label_down)
