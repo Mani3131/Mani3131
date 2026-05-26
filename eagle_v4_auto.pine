@@ -75,22 +75,32 @@ t_min = minute(time, "UTC+3")
 is_session_open = true // Placeholder for session logic
 
 // --- STRATEGY EXECUTION ---
-if buy_sig
+// Risk Management: Entry Limit
+can_enter = strategy.closedtrades < i_entry_limit
+
+if buy_sig and can_enter
     strategy.entry("Long", strategy.long, qty=i_lot)
 
-if sell_sig
+if sell_sig and can_enter
     strategy.entry("Short", strategy.short, qty=i_lot)
 
 // Exit Logic (SL/TP)
-// Convert $ SL/TP to price distance based on lot size and tick value
-// Simplified for this implementation: assuming 1 point = 1 unit of currency per 1 lot
 sl_dist = i_sl / (i_lot * syminfo.pointvalue)
 tp_dist = i_tp / (i_lot * syminfo.pointvalue)
 
+// Break Even Logic
 if strategy.position_size > 0
+    float profit_dollars = (close - strategy.opentrades.entry_price(0)) * i_lot * syminfo.pointvalue
+    if profit_dollars >= i_be_start
+        strategy.exit("BE Long", "Long", stop=strategy.opentrades.entry_price(0) + (i_be_offset * syminfo.mintick))
+
     strategy.exit("Exit Long", "Long", loss=sl_dist, profit=tp_dist, trail_points=i_trail_start, trail_offset=i_trail_step)
 
 if strategy.position_size < 0
+    float profit_dollars = (strategy.opentrades.entry_price(0) - close) * i_lot * syminfo.pointvalue
+    if profit_dollars >= i_be_start
+        strategy.exit("BE Short", "Short", stop=strategy.opentrades.entry_price(0) - (i_be_offset * syminfo.mintick))
+
     strategy.exit("Exit Short", "Short", loss=sl_dist, profit=tp_dist, trail_points=i_trail_start, trail_offset=i_trail_step)
 
 // Dynamic account stats (using strategy variables)
