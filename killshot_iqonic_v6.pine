@@ -25,7 +25,7 @@ var float last_pl_price = na
 var int last_pl_index = na
 var last_was_ph = bool(na)
 
-if ph
+if not na(ph)
     if not na(last_pl_price)
         line.new(last_pl_index, last_pl_price, bar_index[right_len], high[right_len], color=color.new(color.blue, 50), style=line.style_dotted, width=2)
         diff = high[right_len] - last_pl_price
@@ -34,7 +34,7 @@ if ph
     last_ph_index := bar_index[right_len]
     last_was_ph := true
 
-if pl
+if not na(pl)
     if not na(last_ph_price)
         line.new(last_ph_index, last_ph_price, bar_index[right_len], low[right_len], color=color.new(color.blue, 50), style=line.style_dotted, width=2)
         diff = last_ph_price - low[right_len]
