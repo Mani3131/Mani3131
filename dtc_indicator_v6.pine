@@ -1,0 +1,170 @@
+//@version=6
+indicator("DTC Indicator v6", overlay=true, max_labels_count=500, max_boxes_count=500, max_lines_count=500)
+
+// This script is inspired by the DTC Indicator shown in the image.
+// It includes an EMA Ribbon, Buy/Sell Signals, Trade Visualization (Entry, SL, Targets), and an MTF Dashboard.
+
+// --- Inputs ---
+group_ribbon = "EMA Ribbon"
+ema_start = input.int(20, "EMA Start Length", minval=1, group=group_ribbon)
+ema_step = input.int(4, "EMA Step", minval=1, group=group_ribbon)
+
+// --- EMA Ribbon Calculations ---
+e1 = ta.ema(close, ema_start + 0 * ema_step)
+e2 = ta.ema(close, ema_start + 1 * ema_step)
+e3 = ta.ema(close, ema_start + 2 * ema_step)
+e4 = ta.ema(close, ema_start + 3 * ema_step)
+e5 = ta.ema(close, ema_start + 4 * ema_step)
+e6 = ta.ema(close, ema_start + 5 * ema_step)
+e7 = ta.ema(close, ema_start + 6 * ema_step)
+e8 = ta.ema(close, ema_start + 7 * ema_step)
+e9 = ta.ema(close, ema_start + 8 * ema_step)
+e10 = ta.ema(close, ema_start + 9 * ema_step)
+
+trend_bull = e1 > e10
+ribbon_color = trend_bull ? color.new(color.green, 60) : color.new(color.maroon, 60)
+
+// Plot Ribbon
+plot(e1, color=ribbon_color, title="EMA 1")
+plot(e2, color=ribbon_color, title="EMA 2")
+plot(e3, color=ribbon_color, title="EMA 3")
+plot(e4, color=ribbon_color, title="EMA 4")
+plot(e5, color=ribbon_color, title="EMA 5")
+plot(e6, color=ribbon_color, title="EMA 6")
+plot(e7, color=ribbon_color, title="EMA 7")
+plot(e8, color=ribbon_color, title="EMA 8")
+plot(e9, color=ribbon_color, title="EMA 9")
+plot(e10, color=ribbon_color, title="EMA 10")
+
+// --- Buy/Sell Signal Logic ---
+buy_signal = ta.crossover(e1, e10)
+sell_signal = ta.crossunder(e1, e10)
+
+plotshape(buy_signal, "Buy Signal", shape.labelup, location.belowbar, color.green, text="BUY", textcolor=color.white, size=size.small)
+plotshape(sell_signal, "Sell Signal", shape.labeldown, location.abovebar, color.maroon, text="SELL", textcolor=color.white, size=size.small)
+
+// --- Trade Levels Calculation ---
+group_trade = "Trade Levels"
+sl_type = input.string("ATR", "SL Type", options=["ATR", "Fixed Pips"], group=group_trade)
+sl_atr_mult = input.float(2.0, "SL ATR Multiplier", group=group_trade)
+sl_fixed_pips = input.float(20.0, "SL Fixed Pips", group=group_trade)
+tp_count = 6
+
+atr = ta.atr(14)
+float sl_dist = sl_type == "ATR" ? atr * sl_atr_mult : sl_fixed_pips * syminfo.mintick * 10
+
+var float entry_price = float(na)
+var float sl_price = float(na)
+var target_prices = array.new_float(tp_count, float(na))
+var int trade_dir = 0 // 1 for Buy, -1 for Sell
+
+if buy_signal
+    entry_price := close
+    sl_price := close - sl_dist
+    trade_dir := 1
+    float risk = entry_price - sl_price
+    for i = 0 to tp_count - 1
+        array.set(target_prices, i, entry_price + risk * (i + 1))
+
+if sell_signal
+    entry_price := close
+    sl_price := close + sl_dist
+    trade_dir := -1
+    float risk = sl_price - entry_price
+    for i = 0 to tp_count - 1
+        array.set(target_prices, i, entry_price - risk * (i + 1))
+
+// --- Trade Visualization ---
+var box entry_box = na
+var box sl_box = na
+var box tp_box = na
+var label entry_lbl = na
+var label sl_lbl = na
+var target_labels = array.new<label>(tp_count, na)
+
+if (buy_signal or sell_signal) and barstate.isconfirmed
+    // Cleanup old drawings
+    box.delete(entry_box)
+    box.delete(sl_box)
+    box.delete(tp_box)
+    label.delete(entry_lbl)
+    label.delete(sl_lbl)
+    for lbl in target_labels
+        label.delete(lbl)
+
+    int start_bar = bar_index
+    int end_bar = bar_index + 20
+
+    // Draw Entry Box & Label
+    entry_box := box.new(start_bar, entry_price, end_bar, entry_price, border_color=color.blue, border_style=line.style_dashed, bgcolor=color.new(color.blue, 90))
+    entry_lbl := label.new(end_bar, entry_price, "Entry\n" + str.tostring(entry_price, format.mintick), color=color.blue, textcolor=color.white, style=label.style_label_left, size=size.small)
+
+    // Draw SL Box & Label
+    sl_box := box.new(start_bar, entry_price, end_bar, sl_price, bgcolor=color.new(color.red, 80), border_color=color.na)
+    sl_lbl := label.new(end_bar, sl_price, "Stop\n" + str.tostring(sl_price, format.mintick), color=color.red, textcolor=color.white, style=label.style_label_left, size=size.small)
+
+    // Draw TP Box & Labels
+    tp_price_max = array.get(target_prices, tp_count - 1)
+    tp_box := box.new(start_bar, entry_price, end_bar, tp_price_max, bgcolor=color.new(color.green, 80), border_color=color.na)
+
+    for i = 0 to tp_count - 1
+        float tp_p = array.get(target_prices, i)
+        array.set(target_labels, i, label.new(end_bar, tp_p, "Target\n" + str.tostring(tp_p, format.mintick), color=color.green, textcolor=color.white, style=label.style_label_left, size=size.small))
+
+// Update drawing positions to stay on the right
+if barstate.islast
+    int last_bar = bar_index
+    int extend_to = last_bar + 10
+    box.set_left(entry_box, last_bar - 20)
+    box.set_right(entry_box, extend_to)
+    box.set_left(sl_box, last_bar - 20)
+    box.set_right(sl_box, extend_to)
+    box.set_left(tp_box, last_bar - 20)
+    box.set_right(tp_box, extend_to)
+
+    label.set_x(entry_lbl, extend_to)
+    label.set_x(sl_lbl, extend_to)
+    for i = 0 to tp_count - 1
+        label.set_x(array.get(target_labels, i), extend_to)
+
+// --- MTF Dashboard Table ---
+trend_60  = request.security(syminfo.tickerid, "60",  e1 > e10)
+trend_240 = request.security(syminfo.tickerid, "240", e1 > e10)
+trend_D   = request.security(syminfo.tickerid, "D",   e1 > e10)
+trend_W   = request.security(syminfo.tickerid, "W",   e1 > e10)
+trend_M   = request.security(syminfo.tickerid, "M",   e1 > e10)
+
+var table dash = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 20), border_width=1, border_color=color.gray)
+
+if barstate.islast
+    // Header
+    table.cell(dash, 0, 0, "DTC 1.3.6", bgcolor=color.rgb(67, 160, 71), text_color=color.white, text_size=size.small)
+    table.merge_cells(dash, 0, 0, 1, 0)
+
+    // Trend Rows
+    tf_labels = array.from("Trend (60)", "Trend (240)", "Trend (D)", "Trend (W)", "Trend (M)")
+    tf_trends = array.from(trend_60, trend_240, trend_D, trend_W, trend_M)
+
+    for i = 0 to array.size(tf_labels) - 1
+        is_bull = array.get(tf_trends, i)
+        trend_str = is_bull ? "Bullish" : "Bearish"
+        trend_col = is_bull ? color.rgb(46, 125, 50) : color.rgb(183, 28, 28)
+
+        table.cell(dash, 0, i + 1, array.get(tf_labels, i), bgcolor=color.new(is_bull ? color.green : color.red, 90), text_color=color.white, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, i + 1, trend_str, bgcolor=trend_col, text_color=color.white, text_size=size.small)
+
+    // PnL & ATR Filter
+    float pnl = 0.0
+    if trade_dir == 1
+        pnl := (close - entry_price) / (syminfo.mintick * 10)
+    else if trade_dir == -1
+        pnl := (entry_price - close) / (syminfo.mintick * 10)
+
+    pnl_str = (pnl >= 0 ? "+" : "") + str.tostring(pnl, "#.##")
+    pnl_col = pnl >= 0 ? color.green : color.maroon
+
+    table.cell(dash, 0, 6, "Unrealized PnL", text_color=color.white, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 6, pnl_str, text_color=pnl_col, text_size=size.small)
+
+    table.cell(dash, 0, 7, "ATR Filter", text_color=color.white, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 7, "OFF", bgcolor=color.gray, text_color=color.white, text_size=size.small)
