@@ -1,0 +1,58 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © KivancOzbilgic
+// Modified for Pine Script v6 compliance and includes a dashboard as requested.
+
+//@version=6
+indicator("Gold AI AlphaTrend v6", shorttitle="GOLD AI", overlay=true, format=format.price, precision=2)
+
+// --- Inputs ---
+coeff = input.float(1.0, "Multiplier", step=0.1)
+AP = input.int(14, "Common Period")
+novolumedata = input.bool(false, "Change calculation (no volume data)?")
+showSignals = input.bool(true, "Show Signals?")
+
+// --- Calculations ---
+src = close
+atr = ta.sma(ta.tr, AP)
+
+upT = low - atr * coeff
+downT = high + atr * coeff
+
+var float alphaTrend = 0.0
+
+// Trend trigger: MFI or RSI
+float trigger = novolumedata ? ta.rsi(src, AP) : ta.mfi(hlc3, AP)
+
+if trigger >= 50
+    alphaTrend := upT < nz(alphaTrend[1]) ? nz(alphaTrend[1]) : upT
+else
+    alphaTrend := downT > nz(alphaTrend[1]) ? nz(alphaTrend[1]) : downT
+
+// --- Plotting ---
+// Note: AlphaTrend typically uses two lines: current and 2-bar offset
+color trendColor = alphaTrend > alphaTrend[2] ? color.lime : alphaTrend < alphaTrend[2] ? color.red : color.gray
+
+plot1 = plot(alphaTrend, color=color.new(color.blue, 0), linewidth=2, title="AlphaTrend Current")
+plot2 = plot(alphaTrend[2], color=color.new(color.red, 0), linewidth=2, title="AlphaTrend Offset")
+
+fill(plot1, plot2, color=color.new(trendColor, 80), title="Trend Fill")
+
+// --- Signals and Background ---
+isBullish = alphaTrend > alphaTrend[2]
+isBearish = alphaTrend < alphaTrend[2]
+
+plotshape(showSignals and isBullish ? alphaTrend : na, title="Bullish Trend", style=shape.triangleup, location=location.absolute, color=color.new(color.lime, 0), size=size.tiny)
+plotshape(showSignals and isBearish ? alphaTrend : na, title="Bearish Trend", style=shape.triangledown, location=location.absolute, color=color.new(color.red, 0), size=size.tiny)
+
+bgcolor(color.new(trendColor, 90), title="Trend Background")
+
+// --- Dashboard ---
+var table board = table.new(position.bottom_right, 1, 3, bgcolor=color.new(color.black, 0), border_width=1, border_color=color.gray)
+
+rsiVal = ta.rsi(src, AP)
+diff = src - alphaTrend
+
+if barstate.islast
+    table.cell(board, 0, 0, "AlphaTrend: " + str.tostring(diff, "#.##"), text_color=color.white, text_size=size.small)
+    table.cell(board, 0, 1, "RSI: " + str.tostring(rsiVal, "#.##"), text_color=color.white, text_size=size.small)
+    table.cell(board, 0, 2, "ATR: " + str.tostring(atr, "#.##"), text_color=color.white, text_size=size.small)
