@@ -1,0 +1,220 @@
+//@version=6
+indicator("Brian FX SMC Tool", overlay=true, max_labels_count=500, max_boxes_count=500, max_lines_count=500)
+
+// --- Inputs ---
+pivot_len = input.int(5, "Pivot Lookback", minval=1)
+atr_len = input.int(14, "ATR Length")
+tp1_mult = input.float(1.0, "TP1 ATR Multiplier")
+tp2_mult = input.float(2.0, "TP2 ATR Multiplier")
+tp3_mult = input.float(3.0, "TP3 ATR Multiplier")
+
+// Colors
+col_choch = input.color(color.blue, "CHoCH Color")
+col_bos = input.color(color.rgb(150, 0, 0), "BOS Color")
+col_sss = input.color(color.yellow, "SSS Color")
+col_hh = input.color(color.green, "HH Color")
+col_ll = input.color(color.red, "LL Color")
+col_pul = input.color(color.orange, "PUL Color")
+col_pwl = input.color(color.fuchsia, "PWL Color")
+col_dash = input.color(color.rgb(103, 58, 183), "Dashboard Header")
+
+// --- Variables ---
+var float ph = na
+var float pl = na
+var int ph_idx = na
+var int pl_idx = na
+
+var float last_ph = na
+var float last_pl = na
+var int last_ph_idx = na
+var int last_pl_idx = na
+
+var string trend = "Neutral"
+var float high_to_break = na
+var float low_to_break = na
+
+// Arrays for FIFO management
+var box_arr = array.new<box>()
+var label_arr = array.new<label>()
+var line_arr = array.new<line>()
+
+// --- Functions ---
+f_add_box(b) =>
+    array.push(box_arr, b)
+    if array.size(box_arr) > 100
+        box.delete(array.shift(box_arr))
+    float(na)
+
+f_add_label(l) =>
+    array.push(label_arr, l)
+    if array.size(label_arr) > 100
+        label.delete(array.shift(label_arr))
+    float(na)
+
+f_add_line(ln) =>
+    array.push(line_arr, ln)
+    if array.size(line_arr) > 50
+        line.delete(array.shift(line_arr))
+    float(na)
+
+// --- Market Structure ---
+ph_val = ta.pivothigh(pivot_len, pivot_len)
+pl_val = ta.pivotlow(pivot_len, pivot_len)
+
+if not na(ph_val)
+    last_ph := ph
+    last_ph_idx := ph_idx
+    ph := ph_val
+    ph_idx := bar_index - pivot_len
+    high_to_break := ph
+
+    label_txt = "HH"
+    if not na(last_ph) and ph < last_ph
+        label_txt := "LH"
+
+    f_add_label(label.new(ph_idx, ph, label_txt, color=col_hh, textcolor=color.white, style=label.style_label_down, size=size.small))
+
+if not na(pl_val)
+    last_pl := pl
+    last_pl_idx := pl_idx
+    pl := pl_val
+    pl_idx := bar_index - pivot_len
+    low_to_break := pl
+
+    label_txt = "LL"
+    if not na(last_pl) and pl > last_pl
+        label_txt := "HL"
+
+    f_add_label(label.new(pl_idx, pl, label_txt, color=col_ll, textcolor=color.white, style=label.style_label_up, size=size.small))
+
+// --- BOS / CHoCH ---
+bool bull_choch = false
+bool bear_choch = false
+bool bull_bos = false
+bool bear_bos = false
+
+if barstate.isconfirmed
+    if not na(high_to_break) and close > high_to_break
+        if trend == "Bearish"
+            bull_choch := true
+            trend := "Bullish"
+            f_add_label(label.new(bar_index, high, "CHoCH", color=col_choch, textcolor=color.white, style=label.style_label_down, size=size.small))
+            f_add_line(line.new(ph_idx, ph, bar_index, ph, color=col_choch, style=line.style_dashed))
+        else if trend == "Bullish"
+            bull_bos := true
+            f_add_label(label.new(bar_index, high, "BOS", color=col_bos, textcolor=color.white, style=label.style_label_down, size=size.small))
+            f_add_line(line.new(ph_idx, ph, bar_index, ph, color=col_bos, style=line.style_dashed))
+        high_to_break := na
+
+    if not na(low_to_break) and close < low_to_break
+        if trend == "Bullish"
+            bear_choch := true
+            trend := "Bearish"
+            f_add_label(label.new(bar_index, low, "CHoCH", color=col_choch, textcolor=color.white, style=label.style_label_up, size=size.small))
+            f_add_line(line.new(pl_idx, pl, bar_index, pl, color=col_choch, style=line.style_dashed))
+        else if trend == "Bearish"
+            bear_bos := true
+            f_add_label(label.new(bar_index, low, "BOS", color=col_bos, textcolor=color.white, style=label.style_label_up, size=size.small))
+            f_add_line(line.new(pl_idx, pl, bar_index, pl, color=col_bos, style=line.style_dashed))
+        low_to_break := na
+
+// --- SSS (Liquidity Sweep) ---
+sss_bull = false
+sss_bear = false
+if barstate.isconfirmed
+    if not na(low_to_break) and low < low_to_break and close > low_to_break
+        sss_bull := true
+        f_add_label(label.new(bar_index, low, "SSS", color=col_sss, textcolor=color.black, style=label.style_label_up, size=size.small))
+    if not na(high_to_break) and high > high_to_break and close < high_to_break
+        sss_bear := true
+        f_add_label(label.new(bar_index, high, "SSS", color=col_sss, textcolor=color.black, style=label.style_label_down, size=size.small))
+
+// --- PUL / PWL (Previous High/Low) ---
+prev_week_high = request.security(syminfo.tickerid, "W", high[1], lookahead=barmerge.lookahead_on)
+prev_week_low = request.security(syminfo.tickerid, "W", low[1], lookahead=barmerge.lookahead_on)
+
+var line pul_line = na
+var line pwl_line = na
+var label pul_lbl = na
+var label pwl_lbl = na
+
+if barstate.islast
+    line.delete(pul_line)
+    line.delete(pwl_line)
+    label.delete(pul_lbl)
+    label.delete(pwl_lbl)
+
+    pul_line := line.new(bar_index - 50, prev_week_high, bar_index, prev_week_high, color=col_pul, style=line.style_dashed, extend=extend.right)
+    pwl_line := line.new(bar_index - 50, prev_week_low, bar_index, prev_week_low, color=col_pwl, style=line.style_dashed, extend=extend.right)
+
+    pul_lbl := label.new(bar_index, prev_week_high, "PUL " + str.tostring(prev_week_high, "#.##"), color=col_pul, textcolor=color.white, style=label.style_label_left, xloc=xloc.bar_index)
+    pwl_lbl := label.new(bar_index, prev_week_low, "PWL " + str.tostring(prev_week_low, "#.##"), color=col_pwl, textcolor=color.white, style=label.style_label_left, xloc=xloc.bar_index)
+
+// --- A+ Signal & Trade Drawing ---
+var table dash = table.new(position.bottom_right, 2, 6, bgcolor=color.black, border_color=color.gray, border_width=1)
+
+if barstate.isfirst
+    table.cell(dash, 0, 0, "✨ BRIAN FX TRADE ✨", bgcolor=col_dash, text_color=color.white, text_size=size.small)
+    table.merge_cells(dash, 0, 0, 1, 0)
+    table.cell(dash, 0, 1, "🎯 ENTRY POINT", text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 0, 2, "🛡️ STOP LOSS", text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 0, 3, "TP1", text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 0, 4, "TP2", text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 0, 5, "TP3", text_color=color.white, text_halign=text.align_left)
+
+atr = ta.atr(atr_len)
+
+// Trigger A+ SELL on SSS or CHoCH within a confirmed Bearish trend
+if (sss_bear or bear_choch) and trend == "Bearish" and barstate.isconfirmed
+    f_add_label(label.new(bar_index, high, "★ A+ SELL ★", color=color.red, textcolor=color.white, style=label.style_label_down))
+
+    // Drawing Trade
+    entry = close
+    sl = high + (atr * 0.5)
+    tp1 = entry - (atr * tp1_mult)
+    tp2 = entry - (atr * tp2_mult)
+    tp3 = entry - (atr * tp3_mult)
+
+    f_add_box(box.new(bar_index, sl, bar_index + 20, entry, bgcolor=color.new(color.red, 80), border_color=color.red))
+    f_add_box(box.new(bar_index, entry, bar_index + 20, tp3, bgcolor=color.new(color.green, 80), border_color=color.green))
+
+    entry_range = str.tostring(entry, "#.##") + "-" + str.tostring(entry + (atr * 0.1), "#.##")
+    f_add_label(label.new(bar_index + 20, sl, "🛡️ SL: " + str.tostring(sl, "#.##"), color=color.red, textcolor=color.white, style=label.style_label_left))
+    f_add_label(label.new(bar_index + 20, entry, "SELL @" + entry_range, color=color.red, textcolor=color.white, style=label.style_label_left))
+    f_add_label(label.new(bar_index + 20, tp1, "🎯 TP1: " + str.tostring(tp1, "#.##"), color=color.green, textcolor=color.white, style=label.style_label_left))
+    f_add_label(label.new(bar_index + 20, tp2, "🎯 TP2: " + str.tostring(tp2, "#.##"), color=color.green, textcolor=color.white, style=label.style_label_left))
+    f_add_label(label.new(bar_index + 20, tp3, "🎯 TP3: " + str.tostring(tp3, "#.##"), color=color.green, textcolor=color.white, style=label.style_label_left))
+
+    // Update Dashboard
+    table.cell(dash, 1, 1, "SELL @" + entry_range, text_color=color.rgb(255, 82, 82))
+    table.cell(dash, 1, 2, str.tostring(sl, "#.##"), text_color=color.rgb(255, 82, 82))
+    table.cell(dash, 1, 3, str.tostring(tp1, "#.##"), text_color=color.aqua)
+    table.cell(dash, 1, 4, str.tostring(tp2, "#.##"), text_color=color.aqua)
+    table.cell(dash, 1, 5, str.tostring(tp3, "#.##"), text_color=color.aqua)
+
+// Trigger A+ BUY on SSS or CHoCH within a confirmed Bullish trend
+if (sss_bull or bull_choch) and trend == "Bullish" and barstate.isconfirmed
+    f_add_label(label.new(bar_index, low, "★ A+ BUY ★", color=color.green, textcolor=color.white, style=label.style_label_up))
+
+    entry = close
+    sl = low - (atr * 0.5)
+    tp1 = entry + (atr * tp1_mult)
+    tp2 = entry + (atr * tp2_mult)
+    tp3 = entry + (atr * tp3_mult)
+
+    f_add_box(box.new(bar_index, sl, bar_index + 20, entry, bgcolor=color.new(color.red, 80), border_color=color.red))
+    f_add_box(box.new(bar_index, entry, bar_index + 20, tp3, bgcolor=color.new(color.green, 80), border_color=color.green))
+
+    entry_range = str.tostring(entry - (atr * 0.1), "#.##") + "-" + str.tostring(entry, "#.##")
+    f_add_label(label.new(bar_index + 20, sl, "🛡️ SL: " + str.tostring(sl, "#.##"), color=color.red, textcolor=color.white, style=label.style_label_left))
+    f_add_label(label.new(bar_index + 20, entry, "BUY @" + entry_range, color=color.green, textcolor=color.white, style=label.style_label_left))
+    f_add_label(label.new(bar_index + 20, tp1, "🎯 TP1: " + str.tostring(tp1, "#.##"), color=color.green, textcolor=color.white, style=label.style_label_left))
+    f_add_label(label.new(bar_index + 20, tp2, "🎯 TP2: " + str.tostring(tp2, "#.##"), color=color.green, textcolor=color.white, style=label.style_label_left))
+    f_add_label(label.new(bar_index + 20, tp3, "🎯 TP3: " + str.tostring(tp3, "#.##"), color=color.green, textcolor=color.white, style=label.style_label_left))
+
+    // Update Dashboard
+    table.cell(dash, 1, 1, "BUY @" + entry_range, text_color=color.green)
+    table.cell(dash, 1, 2, str.tostring(sl, "#.##"), text_color=color.rgb(255, 82, 82))
+    table.cell(dash, 1, 3, str.tostring(tp1, "#.##"), text_color=color.aqua)
+    table.cell(dash, 1, 4, str.tostring(tp2, "#.##"), text_color=color.aqua)
+    table.cell(dash, 1, 5, str.tostring(tp3, "#.##"), text_color=color.aqua)
