@@ -1,0 +1,105 @@
+// @version=6
+indicator("Nexus Intelliboard [Cikgu AI]", overlay = true, max_boxes_count = 500, max_labels_count = 500)
+
+// --- Inputs ---
+group_ribbon = "Trend Wave Ribbon"
+fast_ma_len = input.int(12, "Fast MA Length", minval = 1, group = group_ribbon)
+slow_ma_len = input.int(24, "Slow MA Length", minval = 1, group = group_ribbon)
+
+group_structure = "Market Structure"
+pivot_len = input.int(5, "Pivot Lookback", minval = 1, group = group_structure)
+
+group_ui = "UI Dashboard"
+dashboard_pos = input.string("Top Right", "Dashboard Position", options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group = group_ui)
+
+// --- Trend Wave Ribbon Logic ---
+fast_ma = ta.ema(close, fast_ma_len)
+slow_ma = ta.ema(close, slow_ma_len)
+
+ribbon_color = fast_ma > slow_ma ? color.new(color.teal, 60) : color.new(color.maroon, 60)
+
+p1 = plot(fast_ma, color = color.new(ribbon_color, 0), linewidth = 1, title = "Fast MA")
+p2 = plot(slow_ma, color = color.new(ribbon_color, 0), linewidth = 1, title = "Slow MA")
+
+fill(p1, p2, ribbon_color, title = "Ribbon Fill")
+
+// --- Market Structure Logic ---
+var float ph_val = na
+var int ph_idx = na
+var float pl_val = na
+var int pl_idx = na
+
+ph = ta.pivothigh(pivot_len, pivot_len)
+pl = ta.pivotlow(pivot_len, pivot_len)
+
+if not na(ph)
+    ph_val := ph
+    ph_idx := bar_index - pivot_len
+
+if not na(pl)
+    pl_val := pl
+    pl_idx := bar_index - pivot_len
+
+// Detect CHoCH/BOS
+var string structure_type = ""
+if not na(ph_val) and close > ph_val and structure_type != "Bullish"
+    label.new(bar_index, high, "CHoCH", style = label.style_none, textcolor = color.aqua, size = size.small)
+    structure_type := "Bullish"
+
+if not na(pl_val) and close < pl_val and structure_type != "Bearish"
+    label.new(bar_index, low, "CHoCH", style = label.style_none, textcolor = color.fuchsia, size = size.small, yloc = yloc.belowbar)
+    structure_type := "Bearish"
+
+// Supply/Demand Zones
+if barstate.isconfirmed
+    if not na(ph)
+        box.new(bar_index - pivot_len, high[pivot_len], bar_index, low[pivot_len], border_color = color.new(color.maroon, 50), bgcolor = color.new(color.maroon, 90))
+    if not na(pl)
+        box.new(bar_index - pivot_len, low[pivot_len], bar_index, high[pivot_len], border_color = color.new(color.teal, 50), bgcolor = color.new(color.teal, 90))
+
+// --- Signal Labels ---
+bull_signal = ta.crossover(fast_ma, slow_ma)
+bear_signal = ta.crossunder(fast_ma, slow_ma)
+
+if bull_signal
+    label.new(bar_index, low, "UP", color = color.teal, textcolor = color.white, style = label.style_label_up, size = size.small)
+
+if bear_signal
+    label.new(bar_index, high, "DOWN", color = color.maroon, textcolor = color.white, style = label.style_label_down, size = size.small)
+
+// --- UI Dashboard ---
+var table main_table = table.new(dashboard_pos == "Top Right" ? position.top_right : dashboard_pos == "Top Left" ? position.top_left : dashboard_pos == "Bottom Right" ? position.bottom_right : position.bottom_left, 10, 20, bgcolor = color.rgb(17, 23, 34), border_color = color.gray, border_width = 1)
+
+if barstate.islast
+    // Header: NEXUS INTELLIBOARD
+    table.cell(main_table, 0, 0, "♦ NEXUS INTELLIBOARD", bgcolor = color.rgb(0, 188, 212), text_color = color.white, text_size = size.small, width = 15)
+    table.merge_cells(main_table, 0, 0, 1, 0)
+
+    table.cell(main_table, 0, 1, "Status:", text_color = color.gray, text_size = size.tiny)
+    table.cell(main_table, 1, 1, fast_ma > slow_ma ? "🟢 BUY / LONG" : "🔴 SELL / SHORT", text_color = color.white, text_size = size.tiny)
+
+    // ENJIN PASARAN Section
+    table.cell(main_table, 0, 2, "⚙️ ENJIN PASARAN", bgcolor = color.rgb(30, 30, 30), text_color = color.white, text_size = size.tiny)
+    table.merge_cells(main_table, 0, 2, 1, 2)
+
+    table.cell(main_table, 0, 3, "Trend:", text_color = color.gray, text_size = size.tiny)
+    table.cell(main_table, 1, 3, fast_ma > slow_ma ? "✅ Bull" : "❌ Bear", text_color = color.white, text_size = size.tiny)
+
+    table.cell(main_table, 0, 4, "Mom:", text_color = color.gray, text_size = size.tiny)
+    table.cell(main_table, 1, 4, ta.rsi(close, 14) > 50 ? "✅ Bull" : "❌ Bear", text_color = color.white, text_size = size.tiny)
+
+    // SMART MONEY Section
+    table.cell(main_table, 0, 5, "🔹 SMART MONEY & RAMALAN", bgcolor = color.rgb(0, 150, 136), text_color = color.white, text_size = size.tiny)
+    table.merge_cells(main_table, 0, 5, 1, 5)
+
+    vol_ratio = volume / ta.sma(volume, 20)
+    table.cell(main_table, 0, 6, "Vol:", text_color = color.gray, text_size = size.tiny)
+    table.cell(main_table, 1, 6, vol_ratio > 1.5 ? "High" : "Normal", text_color = color.white, text_size = size.tiny)
+
+    // AI COACH Section
+    table.cell(main_table, 0, 7, "📒 LAPORAN AI COACH", bgcolor = color.rgb(103, 58, 183), text_color = color.white, text_size = size.tiny)
+    table.merge_cells(main_table, 0, 7, 1, 7)
+
+    advice = fast_ma > slow_ma ? "Potensi Naik (Perlahan). Cari peluang buy di zon sokongan." : "Harga junam menembusi Wave! Tutup Buy segera (Elak Libas)."
+    table.cell(main_table, 0, 8, advice, text_color = color.white, text_halign = text.align_left, text_size = size.tiny)
+    table.merge_cells(main_table, 0, 8, 1, 8)
