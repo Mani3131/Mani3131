@@ -1,0 +1,188 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("HUNTER V2", overlay = true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500)
+
+// --- Inputs ---
+grp_signal = "Signal Logic"
+sensitivity = input.float(3.0, "Sensitivity", minval = 0.1, step = 0.1, group = grp_signal)
+period      = input.int(10, "Period", minval = 1, group = grp_signal)
+
+grp_targets = "TP/SL Settings"
+tp1_dist = input.float(5.0, "TP1 Distance (Points)", minval = 0.0, group = grp_targets)
+tp2_dist = input.float(10.0, "TP2 Distance (Points)", minval = 0.0, group = grp_targets)
+tp3_dist = input.float(15.0, "TP3 Distance (Points)", minval = 0.0, group = grp_targets)
+sl_dist  = input.float(10.0, "SL Distance (Points)", minval = 0.0, group = grp_targets)
+
+grp_ui = "Dashboard & UI"
+show_dashboard = input.bool(true, "Show Dashboard", group = grp_ui)
+dash_pos       = input.string("Bottom Right", "Dashboard Position", options = ["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group = grp_ui)
+
+// --- Signal Logic (Supertrend-style) ---
+[supertrend, direction] = ta.supertrend(sensitivity, period)
+
+buy_signal  = ta.change(direction) < 0
+sell_signal = ta.change(direction) > 0
+
+// --- Trade State Variables ---
+var float entry_price = na
+var float tp1_price = na
+var float tp2_price = na
+var float tp3_price = na
+var float sl_price  = na
+var int   trade_dir = 0 // 1 for Long, -1 for Short
+var bool  tp1_hit = false
+var bool  tp2_hit = false
+var bool  tp3_hit = false
+var bool  sl_hit  = false
+
+// --- Performance Tracking ---
+var int total_trades = 0
+var int tp1_hits = 0
+var int tp2_hits = 0
+var int tp3_hits = 0
+var int sl_hits  = 0
+
+// Update trade state
+if (buy_signal or sell_signal) and barstate.isconfirmed
+    total_trades += 1
+    entry_price := close
+    trade_dir   := buy_signal ? 1 : -1
+    tp1_price   := entry_price + (trade_dir * tp1_dist)
+    tp2_price   := entry_price + (trade_dir * tp2_dist)
+    tp3_price   := entry_price + (trade_dir * tp3_dist)
+    sl_price    := entry_price - (trade_dir * sl_dist)
+    tp1_hit := false
+    tp2_hit := false
+    tp3_hit := false
+    sl_hit  := false
+
+// Check for hits
+if trade_dir != 0 and barstate.isconfirmed
+    if trade_dir == 1 // Long
+        if not sl_hit
+            if not tp1_hit and high >= tp1_price
+                tp1_hit := true
+                tp1_hits += 1
+            if not tp2_hit and high >= tp2_price
+                tp2_hit := true
+                tp2_hits += 1
+            if not tp3_hit and high >= tp3_price
+                tp3_hit := true
+                tp3_hits += 1
+            if low <= sl_price
+                sl_hit := true
+                sl_hits += 1
+    else // Short
+        if not sl_hit
+            if not tp1_hit and low <= tp1_price
+                tp1_hit := true
+                tp1_hits += 1
+            if not tp2_hit and low <= tp2_price
+                tp2_hit := true
+                tp2_hits += 1
+            if not tp3_hit and low <= tp3_price
+                tp3_hit := true
+                tp3_hits += 1
+            if high >= sl_price
+                sl_hit := true
+                sl_hits += 1
+
+// --- Visual Implementation ---
+// Signal Labels (Historical)
+if buy_signal and barstate.isconfirmed
+    label.new(bar_index, low, "Mua", color = color.new(color.green, 0), textcolor = color.white, style = label.style_label_up, yloc = yloc.belowbar)
+if sell_signal and barstate.isconfirmed
+    label.new(bar_index, high, "Bán", color = color.new(color.red, 0), textcolor = color.white, style = label.style_label_down, yloc = yloc.abovebar)
+
+// TP Star Labels (Historical)
+if trade_dir == 1 and barstate.isconfirmed
+    if not tp1_hit[1] and high >= tp1_price
+        label.new(bar_index, high, "★TP1", color = color.new(color.blue, 0), textcolor = color.white, style = label.style_label_down, yloc = yloc.abovebar)
+    if not tp2_hit[1] and high >= tp2_price
+        label.new(bar_index, high, "★TP2", color = color.new(color.blue, 0), textcolor = color.white, style = label.style_label_down, yloc = yloc.abovebar)
+    if not tp3_hit[1] and high >= tp3_price
+        label.new(bar_index, high, "★TP3", color = color.new(color.blue, 0), textcolor = color.white, style = label.style_label_down, yloc = yloc.abovebar)
+
+if trade_dir == -1 and barstate.isconfirmed
+    if not tp1_hit[1] and low <= tp1_price
+        label.new(bar_index, low, "★TP1", color = color.new(color.blue, 0), textcolor = color.white, style = label.style_label_up, yloc = yloc.belowbar)
+    if not tp2_hit[1] and low <= tp2_price
+        label.new(bar_index, low, "★TP2", color = color.new(color.blue, 0), textcolor = color.white, style = label.style_label_up, yloc = yloc.belowbar)
+    if not tp3_hit[1] and low <= tp3_price
+        label.new(bar_index, low, "★TP3", color = color.new(color.blue, 0), textcolor = color.white, style = label.style_label_up, yloc = yloc.belowbar)
+
+// Active Trade Levels (Lines and Labels)
+var line entry_line = na, var label entry_lbl = na
+var line tp1_line = na,   var label tp1_lbl   = na
+var line tp2_line = na,   var label tp2_lbl   = na
+var line tp3_line = na,   var label tp3_lbl   = na
+var line sl_line = na,    var label sl_lbl    = na
+
+if barstate.islast
+    line.delete(entry_line), label.delete(entry_lbl)
+    line.delete(tp1_line),   label.delete(tp1_lbl)
+    line.delete(tp2_line),   label.delete(tp2_lbl)
+    line.delete(tp3_line),   label.delete(tp3_lbl)
+    line.delete(sl_line),    label.delete(sl_lbl)
+
+    if not na(entry_price)
+        line_ext = bar_index + 10
+        entry_line := line.new(bar_index[1], entry_price, line_ext, entry_price, color = color.aqua, width = 2)
+        entry_lbl  := label.new(line_ext, entry_price, "Entry: " + str.tostring(entry_price), color = color.aqua, textcolor = color.white, style = label.style_label_left)
+
+        tp1_line := line.new(bar_index[1], tp1_price, line_ext, tp1_price, color = color.blue, width = 2)
+        tp1_lbl  := label.new(line_ext, tp1_price, "TP1: " + str.tostring(tp1_price), color = color.blue, textcolor = color.white, style = label.style_label_left)
+
+        tp2_line := line.new(bar_index[1], tp2_price, line_ext, tp2_price, color = color.blue, width = 2)
+        tp2_lbl  := label.new(line_ext, tp2_price, "TP2: " + str.tostring(tp2_price), color = color.blue, textcolor = color.white, style = label.style_label_left)
+
+        tp3_line := line.new(bar_index[1], tp3_price, line_ext, tp3_price, color = color.blue, width = 2)
+        tp3_lbl  := label.new(line_ext, tp3_price, "TP3: " + str.tostring(tp3_price), color = color.blue, textcolor = color.white, style = label.style_label_left)
+
+        sl_line := line.new(bar_index[1], sl_price, line_ext, sl_price, color = color.red, width = 2)
+        sl_lbl  := label.new(line_ext, sl_price, "SL: " + str.tostring(sl_price), color = color.red, textcolor = color.white, style = label.style_label_left)
+
+// --- Dashboard Implementation ---
+var table dash = na
+if show_dashboard and barstate.islast
+    pos = dash_pos == "Top Right" ? position.top_right :
+          dash_pos == "Bottom Right" ? position.bottom_right :
+          dash_pos == "Top Left" ? position.top_left : position.bottom_left
+
+    dash := table.new(pos, 3, 6, border_width = 1, frame_color = color.gray, frame_width = 1, border_color = color.gray)
+
+    // Header
+    table.cell(dash, 0, 0, "HUNTER-V2", bgcolor = color.new(color.gray, 50), text_color = color.white)
+    table.cell(dash, 1, 0, "Số Lệnh", bgcolor = color.new(color.gray, 50), text_color = color.white)
+    table.cell(dash, 2, 0, "Win Rate", bgcolor = color.new(color.gray, 50), text_color = color.white)
+
+    // Row 1: TP1
+    tp1_rate = total_trades > 0 ? (tp1_hits / total_trades) * 100 : 0
+    table.cell(dash, 0, 1, "Cham TP1", bgcolor = color.new(color.gray, 80), text_color = color.gray, text_halign = text.align_left)
+    table.cell(dash, 1, 1, str.tostring(tp1_hits), bgcolor = color.new(color.gray, 80), text_color = color.gray)
+    table.cell(dash, 2, 1, str.tostring(tp1_rate, "#.##") + "%", bgcolor = color.new(color.gray, 80), text_color = color.gray)
+
+    // Row 2: TP2
+    tp2_rate = total_trades > 0 ? (tp2_hits / total_trades) * 100 : 0
+    table.cell(dash, 0, 2, "Cham TP2", bgcolor = color.new(color.gray, 90), text_color = color.gray, text_halign = text.align_left)
+    table.cell(dash, 1, 2, str.tostring(tp2_hits), bgcolor = color.new(color.gray, 90), text_color = color.gray)
+    table.cell(dash, 2, 2, str.tostring(tp2_rate, "#.##") + "%", bgcolor = color.new(color.gray, 90), text_color = color.gray)
+
+    // Expand table for more rows
+    tp3_rate = total_trades > 0 ? (tp3_hits / total_trades) * 100 : 0
+    table.cell(dash, 0, 3, "Cham TP3", bgcolor = color.new(color.gray, 80), text_color = color.gray, text_halign = text.align_left)
+    table.cell(dash, 1, 3, str.tostring(tp3_hits), bgcolor = color.new(color.gray, 80), text_color = color.gray)
+    table.cell(dash, 2, 3, str.tostring(tp3_rate, "#.##") + "%", bgcolor = color.new(color.gray, 80), text_color = color.gray)
+
+    // Row 4: SL
+    sl_rate = total_trades > 0 ? (sl_hits / total_trades) * 100 : 0
+    table.cell(dash, 0, 4, "Cham SL", bgcolor = color.new(color.gray, 90), text_color = color.red, text_halign = text.align_left)
+    table.cell(dash, 1, 4, str.tostring(sl_hits), bgcolor = color.new(color.gray, 90), text_color = color.red)
+    table.cell(dash, 2, 4, str.tostring(sl_rate, "#.##") + "%", bgcolor = color.new(color.gray, 90), text_color = color.red)
+
+    // Row 5: Total
+    table.cell(dash, 0, 5, "Tong Cong", bgcolor = color.new(color.gray, 50), text_color = color.white, text_halign = text.align_left)
+    table.cell(dash, 1, 5, str.tostring(total_trades), bgcolor = color.new(color.gray, 50), text_color = color.white)
+    table.cell(dash, 2, 5, "100%", bgcolor = color.new(color.gray, 50), text_color = color.white)
