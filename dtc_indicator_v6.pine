@@ -100,12 +100,12 @@ if (buy_signal or sell_signal) and barstate.isconfirmed
     entry_lbl := label.new(end_bar, entry_price, "Entry\n" + str.tostring(entry_price, format.mintick), color=color.blue, textcolor=color.white, style=label.style_label_left, size=size.small)
 
     // Draw SL Box & Label
-    sl_box := box.new(start_bar, entry_price, end_bar, sl_price, bgcolor=color.new(color.red, 80), border_color=color.na)
+    sl_box := box.new(start_bar, entry_price, end_bar, sl_price, bgcolor=color.new(color.red, 80), border_color=na)
     sl_lbl := label.new(end_bar, sl_price, "Stop\n" + str.tostring(sl_price, format.mintick), color=color.red, textcolor=color.white, style=label.style_label_left, size=size.small)
 
     // Draw TP Box & Labels
     tp_price_max = array.get(target_prices, tp_count - 1)
-    tp_box := box.new(start_bar, entry_price, end_bar, tp_price_max, bgcolor=color.new(color.green, 80), border_color=color.na)
+    tp_box := box.new(start_bar, entry_price, end_bar, tp_price_max, bgcolor=color.new(color.green, 80), border_color=na)
 
     for i = 0 to tp_count - 1
         float tp_p = array.get(target_prices, i)
