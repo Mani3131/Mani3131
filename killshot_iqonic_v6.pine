@@ -48,10 +48,10 @@ fvg_up = low > high[2]
 fvg_down = high < low[2]
 
 if fvg_up
-    box.new(bar_index[2], high[2], bar_index, low, color=color.new(color.green, 80), bgcolor=color.new(color.green, 80), border_color=color.new(color.green, 50), text="FVG", text_color=color.white, text_size=size.tiny)
+    box.new(bar_index[2], high[2], bar_index, low, bgcolor=color.new(color.green, 80), border_color=color.new(color.green, 50), text="FVG", text_color=color.white, text_size=size.tiny)
 
 if fvg_down
-    box.new(bar_index[2], low[2], bar_index, high, color=color.new(color.red, 80), bgcolor=color.new(color.red, 80), border_color=color.new(color.red, 50), text="FVG", text_color=color.white, text_size=size.tiny)
+    box.new(bar_index[2], low[2], bar_index, high, bgcolor=color.new(color.red, 80), border_color=color.new(color.red, 50), text="FVG", text_color=color.white, text_size=size.tiny)
 
 // --- Signal Levels ---
 atr = ta.atr(14)
