@@ -142,32 +142,28 @@ adx_bear = adx_val > adx_th and di_minus > di_plus
 // --------------------------------------------------------------------------------------------------------------------
 
 f_calc_wr(bull, bear) =>
-    var entry_price = float(na)
-    var is_long = bool(na)
-    var wins = 0
+    var float entry_price = na
+    var int dir = -1 // -1: na, 0: short, 1: long
+    var int wins = 0
     var int total = 0
 
     bool signal_long = bull and not bear
     bool signal_short = bear and not bull
 
-    if signal_long and (na(is_long) or not is_long)
+    if signal_long and dir != 1
         if not na(entry_price)
             total := total + 1
-            if is_long and close > entry_price
-                wins := wins + 1
-            else if not is_long and close < entry_price
+            if (dir == 1 and close > entry_price) or (dir == 0 and close < entry_price)
                 wins := wins + 1
         entry_price := close
-        is_long := true
-    else if signal_short and (na(is_long) or is_long)
+        dir := 1
+    else if signal_short and dir != 0
         if not na(entry_price)
             total := total + 1
-            if is_long and close > entry_price
-                wins := wins + 1
-            else if not is_long and close < entry_price
+            if (dir == 1 and close > entry_price) or (dir == 0 and close < entry_price)
                 wins := wins + 1
         entry_price := close
-        is_long := false
+        dir := 0
 
     total > 0 ? (float(wins) / total) * 100 : 0.0
 
@@ -207,18 +203,18 @@ else // Majority
 // Main Backtest Engine
 // --------------------------------------------------------------------------------------------------------------------
 
-var bt_entry_price = float(na)
-var bt_is_long = bool(na)
-var bt_total_trades = 0
+var float bt_entry_price = na
+var int bt_dir = -1 // -1: na, 0: short, 1: long
+var int bt_total_trades = 0
 var int bt_wins = 0
 var int bt_losses = 0
 var float bt_pnl = 0.0
 var float bt_gross_profit = 0.0
 var float bt_gross_loss = 0.0
 
-if final_bull and (na(bt_is_long) or not bt_is_long)
+if final_bull and bt_dir != 1
     if not na(bt_entry_price)
-        trade_pnl = bt_is_long ? (close - bt_entry_price) / bt_entry_price : (bt_entry_price - close) / bt_entry_price
+        trade_pnl = bt_dir == 1 ? (close - bt_entry_price) / bt_entry_price : (bt_entry_price - close) / bt_entry_price
         bt_total_trades := bt_total_trades + 1
         bt_pnl := bt_pnl + trade_pnl
         if trade_pnl > 0
@@ -228,10 +224,10 @@ if final_bull and (na(bt_is_long) or not bt_is_long)
             bt_losses := bt_losses + 1
             bt_gross_loss := bt_gross_loss + math.abs(trade_pnl)
     bt_entry_price := close
-    bt_is_long := true
-else if final_bear and (na(bt_is_long) or bt_is_long)
+    bt_dir := 1
+else if final_bear and bt_dir != 0
     if not na(bt_entry_price)
-        trade_pnl = bt_is_long ? (close - bt_entry_price) / bt_entry_price : (bt_entry_price - close) / bt_entry_price
+        trade_pnl = bt_dir == 1 ? (close - bt_entry_price) / bt_entry_price : (bt_entry_price - close) / bt_entry_price
         bt_total_trades := bt_total_trades + 1
         bt_pnl := bt_pnl + trade_pnl
         if trade_pnl > 0
@@ -241,7 +237,7 @@ else if final_bear and (na(bt_is_long) or bt_is_long)
             bt_losses := bt_losses + 1
             bt_gross_loss := bt_gross_loss + math.abs(trade_pnl)
     bt_entry_price := close
-    bt_is_long := false
+    bt_dir := 0
 
 bt_winrate = bt_total_trades > 0 ? (float(bt_wins) / bt_total_trades) * 100 : 0.0
 bt_pf = bt_gross_loss > 0 ? bt_gross_profit / bt_gross_loss : (bt_gross_profit > 0 ? 999.0 : 0.0)
