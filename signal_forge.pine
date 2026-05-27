@@ -187,19 +187,11 @@ adx_wr   = f_calc_wr(adx_bull, adx_bear)
 // Signal Aggregation
 // --------------------------------------------------------------------------------------------------------------------
 
-num_enabled = (use_sma ? 1 : 0) + (use_rsi ? 1 : 0) + (use_macd ? 1 : 0) + (use_st ? 1 : 0) +
-              (use_stoch ? 1 : 0) + (use_bb ? 1 : 0) + (use_ema ? 1 : 0) + (use_ao ? 1 : 0) +
-              (use_sar ? 1 : 0) + (use_cci ? 1 : 0) + (use_adx ? 1 : 0)
+num_enabled = (use_sma ? 1 : 0) + (use_rsi ? 1 : 0) + (use_macd ? 1 : 0) + (use_st ? 1 : 0) + (use_stoch ? 1 : 0) + (use_bb ? 1 : 0) + (use_ema ? 1 : 0) + (use_ao ? 1 : 0) + (use_sar ? 1 : 0) + (use_cci ? 1 : 0) + (use_adx ? 1 : 0)
 
-bull_score = (use_sma and sma_bull ? 1 : 0) + (use_rsi and rsi_bull ? 1 : 0) + (use_macd and macd_bull ? 1 : 0) +
-             (use_st and st_bull ? 1 : 0) + (use_stoch and stoch_bull ? 1 : 0) + (use_bb and bb_bull ? 1 : 0) +
-             (use_ema and ema_bull ? 1 : 0) + (use_ao and ao_bull ? 1 : 0) + (use_sar and sar_bull ? 1 : 0) +
-             (use_cci and cci_bull ? 1 : 0) + (use_adx and adx_bull ? 1 : 0)
+bull_score = (use_sma and sma_bull ? 1 : 0) + (use_rsi and rsi_bull ? 1 : 0) + (use_macd and macd_bull ? 1 : 0) + (use_st and st_bull ? 1 : 0) + (use_stoch and stoch_bull ? 1 : 0) + (use_bb and bb_bull ? 1 : 0) + (use_ema and ema_bull ? 1 : 0) + (use_ao and ao_bull ? 1 : 0) + (use_sar and sar_bull ? 1 : 0) + (use_cci and cci_bull ? 1 : 0) + (use_adx and adx_bull ? 1 : 0)
 
-bear_score = (use_sma and sma_bear ? 1 : 0) + (use_rsi and rsi_bear ? 1 : 0) + (use_macd and macd_bear ? 1 : 0) +
-             (use_st and st_bear ? 1 : 0) + (use_stoch and stoch_bear ? 1 : 0) + (use_bb and bb_bear ? 1 : 0) +
-             (use_ema and ema_bear ? 1 : 0) + (use_ao and ao_bear ? 1 : 0) + (use_sar and sar_bear ? 1 : 0) +
-             (use_cci and cci_bear ? 1 : 0) + (use_adx and adx_bear ? 1 : 0)
+bear_score = (use_sma and sma_bear ? 1 : 0) + (use_rsi and rsi_bear ? 1 : 0) + (use_macd and macd_bear ? 1 : 0) + (use_st and st_bear ? 1 : 0) + (use_stoch and stoch_bear ? 1 : 0) + (use_bb and bb_bear ? 1 : 0) + (use_ema and ema_bear ? 1 : 0) + (use_ao and ao_bear ? 1 : 0) + (use_sar and sar_bear ? 1 : 0) + (use_cci and cci_bear ? 1 : 0) + (use_adx and adx_bear ? 1 : 0)
 
 bool final_bull = false
 bool final_bear = false
@@ -259,12 +251,9 @@ bt_pnl_pct = bt_pnl * 100
 // UI Tables
 // --------------------------------------------------------------------------------------------------------------------
 
-t_pos = dash_pos == "Top Right" ? position.top_right :
-        dash_pos == "Bottom Right" ? position.bottom_right :
-        dash_pos == "Top Left" ? position.top_left : position.bottom_left
+t_pos = dash_pos == "Top Right" ? position.top_right : dash_pos == "Bottom Right" ? position.bottom_right : dash_pos == "Top Left" ? position.top_left : position.bottom_left
 
-t_size = dash_size == "Small" ? size.small :
-         dash_size == "Normal" ? size.normal : size.large
+t_size = dash_size == "Small" ? size.small : dash_size == "Normal" ? size.normal : size.large
 
 var table dash_table = table.new(t_pos, 4, 14, color_bg, color.gray, 1, color.gray, 1)
 
