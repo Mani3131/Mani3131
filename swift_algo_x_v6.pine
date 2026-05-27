@@ -1,0 +1,87 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Swift Algo X", overlay = true, max_labels_count = 500, max_boxes_count = 500)
+
+// --- Inputs ---
+int   period      = input.int(20, "Signal Period", minval = 1, tooltip = "Lookback period for momentum calculation")
+float sensitivity = input.float(2.0, "Sensitivity", minval = 0.1, step = 0.1, tooltip = "Multiplier for the signal volatility filter")
+float rr_ratio    = input.float(1.5, "Risk/Reward Ratio", minval = 0.1, step = 0.1, tooltip = "Target risk to reward ratio for boxes")
+int   atr_period  = input.int(14, "ATR Period", minval = 1, tooltip = "Period for ATR-based SL/TP calculation")
+
+// --- Colors ---
+color col_buy  = color.rgb(0, 230, 118)
+color col_sell = color.rgb(255, 82, 82)
+color col_tp   = color.fuchsia
+color col_box_green = color.new(col_buy, 80)
+color col_box_red   = color.new(col_sell, 80)
+
+// --- Logic ---
+float atr = ta.atr(atr_period)
+float up_trend = 0.0
+float dn_trend = 0.0
+float src = ta.wma(close, period)
+
+// Calculation logic for trend (resembles a smoothed ATR trailing stop)
+up_trend := src > nz(up_trend[1], src) and src[1] > nz(up_trend[1], src) ? math.max(nz(up_trend[1], src), src - sensitivity * atr) : src - sensitivity * atr
+dn_trend := src < nz(dn_trend[1], src) and src[1] < nz(dn_trend[1], src) ? math.min(nz(dn_trend[1], src), src + sensitivity * atr) : src + sensitivity * atr
+
+var int trend = 0
+trend := src > nz(dn_trend[1], 0) ? 1 : src < nz(up_trend[1], 0) ? -1 : nz(trend[1], 0)
+
+bool signal_buy  = trend == 1 and nz(trend[1], 0) == -1
+bool signal_sell = trend == -1 and nz(trend[1], 0) == 1
+
+// Trend Line Plot
+plot(trend == 1 ? up_trend : dn_trend, "Trend Line", color = trend == 1 ? col_buy : col_sell, style = plot.style_linebr)
+
+// --- Signal Labels ---
+if signal_buy
+    label.new(bar_index, low, "Buy", color = col_buy, textcolor = color.white, style = label.style_label_up, yloc = yloc.belowbar)
+
+if signal_sell
+    label.new(bar_index, high, "Sell", color = col_sell, textcolor = color.white, style = label.style_label_down, yloc = yloc.abovebar)
+
+// --- TP/SL Box Logic ---
+var float sl_level = na
+var float tp_level = na
+var box sl_box = na
+var box tp_box = na
+var line entry_line = na
+var bool trade_active = false
+var int trade_dir = 0 // 1 for Long, -1 for Short
+
+if signal_buy
+    sl_level := up_trend
+    tp_level := src + (src - sl_level) * rr_ratio
+    sl_box := box.new(bar_index, src, bar_index + 1, sl_level, bgcolor = col_box_red, border_color = color.new(col_sell, 50))
+    tp_box := box.new(bar_index, tp_level, bar_index + 1, src, bgcolor = col_box_green, border_color = color.new(col_buy, 50))
+    entry_line := line.new(bar_index, src, bar_index + 1, src, color = color.blue, width = 2)
+    trade_active := true
+    trade_dir := 1
+
+if signal_sell
+    sl_level := dn_trend
+    tp_level := src - (sl_level - src) * rr_ratio
+    sl_box := box.new(bar_index, sl_level, bar_index + 1, src, bgcolor = col_box_red, border_color = color.new(col_sell, 50))
+    tp_box := box.new(bar_index, src, bar_index + 1, tp_level, bgcolor = col_box_green, border_color = color.new(col_buy, 50))
+    entry_line := line.new(bar_index, src, bar_index + 1, src, color = color.blue, width = 2)
+    trade_active := true
+    trade_dir := -1
+
+// Update box width and check for exit
+if trade_active
+    box.set_right(sl_box, bar_index)
+    box.set_right(tp_box, bar_index)
+    line.set_x2(entry_line, bar_index)
+
+    // Check for TP hit
+    tp_hit = (trade_dir == 1 and high >= tp_level) or (trade_dir == -1 and low <= tp_level)
+    sl_hit = (trade_dir == 1 and low <= sl_level) or (trade_dir == -1 and high >= sl_level)
+
+    if tp_hit
+        label.new(bar_index, trade_dir == 1 ? high : low, trade_dir == 1 ? "Long TP" : "Short TP", color = col_tp, textcolor = color.white, style = trade_dir == 1 ? label.style_label_down : label.style_label_up, yloc = trade_dir == 1 ? yloc.abovebar : yloc.belowbar)
+        trade_active := false
+    else if sl_hit
+        trade_active := false
