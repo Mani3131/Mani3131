@@ -275,13 +275,13 @@ f_wr_bar(wr) =>
 
 if barstate.islast
     // Header
-    table.cell(dash_table, 0, 0, "Indicator Dashboard", bgcolor=color.rgb(30, 30, 35), color=color_txt, text_size=t_size)
+    table.cell(dash_table, 0, 0, "Indicator Dashboard", bgcolor=color.rgb(30, 30, 35), text_color=color_txt, text_size=t_size)
     table.merge_cells(dash_table, 0, 0, 3, 0)
 
-    table.cell(dash_table, 0, 1, "Indicator", color=color.gray, text_size=t_size)
-    table.cell(dash_table, 1, 1, "Status", color=color.gray, text_size=t_size)
-    table.cell(dash_table, 2, 1, "Standalone WR", color=color.gray, text_size=t_size)
-    table.cell(dash_table, 3, 1, "Enabled", color=color.gray, text_size=t_size)
+    table.cell(dash_table, 0, 1, "Indicator", text_color=color.gray, text_size=t_size)
+    table.cell(dash_table, 1, 1, "Status", text_color=color.gray, text_size=t_size)
+    table.cell(dash_table, 2, 1, "Standalone WR", text_color=color.gray, text_size=t_size)
+    table.cell(dash_table, 3, 1, "Enabled", text_color=color.gray, text_size=t_size)
 
     // Rows
     indicators = array.from("SMA Cross", "RSI", "MACD", "Supertrend", "Stochastic", "Bollinger", "EMA Cross", "AO", "SAR", "CCI", "ADX Filter")
@@ -291,39 +291,39 @@ if barstate.islast
     uses  = array.from(use_sma, use_rsi, use_macd, use_st, use_stoch, use_bb, use_ema, use_ao, use_sar, use_cci, use_adx)
 
     for i = 0 to 10
-        table.cell(dash_table, 0, i + 2, array.get(indicators, i), color=color_txt, text_halign=text.align_left, text_size=t_size)
-        table.cell(dash_table, 1, i + 2, f_status_text(array.get(bulls, i), array.get(bears, i)), color=f_status_color(array.get(bulls, i), array.get(bears, i)), text_size=t_size)
+        table.cell(dash_table, 0, i + 2, array.get(indicators, i), text_color=color_txt, text_halign=text.align_left, text_size=t_size)
+        table.cell(dash_table, 1, i + 2, f_status_text(array.get(bulls, i), array.get(bears, i)), text_color=f_status_color(array.get(bulls, i), array.get(bears, i)), text_size=t_size)
         wr_val = array.get(wrs, i)
-        table.cell(dash_table, 2, i + 2, str.format("{0,number,#.#}% ", wr_val) + f_wr_bar(wr_val), color=wr_val >= 50 ? color_bull : color_bear, text_halign=text.align_left, text_size=t_size)
-        table.cell(dash_table, 3, i + 2, f_enabled_text(array.get(uses, i)), color=f_enabled_color(array.get(uses, i)), text_size=t_size)
+        table.cell(dash_table, 2, i + 2, str.format("{0,number,#.#}% ", wr_val) + f_wr_bar(wr_val), text_color=wr_val >= 50 ? color_bull : color_bear, text_halign=text.align_left, text_size=t_size)
+        table.cell(dash_table, 3, i + 2, f_enabled_text(array.get(uses, i)), text_color=f_enabled_color(array.get(uses, i)), text_size=t_size)
 
     // Current Signal
-    table.cell(dash_table, 0, 13, "Current Signal", color=color_txt, text_halign=text.align_left, text_size=t_size)
+    table.cell(dash_table, 0, 13, "Current Signal", text_color=color_txt, text_halign=text.align_left, text_size=t_size)
     table.merge_cells(dash_table, 0, 13, 2, 13)
     sig_text = final_bull ? "LONG" : (final_bear ? "SHORT" : "NEUTRAL")
     sig_col  = final_bull ? color_bull : (final_bear ? color_bear : color.gray)
-    table.cell(dash_table, 3, 13, sig_text, color=sig_col, text_size=t_size)
+    table.cell(dash_table, 3, 13, sig_text, text_color=sig_col, text_size=t_size)
 
 // Backtest Results Table
 var table bt_table = table.new(position.bottom_center, 6, 3, color_bg, color.gray, 1, color.gray, 1)
 
 if barstate.islast
-    table.cell(bt_table, 0, 0, "Backtest Results [LuxAlgo]", bgcolor=color.rgb(30, 30, 35), color=color_txt, text_size=t_size)
+    table.cell(bt_table, 0, 0, "Backtest Results [LuxAlgo]", bgcolor=color.rgb(30, 30, 35), text_color=color_txt, text_size=t_size)
     table.merge_cells(bt_table, 0, 0, 5, 0)
 
-    table.cell(bt_table, 0, 1, "Total Trades", color=color.gray, text_size=t_size)
-    table.cell(bt_table, 1, 1, "Wins", color=color.gray, text_size=t_size)
-    table.cell(bt_table, 2, 1, "Losses", color=color.gray, text_size=t_size)
-    table.cell(bt_table, 3, 1, "Winrate", color=color.gray, text_size=t_size)
-    table.cell(bt_table, 4, 1, "PF", color=color.gray, text_size=t_size)
-    table.cell(bt_table, 5, 1, "PNL %", color=color.gray, text_size=t_size)
+    table.cell(bt_table, 0, 1, "Total Trades", text_color=color.gray, text_size=t_size)
+    table.cell(bt_table, 1, 1, "Wins", text_color=color.gray, text_size=t_size)
+    table.cell(bt_table, 2, 1, "Losses", text_color=color.gray, text_size=t_size)
+    table.cell(bt_table, 3, 1, "Winrate", text_color=color.gray, text_size=t_size)
+    table.cell(bt_table, 4, 1, "PF", text_color=color.gray, text_size=t_size)
+    table.cell(bt_table, 5, 1, "PNL %", text_color=color.gray, text_size=t_size)
 
-    table.cell(bt_table, 0, 2, str.tostring(bt_total_trades), color=color_txt, text_size=t_size)
-    table.cell(bt_table, 1, 2, str.tostring(bt_wins), color=color_txt, text_size=t_size)
-    table.cell(bt_table, 2, 2, str.tostring(bt_losses), color=color_txt, text_size=t_size)
-    table.cell(bt_table, 3, 2, str.format("{0,number,#.#}%", bt_winrate), color=bt_winrate >= 50 ? color_bull : color_bear, text_size=t_size)
-    table.cell(bt_table, 4, 2, str.format("{0,number,#.##}", bt_pf), color=bt_pf >= 1.0 ? color_bull : color_bear, text_size=t_size)
-    table.cell(bt_table, 5, 2, str.format("{0,number,#.#}%", bt_pnl_pct), color=bt_pnl_pct >= 0 ? color_bull : color_bear, text_size=t_size)
+    table.cell(bt_table, 0, 2, str.tostring(bt_total_trades), text_color=color_txt, text_size=t_size)
+    table.cell(bt_table, 1, 2, str.tostring(bt_wins), text_color=color_txt, text_size=t_size)
+    table.cell(bt_table, 2, 2, str.tostring(bt_losses), text_color=color_txt, text_size=t_size)
+    table.cell(bt_table, 3, 2, str.format("{0,number,#.#}%", bt_winrate), text_color=bt_winrate >= 50 ? color_bull : color_bear, text_size=t_size)
+    table.cell(bt_table, 4, 2, str.format("{0,number,#.##}", bt_pf), text_color=bt_pf >= 1.0 ? color_bull : color_bear, text_size=t_size)
+    table.cell(bt_table, 5, 2, str.format("{0,number,#.#}%", bt_pnl_pct), text_color=bt_pnl_pct >= 0 ? color_bull : color_bear, text_size=t_size)
 
 // --------------------------------------------------------------------------------------------------------------------
 // Chart Visuals
