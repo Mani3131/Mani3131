@@ -150,7 +150,7 @@ f_calc_wr(bull, bear) =>
     bool signal_long = bull and not bear
     bool signal_short = bear and not bull
 
-    if signal_long and not nz(is_long)
+    if signal_long and (na(is_long) or not is_long)
         if not na(entry_price)
             total := total + 1
             if is_long and close > entry_price
@@ -216,7 +216,7 @@ var float bt_pnl = 0.0
 var float bt_gross_profit = 0.0
 var float bt_gross_loss = 0.0
 
-if final_bull and not nz(bt_is_long)
+if final_bull and (na(bt_is_long) or not bt_is_long)
     if not na(bt_entry_price)
         trade_pnl = bt_is_long ? (close - bt_entry_price) / bt_entry_price : (bt_entry_price - close) / bt_entry_price
         bt_total_trades := bt_total_trades + 1
