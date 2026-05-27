@@ -1,0 +1,333 @@
+//@version=6
+indicator("Signal Forge [LuxAlgo]", overlay=true, max_labels_count=500)
+
+// --------------------------------------------------------------------------------------------------------------------
+// Settings
+// --------------------------------------------------------------------------------------------------------------------
+
+// Signal Settings
+grp_signals = "Signal Settings"
+signal_mode = input.string("Majority", "Signal Mode", options=["Strict", "Majority"], group=grp_signals, tooltip="Strict: All enabled indicators must align. Majority: Most enabled indicators must align.")
+
+// Indicator Toggles and Parameters
+grp_sma = "SMA Cross"
+use_sma = input.bool(true, "", inline="sma", group=grp_sma)
+sma_fast_len = input.int(50, "Fast Length", inline="sma", group=grp_sma)
+sma_slow_len = input.int(200, "Slow Length", inline="sma", group=grp_sma)
+
+grp_rsi = "RSI"
+use_rsi = input.bool(true, "", inline="rsi", group=grp_rsi)
+rsi_len = input.int(14, "Length", inline="rsi", group=grp_rsi)
+
+grp_macd = "MACD"
+use_macd = input.bool(true, "", inline="macd", group=grp_macd)
+macd_fast = input.int(12, "Fast", inline="macd", group=grp_macd)
+macd_slow = input.int(26, "Slow", inline="macd", group=grp_macd)
+macd_sig = input.int(9, "Signal", inline="macd", group=grp_macd)
+
+grp_st = "Supertrend"
+use_st = input.bool(true, "", inline="st", group=grp_st)
+st_len = input.int(10, "Length", inline="st", group=grp_st)
+st_mult = input.float(3.0, "Multiplier", step=0.1, inline="st", group=grp_st)
+
+grp_stoch = "Stochastic"
+use_stoch = input.bool(true, "", inline="stoch", group=grp_stoch)
+stoch_k = input.int(14, "%K", inline="stoch", group=grp_stoch)
+stoch_d = input.int(3, "%D", inline="stoch", group=grp_stoch)
+stoch_smooth = input.int(3, "Smooth", inline="stoch", group=grp_stoch)
+
+grp_bb = "Bollinger Bands"
+use_bb = input.bool(true, "", inline="bb", group=grp_bb)
+bb_len = input.int(20, "Length", inline="bb", group=grp_bb)
+bb_mult = input.float(2.0, "Multiplier", step=0.1, inline="bb", group=grp_bb)
+
+grp_ema = "EMA Cross"
+use_ema = input.bool(true, "", inline="ema", group=grp_ema)
+ema_fast_len = input.int(9, "Fast Length", inline="ema", group=grp_ema)
+ema_slow_len = input.int(21, "Slow Length", inline="ema", group=grp_ema)
+
+grp_ao = "Awesome Oscillator (AO)"
+use_ao = input.bool(true, "", inline="ao", group=grp_ao)
+
+grp_sar = "Parabolic SAR"
+use_sar = input.bool(true, "", inline="sar", group=grp_sar)
+sar_start = input.float(0.02, "Start", step=0.01, inline="sar", group=grp_sar)
+sar_inc = input.float(0.02, "Increment", step=0.01, inline="sar", group=grp_sar)
+sar_max = input.float(0.2, "Max", step=0.01, inline="sar", group=grp_sar)
+
+grp_cci = "CCI"
+use_cci = input.bool(true, "", inline="cci", group=grp_cci)
+cci_len = input.int(20, "Length", inline="cci", group=grp_cci)
+
+grp_adx = "ADX Filter"
+use_adx = input.bool(true, "", inline="adx", group=grp_adx)
+adx_len = input.int(14, "Length", inline="adx", group=grp_adx)
+adx_th = input.int(20, "Threshold", inline="adx", group=grp_adx)
+
+// Dashboard Settings
+grp_dash = "Dashboard Settings"
+dash_pos = input.string("Top Right", "Position", options=["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group=grp_dash)
+dash_size = input.string("Small", "Size", options=["Small", "Normal", "Large"], group=grp_dash)
+
+// Colors
+color_bull = #00bcd4 // Cyan/Aqua matching image
+color_bear = #f44336 // Red matching image
+color_bg   = color.rgb(20, 20, 25, 10)
+color_txt  = color.white
+
+// --------------------------------------------------------------------------------------------------------------------
+// Indicator Logic
+// --------------------------------------------------------------------------------------------------------------------
+
+// SMA Cross
+sma_fast = ta.sma(close, sma_fast_len)
+sma_slow = ta.sma(close, sma_slow_len)
+sma_bull = sma_fast > sma_slow
+sma_bear = sma_fast < sma_slow
+
+// RSI
+rsi_val = ta.rsi(close, rsi_len)
+rsi_bull = rsi_val > 50
+rsi_bear = rsi_val < 50
+
+// MACD
+[macd_line, macd_signal, _] = ta.macd(close, macd_fast, macd_slow, macd_sig)
+macd_bull = macd_line > macd_signal
+macd_bear = macd_line < macd_signal
+
+// Supertrend
+[st_val, st_dir] = ta.supertrend(st_mult, st_len)
+st_bull = close > st_val
+st_bear = close < st_val
+
+// Stochastic
+stoch_k_val = ta.sma(ta.stoch(close, high, low, stoch_k), stoch_smooth)
+stoch_d_val = ta.sma(stoch_k_val, stoch_d)
+stoch_bull = stoch_k_val > stoch_d_val
+stoch_bear = stoch_k_val < stoch_d_val
+
+// EMA Cross
+ema_fast = ta.ema(close, ema_fast_len)
+ema_slow = ta.ema(close, ema_slow_len)
+ema_bull = ema_fast > ema_slow
+ema_bear = ema_fast < ema_slow
+
+// AO
+ao_val = ta.sma(hl2, 5) - ta.sma(hl2, 34)
+ao_bull = ao_val > 0
+ao_bear = ao_val < 0
+
+// SAR
+sar_val = ta.sar(sar_start, sar_inc, sar_max)
+sar_bull = close > sar_val
+sar_bear = close < sar_val
+
+// CCI
+cci_val = ta.cci(close, cci_len)
+cci_bull = cci_val > 0
+cci_bear = cci_val < 0
+
+// Bollinger Bands
+[bb_mid, bb_upper, bb_lower] = ta.bb(close, bb_len, bb_mult)
+bb_bull = close > bb_mid
+bb_bear = close < bb_mid
+
+// ADX Filter
+[di_plus, di_minus, adx_val] = ta.dmi(adx_len, adx_len)
+adx_bull = adx_val > adx_th and di_plus > di_minus
+adx_bear = adx_val > adx_th and di_minus > di_plus
+
+// --------------------------------------------------------------------------------------------------------------------
+// Standalone Winrate Tracking
+// --------------------------------------------------------------------------------------------------------------------
+
+f_calc_wr(bull, bear) =>
+    var float entry_price = na
+    var int dir = -1 // -1: na, 0: short, 1: long
+    var int wins = 0
+    var int total = 0
+
+    bool signal_long = bull and not bear
+    bool signal_short = bear and not bull
+
+    if signal_long and dir != 1
+        if not na(entry_price)
+            total := total + 1
+            if (dir == 1 and close > entry_price) or (dir == 0 and close < entry_price)
+                wins := wins + 1
+        entry_price := close
+        dir := 1
+    else if signal_short and dir != 0
+        if not na(entry_price)
+            total := total + 1
+            if (dir == 1 and close > entry_price) or (dir == 0 and close < entry_price)
+                wins := wins + 1
+        entry_price := close
+        dir := 0
+
+    total > 0 ? (float(wins) / total) * 100 : 0.0
+
+sma_wr   = f_calc_wr(sma_bull, sma_bear)
+rsi_wr   = f_calc_wr(rsi_bull, rsi_bear)
+macd_wr  = f_calc_wr(macd_bull, macd_bear)
+st_wr    = f_calc_wr(st_bull, st_bear)
+stoch_wr = f_calc_wr(stoch_bull, stoch_bear)
+bb_wr    = f_calc_wr(bb_bull, bb_bear)
+ema_wr   = f_calc_wr(ema_bull, ema_bear)
+ao_wr    = f_calc_wr(ao_bull, ao_bear)
+sar_wr   = f_calc_wr(sar_bull, sar_bear)
+cci_wr   = f_calc_wr(cci_bull, cci_bear)
+adx_wr   = f_calc_wr(adx_bull, adx_bear)
+
+// --------------------------------------------------------------------------------------------------------------------
+// Signal Aggregation
+// --------------------------------------------------------------------------------------------------------------------
+
+num_enabled = (use_sma ? 1 : 0) + (use_rsi ? 1 : 0) + (use_macd ? 1 : 0) + (use_st ? 1 : 0) + (use_stoch ? 1 : 0) + (use_bb ? 1 : 0) + (use_ema ? 1 : 0) + (use_ao ? 1 : 0) + (use_sar ? 1 : 0) + (use_cci ? 1 : 0) + (use_adx ? 1 : 0)
+
+bull_score = (use_sma and sma_bull ? 1 : 0) + (use_rsi and rsi_bull ? 1 : 0) + (use_macd and macd_bull ? 1 : 0) + (use_st and st_bull ? 1 : 0) + (use_stoch and stoch_bull ? 1 : 0) + (use_bb and bb_bull ? 1 : 0) + (use_ema and ema_bull ? 1 : 0) + (use_ao and ao_bull ? 1 : 0) + (use_sar and sar_bull ? 1 : 0) + (use_cci and cci_bull ? 1 : 0) + (use_adx and adx_bull ? 1 : 0)
+
+bear_score = (use_sma and sma_bear ? 1 : 0) + (use_rsi and rsi_bear ? 1 : 0) + (use_macd and macd_bear ? 1 : 0) + (use_st and st_bear ? 1 : 0) + (use_stoch and stoch_bear ? 1 : 0) + (use_bb and bb_bear ? 1 : 0) + (use_ema and ema_bear ? 1 : 0) + (use_ao and ao_bear ? 1 : 0) + (use_sar and sar_bear ? 1 : 0) + (use_cci and cci_bear ? 1 : 0) + (use_adx and adx_bear ? 1 : 0)
+
+bool final_bull = false
+bool final_bear = false
+
+if signal_mode == "Strict"
+    final_bull := bull_score == num_enabled and num_enabled > 0
+    final_bear := bear_score == num_enabled and num_enabled > 0
+else // Majority
+    final_bull := bull_score > bear_score and num_enabled > 0
+    final_bear := bear_score > bull_score and num_enabled > 0
+
+// --------------------------------------------------------------------------------------------------------------------
+// Main Backtest Engine
+// --------------------------------------------------------------------------------------------------------------------
+
+var float bt_entry_price = na
+var int bt_dir = -1 // -1: na, 0: short, 1: long
+var int bt_total_trades = 0
+var int bt_wins = 0
+var int bt_losses = 0
+var float bt_pnl = 0.0
+var float bt_gross_profit = 0.0
+var float bt_gross_loss = 0.0
+
+if final_bull and bt_dir != 1
+    if not na(bt_entry_price)
+        trade_pnl = bt_dir == 1 ? (close - bt_entry_price) / bt_entry_price : (bt_entry_price - close) / bt_entry_price
+        bt_total_trades := bt_total_trades + 1
+        bt_pnl := bt_pnl + trade_pnl
+        if trade_pnl > 0
+            bt_wins := bt_wins + 1
+            bt_gross_profit := bt_gross_profit + trade_pnl
+        else
+            bt_losses := bt_losses + 1
+            bt_gross_loss := bt_gross_loss + math.abs(trade_pnl)
+    bt_entry_price := close
+    bt_dir := 1
+else if final_bear and bt_dir != 0
+    if not na(bt_entry_price)
+        trade_pnl = bt_dir == 1 ? (close - bt_entry_price) / bt_entry_price : (bt_entry_price - close) / bt_entry_price
+        bt_total_trades := bt_total_trades + 1
+        bt_pnl := bt_pnl + trade_pnl
+        if trade_pnl > 0
+            bt_wins := bt_wins + 1
+            bt_gross_profit := bt_gross_profit + trade_pnl
+        else
+            bt_losses := bt_losses + 1
+            bt_gross_loss := bt_gross_loss + math.abs(trade_pnl)
+    bt_entry_price := close
+    bt_dir := 0
+
+bt_winrate = bt_total_trades > 0 ? (float(bt_wins) / bt_total_trades) * 100 : 0.0
+bt_pf = bt_gross_loss > 0 ? bt_gross_profit / bt_gross_loss : (bt_gross_profit > 0 ? 999.0 : 0.0)
+bt_pnl_pct = bt_pnl * 100
+
+// --------------------------------------------------------------------------------------------------------------------
+// UI Tables
+// --------------------------------------------------------------------------------------------------------------------
+
+t_pos = dash_pos == "Top Right" ? position.top_right : dash_pos == "Bottom Right" ? position.bottom_right : dash_pos == "Top Left" ? position.top_left : position.bottom_left
+
+t_size = dash_size == "Small" ? size.small : dash_size == "Normal" ? size.normal : size.large
+
+var table dash_table = table.new(t_pos, 4, 14, color_bg, color.gray, 1, color.gray, 1)
+
+f_status_text(bull, bear) =>
+    bull ? "Bullish" : (bear ? "Bearish" : "Neutral")
+
+f_status_color(bull, bear) =>
+    bull ? color_bull : (bear ? color_bear : color.gray)
+
+f_enabled_text(use) =>
+    use ? "✓" : "✗"
+
+f_enabled_color(use) =>
+    use ? color_bull : color_bear
+
+// Mini-bar logic for WR
+f_wr_bar(wr) =>
+    int bars = math.round(wr / 10)
+    string bar_str = ""
+    for i = 1 to 10
+        bar_str := bar_str + (i <= bars ? "█" : "░")
+    bar_str
+
+if barstate.islast
+    // Header
+    table.cell(dash_table, 0, 0, "Indicator Dashboard", bgcolor=color.rgb(30, 30, 35), text_color=color_txt, text_size=t_size)
+    table.merge_cells(dash_table, 0, 0, 3, 0)
+
+    table.cell(dash_table, 0, 1, "Indicator", text_color=color.gray, text_size=t_size)
+    table.cell(dash_table, 1, 1, "Status", text_color=color.gray, text_size=t_size)
+    table.cell(dash_table, 2, 1, "Standalone WR", text_color=color.gray, text_size=t_size)
+    table.cell(dash_table, 3, 1, "Enabled", text_color=color.gray, text_size=t_size)
+
+    // Rows
+    indicators = array.from("SMA Cross", "RSI", "MACD", "Supertrend", "Stochastic", "Bollinger", "EMA Cross", "AO", "SAR", "CCI", "ADX Filter")
+    bulls = array.from(sma_bull, rsi_bull, macd_bull, st_bull, stoch_bull, bb_bull, ema_bull, ao_bull, sar_bull, cci_bull, adx_bull)
+    bears = array.from(sma_bear, rsi_bear, macd_bear, st_bear, stoch_bear, bb_bear, ema_bear, ao_bear, sar_bear, cci_bear, adx_bear)
+    wrs   = array.from(sma_wr, rsi_wr, macd_wr, st_wr, stoch_wr, bb_wr, ema_wr, ao_wr, sar_wr, cci_wr, adx_wr)
+    uses  = array.from(use_sma, use_rsi, use_macd, use_st, use_stoch, use_bb, use_ema, use_ao, use_sar, use_cci, use_adx)
+
+    for i = 0 to 10
+        table.cell(dash_table, 0, i + 2, array.get(indicators, i), text_color=color_txt, text_halign=text.align_left, text_size=t_size)
+        table.cell(dash_table, 1, i + 2, f_status_text(array.get(bulls, i), array.get(bears, i)), text_color=f_status_color(array.get(bulls, i), array.get(bears, i)), text_size=t_size)
+        wr_val = array.get(wrs, i)
+        table.cell(dash_table, 2, i + 2, str.format("{0,number,#.#}% ", wr_val) + f_wr_bar(wr_val), text_color=wr_val >= 50 ? color_bull : color_bear, text_halign=text.align_left, text_size=t_size)
+        table.cell(dash_table, 3, i + 2, f_enabled_text(array.get(uses, i)), text_color=f_enabled_color(array.get(uses, i)), text_size=t_size)
+
+    // Current Signal
+    table.cell(dash_table, 0, 13, "Current Signal", text_color=color_txt, text_halign=text.align_left, text_size=t_size)
+    table.merge_cells(dash_table, 0, 13, 2, 13)
+    sig_text = final_bull ? "LONG" : (final_bear ? "SHORT" : "NEUTRAL")
+    sig_col  = final_bull ? color_bull : (final_bear ? color_bear : color.gray)
+    table.cell(dash_table, 3, 13, sig_text, text_color=sig_col, text_size=t_size)
+
+// Backtest Results Table
+var table bt_table = table.new(position.bottom_center, 6, 3, color_bg, color.gray, 1, color.gray, 1)
+
+if barstate.islast
+    table.cell(bt_table, 0, 0, "Backtest Results [LuxAlgo]", bgcolor=color.rgb(30, 30, 35), text_color=color_txt, text_size=t_size)
+    table.merge_cells(bt_table, 0, 0, 5, 0)
+
+    table.cell(bt_table, 0, 1, "Total Trades", text_color=color.gray, text_size=t_size)
+    table.cell(bt_table, 1, 1, "Wins", text_color=color.gray, text_size=t_size)
+    table.cell(bt_table, 2, 1, "Losses", text_color=color.gray, text_size=t_size)
+    table.cell(bt_table, 3, 1, "Winrate", text_color=color.gray, text_size=t_size)
+    table.cell(bt_table, 4, 1, "PF", text_color=color.gray, text_size=t_size)
+    table.cell(bt_table, 5, 1, "PNL %", text_color=color.gray, text_size=t_size)
+
+    table.cell(bt_table, 0, 2, str.tostring(bt_total_trades), text_color=color_txt, text_size=t_size)
+    table.cell(bt_table, 1, 2, str.tostring(bt_wins), text_color=color_txt, text_size=t_size)
+    table.cell(bt_table, 2, 2, str.tostring(bt_losses), text_color=color_txt, text_size=t_size)
+    table.cell(bt_table, 3, 2, str.format("{0,number,#.#}%", bt_winrate), text_color=bt_winrate >= 50 ? color_bull : color_bear, text_size=t_size)
+    table.cell(bt_table, 4, 2, str.format("{0,number,#.##}", bt_pf), text_color=bt_pf >= 1.0 ? color_bull : color_bear, text_size=t_size)
+    table.cell(bt_table, 5, 2, str.format("{0,number,#.#}%", bt_pnl_pct), text_color=bt_pnl_pct >= 0 ? color_bull : color_bear, text_size=t_size)
+
+// --------------------------------------------------------------------------------------------------------------------
+// Chart Visuals
+// --------------------------------------------------------------------------------------------------------------------
+
+plotshape(final_bull and not final_bull[1], "Long Signal", shape.labelup, location.belowbar, color_bull, text="LONG", textcolor=color.white, size=size.small)
+plotshape(final_bear and not final_bear[1], "Short Signal", shape.labeldown, location.abovebar, color_bear, text="SHORT", textcolor=color.white, size=size.small)
