@@ -142,9 +142,9 @@ adx_bear = adx_val > adx_th and di_minus > di_plus
 // --------------------------------------------------------------------------------------------------------------------
 
 f_calc_wr(bull, bear) =>
-    var float entry_price = na
-    var bool is_long = na
-    var int wins = 0
+    var entry_price = float(na)
+    var is_long = bool(na)
+    var wins = 0
     var int total = 0
 
     bool signal_long = bull and not bear
@@ -207,9 +207,9 @@ else // Majority
 // Main Backtest Engine
 // --------------------------------------------------------------------------------------------------------------------
 
-var float bt_entry_price = na
-var bool bt_is_long = na
-var int bt_total_trades = 0
+var bt_entry_price = float(na)
+var bt_is_long = bool(na)
+var bt_total_trades = 0
 var int bt_wins = 0
 var int bt_losses = 0
 var float bt_pnl = 0.0
