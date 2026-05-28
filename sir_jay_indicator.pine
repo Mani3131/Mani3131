@@ -1,0 +1,116 @@
+//@version=6
+indicator("SIR JAY Swing Statistics", overlay=true, max_labels_count=500, max_boxes_count=500, max_lines_count=500)
+
+// --- Inputs ---
+grp_pivot = "Pivot Settings"
+p_left  = input.int(10, "Pivot Left Bars", minval=1, group=grp_pivot)
+p_right = input.int(5, "Pivot Right Bars", minval=1, group=grp_pivot)
+show_stats = input.bool(true, "Show Swing Statistics", group=grp_pivot)
+line_color = input.color(color.gray, "Level Line Color", group=grp_pivot)
+
+grp_zone = "Risk Zone Settings"
+lookback_zone = input.int(100, "Lookback for Risk Zone", minval=10, group=grp_zone)
+zone_height_perc = input.float(0.1, "Zone Height % of Range", minval=0.01, group=grp_zone)
+// Use RGB for emerald as it's not a built-in constant
+zone_color = input.color(color.new(color.rgb(0, 155, 119), 80), "Risk Zone Color", group=grp_zone)
+
+// --- State Variables ---
+var int   last_p_index   = na
+var int   last_p_time    = na
+var float last_p_cum_vol = na
+var float cum_vol        = 0.0
+
+cum_vol += nz(volume)
+
+// --- Pivot Detection ---
+float ph = ta.pivothigh(high, p_left, p_right)
+float pl = ta.pivotlow(low, p_left, p_right)
+
+// --- Formatting Functions ---
+f_format_vol(float vol) =>
+    vol >= 1000000 ? str.tostring(vol / 1000000, "#.##") + "M" :
+     vol >= 1000 ? str.tostring(vol / 1000, "#.##") + "K" :
+     str.tostring(vol, "#")
+
+f_format_time(int duration_ms) =>
+    int total_minutes = math.floor(duration_ms / 60000)
+    int hours = math.floor(total_minutes / 60)
+    int mins = total_minutes % 60
+    str.tostring(hours) + "h " + str.tostring(mins) + "m"
+
+// --- Visual & Logic Implementation ---
+// Use barstate.isconfirmed to avoid duplicate objects on every tick of a live bar
+if (not na(ph) or not na(pl)) and barstate.isconfirmed
+    bool is_ph = not na(ph)
+    int   current_p_index = bar_index - p_right
+    int   current_p_time  = time[p_right]
+    float current_p_vol   = cum_vol[p_right]
+    float current_p_price = is_ph ? ph : pl
+
+    // Calculate stats if this is not the first pivot
+    if not na(last_p_index)
+        int   bars_diff = current_p_index - last_p_index
+        int   time_diff = current_p_time - last_p_time
+        float vol_diff  = math.abs(current_p_vol - last_p_cum_vol)
+
+        // Label Content
+        string stats_txt = str.tostring(bars_diff) + " bars, " + f_format_time(time_diff) + "\nVol " + f_format_vol(vol_diff)
+
+        if show_stats
+            label.new(
+                 x      = current_p_index,
+                 y      = current_p_price,
+                 text   = stats_txt,
+                 color  = color.new(color.black, 100),
+                 textcolor = color.gray,
+                 style  = label.style_none,
+                 yloc   = is_ph ? yloc.abovebar : yloc.belowbar,
+                 size   = size.small
+                 )
+
+    // Level Line (Drawn for every pivot)
+    line.new(
+         x1     = current_p_index,
+         y1     = current_p_price,
+         x2     = bar_index + 10,
+         y2     = current_p_price,
+         color  = line_color,
+         style  = line.style_dashed,
+         extend = extend.right
+         )
+
+    // Update state for next pivot
+    last_p_index   := current_p_index
+    last_p_time    := current_p_time
+    last_p_cum_vol := current_p_vol
+
+// --- RISK BUY ZONE Implementation ---
+var box risk_box = na
+if barstate.islast
+    float ll = ta.lowest(low, lookback_zone)
+    float hh = ta.highest(high, lookback_zone)
+    float price_range = hh - ll
+    float zone_top = ll + (price_range * zone_height_perc)
+    string zone_txt = "RISK BUY ZONE\nRange: " + str.tostring(zone_top - ll, "#.#####")
+
+    if na(risk_box)
+        risk_box := box.new(
+             left   = bar_index - lookback_zone,
+             top    = zone_top,
+             right  = bar_index + 20,
+             bottom = ll,
+             border_color = color.new(color.rgb(0, 155, 119), 50),
+             bgcolor = zone_color,
+             text = zone_txt,
+             text_color = color.rgb(0, 155, 119),
+             text_halign = text.align_left,
+             text_valign = text.align_top,
+             text_size = size.small
+             )
+    else
+        box.set_lefttop(risk_box, bar_index - lookback_zone, zone_top)
+        box.set_rightbottom(risk_box, bar_index + 20, ll)
+        box.set_text(risk_box, zone_txt)
+
+// Transparent plot to keep indicator active
+plot(close, color=color.new(color.blue, 100))
