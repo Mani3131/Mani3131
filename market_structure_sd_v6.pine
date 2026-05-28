@@ -113,7 +113,7 @@ if filter_show_fvg
     if fvg_bullish
         box.new(bar_index[2], high[2], bar_index, low, bgcolor = color.new(color.teal, 90), border_color = na)
     if fvg_bearish
-        box.new(bar_index[2], low[2], bar_index, high, bgcolor = color.new(color.pink, 90), border_color = na)
+        box.new(bar_index[2], low[2], bar_index, high, bgcolor = color.new(color.fuchsia, 90), border_color = na)
 
 // --- LTF Market Structure (BOS/CHoCH) ---
 var float last_ph = na
