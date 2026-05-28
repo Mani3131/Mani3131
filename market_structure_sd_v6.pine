@@ -15,7 +15,7 @@ sd_max_zones = input.int(10, "Max Zones to Display", minval = 1, maxval = 50, gr
 sd_mitigation = input.string("Close", "Mitigation Method", options = ["Touch", "Close", "None"], group = grp_sd)
 
 grp_ms = "Market Structure Settings"
-ms_show = input.bool(true, "Show BOS/CHoCH", group = grp_ms)
+ms_show = input.bool(true, "Show HTF BOS/CHoCH", group = grp_ms)
 ms_pivot_len = input.int(3, "MS Pivot Length", minval = 1, group = grp_ms)
 
 grp_filter = "Profitability Filters"
@@ -30,9 +30,9 @@ color_choch = input.color(color.fuchsia, "CHoCH Color", group = grp_visual)
 
 // --- HTF Data Fetching (Non-Repainting) ---
 f_get_htf_data() =>
-    [open[1], high[1], low[1], close[1], volume[1], ta.atr(14)[1], ta.sma(volume, 20)[1]]
+    [open[1], high[1], low[1], close[1], volume[1], ta.atr(14)[1], ta.sma(volume, 20)[1], ta.pivothigh(high, 3, 3)[1], ta.pivotlow(low, 3, 3)[1]]
 
-[htf_open, htf_high, htf_low, htf_close, htf_vol, htf_atr, htf_avg_vol] = request.security(syminfo.tickerid, htf_tf, f_get_htf_data(), lookahead = barmerge.lookahead_on)
+[htf_open, htf_high, htf_low, htf_close, htf_vol, htf_atr, htf_avg_vol, htf_ph_raw, htf_pl_raw] = request.security(syminfo.tickerid, htf_tf, f_get_htf_data(), lookahead = barmerge.lookahead_on)
 
 // --- EMA Filter & MTF Trend ---
 ema_filter = ta.ema(close, filter_ema_len)
@@ -115,31 +115,47 @@ if filter_show_fvg
     if fvg_bearish
         box.new(bar_index[2], low[2], bar_index, high, bgcolor = color.new(color.fuchsia, 90), border_color = na)
 
-// --- LTF Market Structure (BOS/CHoCH) ---
-var float last_ph = na
-var float last_pl = na
-var bool is_bullish = true
+// --- Market Structure (HTF Logic, Minimized Visuals) ---
+var float htf_last_ph = na
+var float htf_last_pl = na
+var bool htf_is_bullish = true
 
-ph = ta.pivothigh(ms_pivot_len, ms_pivot_len)
-pl = ta.pivotlow(ms_pivot_len, ms_pivot_len)
+if not na(htf_ph_raw)
+    htf_last_ph := htf_ph_raw
+if not na(htf_pl_raw)
+    htf_last_pl := htf_pl_raw
 
-if not na(ph)
-    last_ph := ph
-if not na(pl)
-    last_pl := pl
+htf_choch_bullish = htf_is_bullish == false and close > htf_last_ph
+htf_choch_bearish = htf_is_bullish == true and close < htf_last_pl
+htf_bos_bullish = htf_is_bullish == true and close > htf_last_ph
+htf_bos_bearish = htf_is_bullish == false and close < htf_last_pl
 
-choch_bullish = is_bullish == false and close > last_ph
-choch_bearish = is_bullish == true and close < last_pl
-bos_bullish = is_bullish == true and close > last_ph
-bos_bearish = is_bullish == false and close < last_pl
-
-if choch_bullish or choch_bearish
-    is_bullish := choch_bullish
+if htf_choch_bullish or htf_choch_bearish
+    htf_is_bullish := htf_choch_bullish
     if ms_show
-        label.new(bar_index, high, "CHoCH", color = color_choch, textcolor = color.white, style = label.style_label_down, size = size.tiny)
-else if bos_bullish or bos_bearish
+        label.new(bar_index, high, "HTF CHoCH", color = color_choch, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+else if htf_bos_bullish or htf_bos_bearish
     if ms_show
-        label.new(bar_index, high, "BOS", color = color_bos, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+        label.new(bar_index, high, "HTF BOS", color = color_bos, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+
+// --- LTF Reaction Logic (Internal for Signals) ---
+var float ltf_last_ph = na
+var float ltf_last_pl = na
+var bool ltf_is_bullish = true
+
+ltf_ph = ta.pivothigh(ms_pivot_len, ms_pivot_len)
+ltf_pl = ta.pivotlow(ms_pivot_len, ms_pivot_len)
+
+if not na(ltf_ph)
+    ltf_last_ph := ltf_ph
+if not na(ltf_pl)
+    ltf_last_pl := ltf_pl
+
+ltf_choch_bullish = ltf_is_bullish == false and close > ltf_last_ph
+ltf_choch_bearish = ltf_is_bullish == true and close < ltf_last_pl
+
+if ltf_choch_bullish or ltf_choch_bearish
+    ltf_is_bullish := ltf_choch_bullish
 
 // --- Entry Signals ---
 f_is_in_zone(boxes) =>
@@ -151,8 +167,8 @@ f_is_in_zone(boxes) =>
                 break
     in_zone
 
-long_signal = f_is_in_zone(htf_demand_boxes) and choch_bullish and is_uptrend
-short_signal = f_is_in_zone(htf_supply_boxes) and choch_bearish and is_downtrend
+long_signal = f_is_in_zone(htf_demand_boxes) and ltf_choch_bullish and is_uptrend
+short_signal = f_is_in_zone(htf_supply_boxes) and ltf_choch_bearish and is_downtrend
 
 plotshape(long_signal, "Long Signal", shape.triangleup, location.belowbar, color.green, size = size.normal, text = "BUY")
 plotshape(short_signal, "Short Signal", shape.triangledown, location.abovebar, color.red, size = size.normal, text = "SELL")
