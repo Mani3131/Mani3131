@@ -1,5 +1,5 @@
 //@version=6
-indicator("SIR JAY Swing Statistics", overlay=true, max_labels_count=500, max_boxes_count=500)
+indicator("SIR JAY Swing Statistics", overlay=true, max_labels_count=500, max_boxes_count=500, max_lines_count=500)
 
 // --- Inputs ---
 grp_pivot = "Pivot Settings"
@@ -11,7 +11,8 @@ line_color = input.color(color.gray, "Level Line Color", group=grp_pivot)
 grp_zone = "Risk Zone Settings"
 lookback_zone = input.int(100, "Lookback for Risk Zone", minval=10, group=grp_zone)
 zone_height_perc = input.float(0.1, "Zone Height % of Range", minval=0.01, group=grp_zone)
-zone_color = input.color(color.new(color.emerald, 80), "Risk Zone Color", group=grp_zone)
+// Use RGB for emerald as it's not a built-in constant
+zone_color = input.color(color.new(color.rgb(0, 155, 119), 80), "Risk Zone Color", group=grp_zone)
 
 // --- State Variables ---
 var int   last_p_index   = na
@@ -98,10 +99,10 @@ if barstate.islast
              top    = zone_top,
              right  = bar_index + 20,
              bottom = ll,
-             border_color = color.new(color.emerald, 50),
+             border_color = color.new(color.rgb(0, 155, 119), 50),
              bgcolor = zone_color,
              text = zone_txt,
-             text_color = color.emerald,
+             text_color = color.rgb(0, 155, 119),
              text_halign = text.align_left,
              text_valign = text.align_top,
              text_size = size.small
