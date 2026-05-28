@@ -51,7 +51,7 @@ trend_4h  = request.security(syminfo.tickerid, "240", f_get_trend_status(), look
 trend_1d  = request.security(syminfo.tickerid, "D", f_get_trend_status(), lookahead = barmerge.lookahead_on)
 
 // --- S&D Detection Logic (HTF Context) ---
-htf_changed = ta.change(time(htf_tf))
+htf_changed = ta.change(time(htf_tf)) != 0
 var htf_supply_boxes = array.new<box>()
 var htf_demand_boxes = array.new<box>()
 
