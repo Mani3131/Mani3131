@@ -1,0 +1,142 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("SMC Visuals [v6]", overlay = true, max_labels_count = 500, max_boxes_count = 500, max_lines_count = 500)
+
+// --- Inputs ---
+pivot_len = input.int(5, "Pivot Length", minval = 1)
+show_bos = input.bool(true, "Show BOS/CHoCH", group = "Market Structure")
+show_ob = input.bool(true, "Show Order Blocks", group = "Order Blocks")
+show_liq = input.bool(true, "Show Liquidity", group = "Liquidity")
+show_dash = input.bool(true, "Show Dashboard", group = "Dashboard")
+
+// Colors
+color_bull = input.color(color.rgb(0, 188, 212), "Bullish Color")
+color_bear = input.color(color.rgb(244, 67, 54), "Bearish Color")
+color_ob_bull = input.color(color.new(color.rgb(0, 188, 212), 80), "Buy OB Color")
+color_ob_bear = input.color(color.new(color.rgb(244, 67, 54), 80), "Sell OB Color")
+
+// --- Pivot Detection ---
+ph = ta.pivothigh(high, pivot_len, pivot_len)
+pl = ta.pivotlow(low, pivot_len, pivot_len)
+
+var float last_ph = na
+var float last_pl = na
+var int last_ph_idx = na
+var int last_pl_idx = na
+var float pl_high = na
+var float pl_low = na
+var float ph_high = na
+var float ph_low = na
+var int trend = 0 // 1 for bull, -1 for bear
+
+// --- Liquidity Detection ---
+var float eqh_val = na
+var float eql_val = na
+liq_threshold = input.float(0.01, "Liquidity Threshold (%)", minval = 0, step = 0.01, group = "Liquidity") / 100
+
+if not na(ph)
+    if not na(eqh_val) and ph > eqh_val
+        if show_liq
+            label.new(bar_index[pivot_len], ph, "EQH Swept ❌", color = color.new(color.black, 100), textcolor = color.orange, style = label.style_label_down, size = size.small)
+        eqh_val := na
+    else if not na(last_ph) and math.abs(ph - last_ph) / ph <= liq_threshold
+        eqh_val := math.max(ph, last_ph)
+        if show_liq
+            label.new(bar_index[pivot_len], eqh_val, "EQH 💵", color = color.new(color.black, 100), textcolor = color.orange, style = label.style_label_down, size = size.small)
+
+if not na(pl)
+    if not na(eql_val) and pl < eql_val
+        if show_liq
+            label.new(bar_index[pivot_len], pl, "EQL Swept ❌", color = color.new(color.black, 100), textcolor = color.orange, style = label.style_label_up, size = size.small)
+        eql_val := na
+    else if not na(last_pl) and math.abs(pl - last_pl) / pl <= liq_threshold
+        eql_val := math.min(pl, last_pl)
+        if show_liq
+            label.new(bar_index[pivot_len], eql_val, "EQL 💵", color = color.new(color.black, 100), textcolor = color.orange, style = label.style_label_up, size = size.small)
+
+// Update pivots AFTER liquidity check to compare with PREVIOUS pivot
+if not na(ph)
+    last_ph := ph
+    last_ph_idx := bar_index[pivot_len]
+    ph_high := high[pivot_len]
+    ph_low := low[pivot_len]
+
+if not na(pl)
+    last_pl := pl
+    last_pl_idx := bar_index[pivot_len]
+    pl_high := high[pivot_len]
+    pl_low := low[pivot_len]
+
+// Real-time sweep detection
+if barstate.isconfirmed
+    if not na(eqh_val) and high > eqh_val
+        if show_liq
+            label.new(bar_index, high, "EQH Swept ❌", color = color.new(color.black, 100), textcolor = color.orange, style = label.style_label_down, size = size.small)
+        eqh_val := na
+
+    if not na(eql_val) and low < eql_val
+        if show_liq
+            label.new(bar_index, low, "EQL Swept ❌", color = color.new(color.black, 100), textcolor = color.orange, style = label.style_label_up, size = size.small)
+        eql_val := na
+
+// --- BOS & Order Block Detection ---
+if barstate.isconfirmed
+    if close > last_ph and not na(last_ph)
+        is_choch = trend == -1
+        label_text = is_choch ? "CHoCH" : "BOS"
+        if show_bos
+            line.new(last_ph_idx, last_ph, bar_index, last_ph, color = color_bull, style = line.style_dashed)
+            label.new(math.round(math.avg(last_ph_idx, bar_index)), last_ph, label_text, color = color.new(color.black, 100), textcolor = color_bull, style = label.style_label_down, size = size.tiny)
+
+        trend := 1
+        if show_ob and not na(last_pl_idx)
+            // Draw Buy OB at the last pivot low
+            box.new(last_pl_idx - 2, pl_high, bar_index, pl_low, bgcolor = color_ob_bull, border_color = color.new(color_bull, 50), text = "BUY OB", text_size = size.tiny, text_color = color_bull, text_halign = text.align_center, text_valign = text.align_center)
+
+        last_ph := na
+
+    if close < last_pl and not na(last_pl)
+        is_choch = trend == 1
+        label_text = is_choch ? "CHoCH" : "BOS"
+        if show_bos
+            line.new(last_pl_idx, last_pl, bar_index, last_pl, color = color_bear, style = line.style_dashed)
+            label.new(math.round(math.avg(last_pl_idx, bar_index)), last_pl, label_text, color = color.new(color.black, 100), textcolor = color_bear, style = label.style_label_up, size = size.tiny)
+
+        trend := -1
+        if show_ob and not na(last_ph_idx)
+            // Draw Sell OB at the last pivot high
+            box.new(last_ph_idx - 2, ph_high, bar_index, ph_low, bgcolor = color_ob_bear, border_color = color.new(color_bear, 50), text = "SELL OB", text_size = size.tiny, text_color = color_bear, text_halign = text.align_center, text_valign = text.align_center)
+
+        last_pl := na
+
+// --- MTF Dashboard ---
+// Security calls at global level for v6 stability
+t_1d = request.security(syminfo.tickerid, "1D", close > ta.ema(close, 200))
+t_1h = request.security(syminfo.tickerid, "60", close > ta.ema(close, 200))
+t_15m = request.security(syminfo.tickerid, "15", close > ta.ema(close, 200))
+t_5m = request.security(syminfo.tickerid, "5", close > ta.ema(close, 200))
+
+var table board = table.new(position.top_right, 2, 5, border_width = 1, border_color = color.gray)
+
+if barstate.islast and show_dash
+    // Header
+    table.cell(board, 0, 0, "Timeframe", text_color = color.gray, bgcolor = color.new(color.black, 0), text_size = size.small)
+    table.cell(board, 1, 0, "SMC Trend", text_color = color.gray, bgcolor = color.new(color.black, 0), text_size = size.small)
+
+    // 1D Row
+    table.cell(board, 0, 1, "1D", text_color = color.white, bgcolor = color.new(color.gray, 50), text_size = size.small)
+    table.cell(board, 1, 1, t_1d ? "BULLISH" : "BEARISH", text_color = color.white, bgcolor = t_1d ? color.rgb(76, 175, 80) : color.rgb(244, 67, 54), text_size = size.small)
+
+    // 1H Row
+    table.cell(board, 0, 2, "1H", text_color = color.white, bgcolor = color.new(color.gray, 50), text_size = size.small)
+    table.cell(board, 1, 2, t_1h ? "BULLISH" : "BEARISH", text_color = color.white, bgcolor = t_1h ? color.rgb(76, 175, 80) : color.rgb(244, 67, 54), text_size = size.small)
+
+    // 15M Row
+    table.cell(board, 0, 3, "15M", text_color = color.white, bgcolor = color.new(color.gray, 50), text_size = size.small)
+    table.cell(board, 1, 3, t_15m ? "BULLISH" : "BEARISH", text_color = color.white, bgcolor = t_15m ? color.rgb(76, 175, 80) : color.rgb(244, 67, 54), text_size = size.small)
+
+    // 5M Row
+    table.cell(board, 0, 4, "5M", text_color = color.white, bgcolor = color.new(color.gray, 50), text_size = size.small)
+    table.cell(board, 1, 4, t_5m ? "BULLISH" : "BEARISH", text_color = color.white, bgcolor = t_5m ? color.rgb(76, 175, 80) : color.rgb(244, 67, 54), text_size = size.small)
