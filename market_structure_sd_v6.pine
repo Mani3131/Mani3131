@@ -28,6 +28,12 @@ color_demand = input.color(color.new(color.blue, 80), "Demand Color", group = gr
 color_bos = input.color(color.gray, "BOS Color", group = grp_visual)
 color_choch = input.color(color.fuchsia, "CHoCH Color", group = grp_visual)
 
+// --- Helper Functions ---
+f_format_vol(float _vol) =>
+    _vol >= 1000000 ? str.tostring(_vol / 1000000, "#.##") + "M" :
+     _vol >= 1000 ? str.tostring(_vol / 1000, "#.##") + "K" :
+     str.tostring(_vol, "#")
+
 // --- HTF Data Fetching (Non-Repainting) ---
 f_get_htf_data() =>
     [open[1], high[1], low[1], close[1], volume[1], ta.atr(14)[1], ta.sma(volume, 20)[1], ta.pivothigh(high, 3, 3)[1], ta.pivotlow(low, 3, 3)[1]]
@@ -86,13 +92,15 @@ f_manage_zones(boxes, is_supply) =>
 if htf_changed
     if htf_close - htf_open > htf_atr * sd_displacement_mult
         strength = f_calc_strength(htf_open, htf_high, htf_low, htf_close, htf_vol, htf_avg_vol, htf_atr)
-        b = box.new(bar_index[1], htf_open, bar_index + 10, htf_low, border_color = color_demand, bgcolor = color_demand, text = "STR: " + str.tostring(strength), text_size = size.small, text_color = color.white, text_halign = text.align_right)
+        vol_str = f_format_vol(htf_vol)
+        b = box.new(bar_index[1], htf_open, bar_index + 10, htf_low, border_color = color_demand, bgcolor = color_demand, text = "DEMAND | STR: " + str.tostring(strength) + " | VOL: " + vol_str, text_size = size.small, text_color = color.white, text_halign = text.align_right)
         array.push(htf_demand_boxes, b)
         if array.size(htf_demand_boxes) > sd_max_zones
             box.delete(array.shift(htf_demand_boxes))
     if htf_open - htf_close > htf_atr * sd_displacement_mult
         strength = f_calc_strength(htf_open, htf_high, htf_low, htf_close, htf_vol, htf_avg_vol, htf_atr)
-        b = box.new(bar_index[1], htf_high, bar_index + 10, htf_open, border_color = color_supply, bgcolor = color_supply, text = "STR: " + str.tostring(strength), text_size = size.small, text_color = color.white, text_halign = text.align_right)
+        vol_str = f_format_vol(htf_vol)
+        b = box.new(bar_index[1], htf_high, bar_index + 10, htf_open, border_color = color_supply, bgcolor = color_supply, text = "SUPPLY | STR: " + str.tostring(strength) + " | VOL: " + vol_str, text_size = size.small, text_color = color.white, text_halign = text.align_right)
         array.push(htf_supply_boxes, b)
         if array.size(htf_supply_boxes) > sd_max_zones
             box.delete(array.shift(htf_supply_boxes))
