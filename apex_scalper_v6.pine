@@ -1,0 +1,128 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Apex Scalper V6 [SMC & Ribbon]", shorttitle="Apex V6", overlay=true, max_labels_count=500, max_boxes_count=500)
+
+// ==========================================
+// INPUTS
+// ==========================================
+grp_ribbon = "Trend Ribbon (EMA)"
+show_ribbon = input.bool(true, "Show Ribbon", group=grp_ribbon)
+ribbon_len  = input.int(20, "Base Length", minval=5, group=grp_ribbon)
+
+grp_ms = "Market Structure (BOS/CHoCH)"
+show_ms     = input.bool(true, "Show Market Structure", group=grp_ms)
+ms_period   = input.int(5, "Pivot Period", minval=2, group=grp_ms)
+
+grp_fvg = "Fair Value Gaps (FVG)"
+show_fvg    = input.bool(true, "Show FVGs", group=grp_fvg)
+fvg_extend  = input.int(3, "Extend Bars", minval=1, group=grp_fvg)
+
+grp_dash = "Dashboard"
+show_dash   = input.bool(true, "Show Dashboard", group=grp_dash)
+dash_pos    = input.string("Top Right", "Position", options=["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group=grp_dash)
+
+// ==========================================
+// COLOR PALETTE
+// ==========================================
+color_bull = color.teal
+color_bear = color.fuchsia
+color_neutral = color.gray
+
+// ==========================================
+// TREND RIBBON (EMA)
+// ==========================================
+f_ema(float src, int len) =>
+    ta.ema(src, len)
+
+ema1 = f_ema(close, ribbon_len)
+ema2 = f_ema(close, ribbon_len + 5)
+ema3 = f_ema(close, ribbon_len + 10)
+ema4 = f_ema(close, ribbon_len + 15)
+
+plot_e1 = plot(show_ribbon ? ema1 : na, color=color.new(color_bull, 20), title="EMA 1")
+plot_e4 = plot(show_ribbon ? ema4 : na, color=color.new(color_bear, 20), title="EMA 4")
+fill(plot_e1, plot_e4, color=ema1 > ema4 ? color.new(color_bull, 80) : color.new(color_bear, 80), title="Ribbon Fill")
+
+// ==========================================
+// MARKET STRUCTURE
+// ==========================================
+var float ph = na
+var float pl = na
+var int ph_idx = na
+var int pl_idx = na
+var bool ph_pending = false
+var bool pl_pending = false
+
+n_ph = ta.pivothigh(high, ms_period, ms_period)
+n_pl = ta.pivotlow(low, ms_period, ms_period)
+
+if not na(n_ph)
+    ph := n_ph
+    ph_idx := bar_index - ms_period
+    ph_pending := true
+    if show_ms
+        label.new(ph_idx, ph, "HH", color=color.new(color_neutral, 100), textcolor=color_bull, style=label.style_label_down, size=size.tiny)
+
+if not na(n_pl)
+    pl := n_pl
+    pl_idx := bar_index - ms_period
+    pl_pending := true
+    if show_ms
+        label.new(pl_idx, pl, "LL", color=color.new(color_neutral, 100), textcolor=color_bear, style=label.style_label_up, size=size.tiny)
+
+// Simple BOS Detection
+if show_ms and barstate.isconfirmed
+    // Bullish BOS
+    if ph_pending and close > ph
+        line.new(ph_idx, ph, bar_index, ph, color=color_bull, style=line.style_dashed)
+        label.new(bar_index, ph, "BOS", color=color.new(color_bull, 100), textcolor=color_bull, style=label.style_label_down, size=size.small)
+        ph_pending := false
+
+    // Bearish BOS
+    if pl_pending and close < pl
+        line.new(pl_idx, pl, bar_index, pl, color=color_bear, style=line.style_dashed)
+        label.new(bar_index, pl, "BOS", color=color.new(color_bear, 100), textcolor=color_bear, style=label.style_label_up, size=size.small)
+        pl_pending := false
+
+// ==========================================
+// FAIR VALUE GAPS (FVG)
+// ==========================================
+is_bull_fvg = low > high[2] and close[1] > high[2]
+is_bear_fvg = high < low[2] and close[1] < low[2]
+
+if show_fvg and barstate.isconfirmed
+    if is_bull_fvg
+        box.new(bar_index[2], high[2], bar_index + fvg_extend, low, bgcolor=color.new(color_bull, 85), border_color=color.new(color_bull, 50))
+    if is_bear_fvg
+        box.new(bar_index[2], low[2], bar_index + fvg_extend, high, bgcolor=color.new(color_bear, 85), border_color=color.new(color_bear, 50))
+
+// ==========================================
+// DASHBOARD
+// ==========================================
+var table dash = table.new(
+     dash_pos == "Top Right" ? position.top_right :
+     dash_pos == "Bottom Right" ? position.bottom_right :
+     dash_pos == "Top Left" ? position.top_left : position.bottom_left,
+     2, 4, border_width=1, border_color=color.gray)
+
+if show_dash and barstate.islast
+    table.cell(dash, 0, 0, "Metric", bgcolor=color.new(color_neutral, 50), text_color=color.white)
+    table.cell(dash, 1, 0, "Status", bgcolor=color.new(color_neutral, 50), text_color=color.white)
+
+    // Trend
+    trend_col = ema1 > ema4 ? color_bull : color_bear
+    table.cell(dash, 0, 1, "Trend", text_color=color.white)
+    table.cell(dash, 1, 1, ema1 > ema4 ? "BULLISH" : "BEARISH", bgcolor=trend_col, text_color=color.white)
+
+    // Volatility (ATR based)
+    atr = ta.atr(14)
+    table.cell(dash, 0, 2, "Volatility", text_color=color.white)
+    table.cell(dash, 1, 2, str.format("{0,number,#.##}", atr), text_color=color.white)
+
+    // Signal
+    signal = ema1 > ema4 and close > ema1 ? "LONG" : ema1 < ema4 and close < ema1 ? "SHORT" : "WAIT"
+    sig_col = signal == "LONG" ? color_bull : signal == "SHORT" ? color_bear : color_neutral
+    table.cell(dash, 0, 3, "Signal", text_color=color.white)
+    table.cell(dash, 1, 3, signal, bgcolor=sig_col, text_color=color.white)
