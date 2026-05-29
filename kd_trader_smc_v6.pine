@@ -54,7 +54,7 @@ var string last_pl_type = na
 ph = ta.pivothigh(p_left, p_right)
 pl = ta.pivotlow(p_left, p_right)
 
-if ph
+if not na(ph)
     string p_type = na
     if na(last_ph.y) or ph > last_ph.y
         p_type := "HH"
@@ -67,7 +67,7 @@ if ph
     last_ph := point.new(ph, bar_index[p_right])
     last_ph_type := p_type
 
-if pl
+if not na(pl)
     string p_type = na
     if na(last_pl.y) or pl < last_pl.y
         p_type := "LL"
@@ -124,7 +124,7 @@ var box[] ob_boxes = array.new_box()
 
 if show_ob
     // Simple OB: last opposite candle before BOS/CHoCH
-    if (ph or pl) and math.abs(close - open) > ta.atr(14)
+    if (not na(ph) or not na(pl)) and math.abs(close - open) > ta.atr(14)
         bool is_bull = close > open
         color ob_c = is_bull ? ob_color_bull : ob_color_bear
         string ob_txt = (is_bull ? "BULL OB @ " : "BEAR OB @ ") + str.tostring(close, "#.##")
