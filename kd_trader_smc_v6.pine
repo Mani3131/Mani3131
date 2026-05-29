@@ -188,10 +188,15 @@ if show_signals
         label.new(bar_index, high, "SELL", color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small)
 
 // --- TP/SL LEVELS ---
-var line sl_line = na
-var line tp1_line = na
-var line tp2_line = na
-var line tp3_line = na
+var line sl_line = line.new(na, na, na, na, color=color.red, style=line.style_dotted)
+var line tp1_line = line.new(na, na, na, na, color=color.teal, style=line.style_dotted)
+var line tp2_line = line.new(na, na, na, na, color=color.teal, style=line.style_dotted)
+var line tp3_line = line.new(na, na, na, na, color=color.teal, style=line.style_dotted)
+
+var label sl_lab = label.new(na, na, "SL", color=color.new(color.red, 100), textcolor=color.red, style=label.style_label_left, size=size.tiny)
+var label tp1_lab = label.new(na, na, "TP 1", color=color.new(color.teal, 100), textcolor=color.teal, style=label.style_label_left, size=size.tiny)
+var label tp2_lab = label.new(na, na, "TP 2", color=color.new(color.teal, 100), textcolor=color.teal, style=label.style_label_left, size=size.tiny)
+var label tp3_lab = label.new(na, na, "TP 3", color=color.new(color.teal, 100), textcolor=color.teal, style=label.style_label_left, size=size.tiny)
 
 if (buy_sig or sell_sig) and show_signals
     atr = ta.atr(14)
@@ -202,20 +207,19 @@ if (buy_sig or sell_sig) and show_signals
     float tp2 = buy_sig ? entry + risk * tp2_mult : entry - risk * tp2_mult
     float tp3 = buy_sig ? entry + risk * tp3_mult : entry - risk * tp3_mult
 
-    line.delete(sl_line)
-    line.delete(tp1_line)
-    line.delete(tp2_line)
-    line.delete(tp3_line)
+    line.set_xy1(sl_line, bar_index, sl)
+    line.set_xy2(sl_line, bar_index + 20, sl)
+    line.set_xy1(tp1_line, bar_index, tp1)
+    line.set_xy2(tp1_line, bar_index + 20, tp1)
+    line.set_xy1(tp2_line, bar_index, tp2)
+    line.set_xy2(tp2_line, bar_index + 20, tp2)
+    line.set_xy1(tp3_line, bar_index, tp3)
+    line.set_xy2(tp3_line, bar_index + 20, tp3)
 
-    sl_line := line.new(bar_index, sl, bar_index + 20, sl, color=color.red, style=line.style_dotted)
-    tp1_line := line.new(bar_index, tp1, bar_index + 20, tp1, color=color.teal, style=line.style_dotted)
-    tp2_line := line.new(bar_index, tp2, bar_index + 20, tp2, color=color.teal, style=line.style_dotted)
-    tp3_line := line.new(bar_index, tp3, bar_index + 20, tp3, color=color.teal, style=line.style_dotted)
-
-    label.new(bar_index + 20, sl, "SL", color=color.new(color.red, 100), textcolor=color.red, style=label.style_label_left, size=size.tiny)
-    label.new(bar_index + 20, tp1, "TP 1", color=color.new(color.teal, 100), textcolor=color.teal, style=label.style_label_left, size=size.tiny)
-    label.new(bar_index + 20, tp2, "TP 2", color=color.new(color.teal, 100), textcolor=color.teal, style=label.style_label_left, size=size.tiny)
-    label.new(bar_index + 20, tp3, "TP 3", color=color.new(color.teal, 100), textcolor=color.teal, style=label.style_label_left, size=size.tiny)
+    label.set_xy(sl_lab, bar_index + 20, sl)
+    label.set_xy(tp1_lab, bar_index + 20, tp1)
+    label.set_xy(tp2_lab, bar_index + 20, tp2)
+    label.set_xy(tp3_lab, bar_index + 20, tp3)
 
 // --- DASHBOARD ---
 f_get_trend_val(o, c) => c > o ? 1 : -1
@@ -242,9 +246,9 @@ else
     trend_bars += 1
 
 // Session Logic
-is_ny = not na(time(timeframe.period, "1300-2200", "UTC"))
-is_london = not na(time(timeframe.period, "0800-1700", "UTC"))
-is_tokyo = not na(time(timeframe.period, "0000-0900", "UTC"))
+is_ny = not na(time(timeframe.period, "1500-2359", "UTC+3"))
+is_london = not na(time(timeframe.period, "1000-1900", "UTC+3"))
+is_tokyo = not na(time(timeframe.period, "0300-1200", "UTC+3"))
 curr_session = is_ny ? "NEW YORK" : is_london ? "LONDON" : is_tokyo ? "TOKYO" : "OFF"
 
 // Bullish Pressure (Volume-based)

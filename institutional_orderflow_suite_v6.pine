@@ -16,9 +16,9 @@ poc_color = input.color(color.new(color.orange, 20), "POC Color", group=grp_vp)
 
 // Session Settings
 grp_sessions = "Institutional Session Settings"
-london_sess = input.string("0800-1700", "London Session", group=grp_sessions)
-ny_sess = input.string("1300-2200", "NY Session", group=grp_sessions)
-sess_tz = input.string("UTC", "Session Timezone", group=grp_sessions)
+london_sess = input.string("1000-1900", "London Session", group=grp_sessions)
+ny_sess = input.string("1500-2359", "NY Session", group=grp_sessions)
+sess_tz = input.string("UTC+3", "Session Timezone", group=grp_sessions)
 
 // Dashboard Settings
 grp_dash = "Institutional Dashboard"
@@ -51,7 +51,8 @@ if show_sweeps
 
 // --- VOLUME PROFILE & POC ---
 var float poc_price = na
-var line poc_l = na
+var line poc_l = line.new(na, na, na, na, color=poc_color, width=2, style=line.style_dashed)
+var label poc_lab = label.new(na, na, "POC", color=color.new(color.orange, 100), textcolor=color.orange, style=label.style_label_left, size=size.tiny)
 
 if show_poc and barstate.islast
     float max_v = 0.0
@@ -76,9 +77,9 @@ if show_poc and barstate.islast
             best_p := p_level
 
     poc_price := best_p
-    line.delete(poc_l)
-    poc_l := line.new(bar_index - vp_lookback, poc_price, bar_index + 20, poc_price, color=poc_color, width=2, style=line.style_dashed)
-    label.new(bar_index + 20, poc_price, "POC", color=color.new(color.orange, 100), textcolor=color.orange, style=label.style_label_left, size=size.tiny)
+    line.set_xy1(poc_l, bar_index - vp_lookback, poc_price)
+    line.set_xy2(poc_l, bar_index + 20, poc_price)
+    label.set_xy(poc_lab, bar_index + 20, poc_price)
 
 // --- SIMULATED DELTA & SESSION NODES ---
 // Simulated Delta: (Close - Low) - (High - Close) / (High - Low) * Volume
