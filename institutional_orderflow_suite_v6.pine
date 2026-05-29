@@ -1,6 +1,11 @@
 //@version=6
 indicator("Advanced Institutional Orderflow & Liquidity Suite", shorttitle="AI Orderflow v6", overlay=true, max_labels_count=500, max_boxes_count=500, max_lines_count=500)
 
+// Fix Historical Buffer Error
+max_bars_back(high, 500)
+max_bars_back(low, 500)
+max_bars_back(volume, 500)
+
 // --- INPUTS ---
 // Liquidity Sweep Settings
 grp_liq = "Liquidity Sweep Settings"

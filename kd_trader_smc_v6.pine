@@ -1,6 +1,12 @@
 //@version=6
 indicator("KD Trader SMC Visuals v6", shorttitle="KDT SMC v6", overlay=true, max_labels_count=500, max_boxes_count=500, max_lines_count=500)
 
+// Fix Historical Buffer Error
+max_bars_back(high, 300)
+max_bars_back(low, 300)
+max_bars_back(close, 300)
+max_bars_back(open, 300)
+
 // --- INPUTS ---
 // Ribbon Settings
 grp_ribbon = "Trend Ribbon Settings"
