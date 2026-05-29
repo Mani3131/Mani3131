@@ -86,7 +86,7 @@ delta_calc = ((close - low) - (high - close)) / (high - low == 0 ? 1 : high - lo
 var float delta_cum = 0.0
 delta_cum += delta_calc
 
-plotshape(ta.abs(delta_calc) > ta.sma(volume, 20) * 0.5, "Delta Signal", shape.circle, location.bottom, color=delta_calc > 0 ? color.teal : color.red, size=size.tiny)
+plotshape(math.abs(delta_calc) > ta.sma(volume, 20) * 0.5, "Delta Signal", shape.circle, location.bottom, color=delta_calc > 0 ? color.teal : color.red, size=size.tiny)
 
 // Session Detection
 in_london = not na(time(timeframe.period, london_sess, sess_tz))
