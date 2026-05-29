@@ -1,0 +1,327 @@
+//@version=6
+indicator("KD Trader SMC Visuals v6", shorttitle="KDT SMC v6", overlay=true, max_labels_count=500, max_boxes_count=500, max_lines_count=500)
+
+// --- INPUTS ---
+// Ribbon Settings
+grp_ribbon = "Trend Ribbon Settings"
+show_ribbon = input.bool(true, "Show Trend Ribbon", group=grp_ribbon)
+ribbon_type = input.string("EMA", "Ribbon MA Type", options=["EMA", "SMA", "WMA", "HMA"], group=grp_ribbon)
+ribbon_start = input.int(20, "Ribbon Start Period", minval=1, group=grp_ribbon)
+ribbon_step = input.int(5, "Ribbon Step", minval=1, group=grp_ribbon)
+// Fixed to 10 MAs for visual consistency
+ribbon_count = 10
+
+// SMC Structure Settings
+grp_smc = "SMC Structure Settings"
+p_left = input.int(5, "Pivot Left Bars", minval=1, group=grp_smc)
+p_right = input.int(5, "Pivot Right Bars", minval=1, group=grp_smc)
+show_hhll = input.bool(true, "Show HH/LL/LH/HL", group=grp_smc)
+show_bos = input.bool(true, "Show BOS/CHoCH", group=grp_smc)
+
+// FVG & OB Settings
+grp_zones = "FVG & Order Block Settings"
+show_fvg = input.bool(true, "Show Fair Value Gaps", group=grp_zones)
+fvg_color_bull = input.color(color.new(color.teal, 80), "Bullish FVG Color", group=grp_zones)
+fvg_color_bear = input.color(color.new(color.fuchsia, 80), "Bearish FVG Color", group=grp_zones)
+show_ob = input.bool(true, "Show Order Blocks", group=grp_zones)
+ob_color_bull = input.color(color.new(color.teal, 80), "Bullish OB Color", group=grp_zones)
+ob_color_bear = input.color(color.new(color.red, 80), "Bearish OB Color", group=grp_zones)
+
+// Signals & TP/SL
+grp_sig = "Signals & TP/SL Settings"
+show_signals = input.bool(true, "Show Buy/Sell Signals", group=grp_sig)
+atr_mult_sl = input.float(1.5, "SL ATR Multiplier", minval=0.1, step=0.1, group=grp_sig)
+tp1_mult = input.float(1.0, "TP1 RR Multiplier", minval=0.1, step=0.1, group=grp_sig)
+tp2_mult = input.float(2.0, "TP2 RR Multiplier", minval=0.1, step=0.1, group=grp_sig)
+tp3_mult = input.float(3.0, "TP3 RR Multiplier", minval=0.1, step=0.1, group=grp_sig)
+
+// Dashboard Settings
+grp_dash = "Dashboard Settings"
+show_dash = input.bool(true, "Show Dashboard", group=grp_dash)
+dash_loc = input.string("Top Right", "Dashboard Location", options=["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group=grp_dash)
+
+// --- GLOBAL VARIABLES & TYPES ---
+type point
+    float y
+    int x
+
+var point last_ph = point.new(na, na)
+var point last_pl = point.new(na, na)
+var string last_ph_type = na
+var string last_pl_type = na
+
+// --- PIVOT DETECTION ---
+ph = ta.pivothigh(p_left, p_right)
+pl = ta.pivotlow(p_left, p_right)
+
+if ph
+    string p_type = na
+    if na(last_ph.y) or ph > last_ph.y
+        p_type := "HH"
+    else
+        p_type := "LH"
+
+    if show_hhll
+        label.new(bar_index[p_right], ph, p_type, color=color.new(color.gray, 100), textcolor=color.gray, style=label.style_label_down, size=size.tiny)
+
+    last_ph := point.new(ph, bar_index[p_right])
+    last_ph_type := p_type
+
+if pl
+    string p_type = na
+    if na(last_pl.y) or pl < last_pl.y
+        p_type := "LL"
+    else
+        p_type := "HL"
+
+    if show_hhll
+        label.new(bar_index[p_right], pl, p_type, color=color.new(color.gray, 100), textcolor=color.gray, style=label.style_label_up, size=size.tiny)
+
+    last_pl := point.new(pl, bar_index[p_right])
+    last_pl_type := p_type
+
+// --- BOS & CHOCH LOGIC ---
+var float trend = 0 // 1: Bullish, -1: Bearish
+var bool bos_broken = false
+var bool choch_broken = false
+
+if show_bos
+    // Bullish BOS (HH break)
+    if trend >= 0 and not na(last_ph.y) and ta.crossover(close, last_ph.y)
+        label.new(bar_index, high, "BOS", color=color.new(color.teal, 100), textcolor=color.teal, style=label.style_label_down, size=size.tiny)
+        line.new(last_ph.x, last_ph.y, bar_index, last_ph.y, color=color.new(color.teal, 50), style=line.style_dashed)
+        trend := 1
+
+    // Bearish BOS (LL break)
+    if trend <= 0 and not na(last_pl.y) and ta.crossunder(close, last_pl.y)
+        label.new(bar_index, low, "BOS", color=color.new(color.red, 100), textcolor=color.red, style=label.style_label_up, size=size.tiny)
+        line.new(last_pl.x, last_pl.y, bar_index, last_pl.y, color=color.new(color.red, 50), style=line.style_dashed)
+        trend := -1
+
+    // CHoCH Logic
+    if trend == 1 and not na(last_pl.y) and ta.crossunder(close, last_pl.y)
+        label.new(bar_index, low, "CHoCH\nTrend Reversal", color=color.new(color.red, 100), textcolor=color.red, style=label.style_label_up, size=size.small)
+        line.new(last_pl.x, last_pl.y, bar_index, last_pl.y, color=color.red, width=2)
+        trend := -1
+
+    if trend == -1 and not na(last_ph.y) and ta.crossover(close, last_ph.y)
+        label.new(bar_index, high, "CHoCH\nTrend Reversal", color=color.new(color.teal, 100), textcolor=color.teal, style=label.style_label_down, size=size.small)
+        line.new(last_ph.x, last_ph.y, bar_index, last_ph.y, color=color.teal, width=2)
+        trend := 1
+
+// --- FVG DETECTION ---
+if show_fvg
+    // Bullish FVG
+    if low > high[2]
+        box.new(bar_index[1], high[2], bar_index + 10, low, bgcolor=fvg_color_bull, border_color=na, text="FVG", text_size=size.tiny, text_color=color.teal)
+
+    // Bearish FVG
+    if high < low[2]
+        box.new(bar_index[1], low[2], bar_index + 10, high, bgcolor=fvg_color_bear, border_color=na, text="FVG", text_size=size.tiny, text_color=color.fuchsia)
+
+// --- ORDER BLOCKS ---
+var box[] ob_boxes = array.new_box()
+
+if show_ob
+    // Simple OB: last opposite candle before BOS/CHoCH
+    if (ph or pl) and math.abs(close - open) > ta.atr(14)
+        bool is_bull = close > open
+        color ob_c = is_bull ? ob_color_bull : ob_color_bear
+        string ob_txt = (is_bull ? "BULL OB @ " : "BEAR OB @ ") + str.tostring(close, "#.##")
+        box b = box.new(bar_index, high, bar_index + 5, low, bgcolor=ob_c, border_color=ob_c, text=ob_txt, text_size=size.tiny, text_color=color.white)
+        array.push(ob_boxes, b)
+
+// OB Mitigation
+if array.size(ob_boxes) > 0
+    for i = array.size(ob_boxes) - 1 to 0
+        box b = array.get(ob_boxes, i)
+        float top = box.get_top(b)
+        float bot = box.get_bottom(b)
+        if (close < bot and open > bot) or (close > top and open < top)
+            box.set_right(b, bar_index)
+            array.remove(ob_boxes, i)
+
+// --- TREND RIBBON ---
+f_ma(type, src, len) =>
+    switch type
+        "EMA" => ta.ema(src, len)
+        "SMA" => ta.sma(src, len)
+        "WMA" => ta.wma(src, len)
+        "HMA" => ta.hma(src, len)
+        => ta.ema(src, len)
+
+ma1  = f_ma(ribbon_type, close, ribbon_start + 0 * ribbon_step)
+ma2  = f_ma(ribbon_type, close, ribbon_start + 1 * ribbon_step)
+ma3  = f_ma(ribbon_type, close, ribbon_start + 2 * ribbon_step)
+ma4  = f_ma(ribbon_type, close, ribbon_start + 3 * ribbon_step)
+ma5  = f_ma(ribbon_type, close, ribbon_start + 4 * ribbon_step)
+ma6  = f_ma(ribbon_type, close, ribbon_start + 5 * ribbon_step)
+ma7  = f_ma(ribbon_type, close, ribbon_start + 6 * ribbon_step)
+ma8  = f_ma(ribbon_type, close, ribbon_start + 7 * ribbon_step)
+ma9  = f_ma(ribbon_type, close, ribbon_start + 8 * ribbon_step)
+ma10 = f_ma(ribbon_type, close, ribbon_start + 9 * ribbon_step)
+
+c1 = ma1 > ma1[1] ? color.new(color.teal, 80) : color.new(color.red, 80)
+c2 = ma10 > ma10[1] ? color.new(color.teal, 80) : color.new(color.red, 80)
+
+pl1 = plot(show_ribbon ? ma1 : na, color=c1, title="MA 1")
+pl2 = plot(show_ribbon ? ma2 : na, color=c1, title="MA 2")
+pl3 = plot(show_ribbon ? ma3 : na, color=c1, title="MA 3")
+pl4 = plot(show_ribbon ? ma4 : na, color=c1, title="MA 4")
+pl5 = plot(show_ribbon ? ma5 : na, color=c1, title="MA 5")
+pl6 = plot(show_ribbon ? ma6 : na, color=c2, title="MA 6")
+pl7 = plot(show_ribbon ? ma7 : na, color=c2, title="MA 7")
+pl8 = plot(show_ribbon ? ma8 : na, color=c2, title="MA 8")
+pl9 = plot(show_ribbon ? ma9 : na, color=c2, title="MA 9")
+pl10 = plot(show_ribbon ? ma10 : na, color=c2, title="MA 10")
+
+fill(pl1, pl10, color=ma1 > ma10 ? color.new(color.teal, 90) : color.new(color.red, 90), title="Ribbon Fill")
+
+// --- SIGNALS ---
+buy_sig = trend == 1 and close > ma1 and low > ma10 and ta.crossover(close, ma1)
+sell_sig = trend == -1 and close < ma1 and high < ma10 and ta.crossunder(close, ma1)
+
+if show_signals
+    if buy_sig
+        label.new(bar_index, low, "BUY", color=color.teal, textcolor=color.white, style=label.style_label_up, size=size.small)
+    if sell_sig
+        label.new(bar_index, high, "SELL", color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small)
+
+// --- TP/SL LEVELS ---
+var line sl_line = na
+var line tp1_line = na
+var line tp2_line = na
+var line tp3_line = na
+
+if (buy_sig or sell_sig) and show_signals
+    atr = ta.atr(14)
+    float entry = close
+    float sl = buy_sig ? entry - atr * atr_mult_sl : entry + atr * atr_mult_sl
+    float risk = math.abs(entry - sl)
+    float tp1 = buy_sig ? entry + risk * tp1_mult : entry - risk * tp1_mult
+    float tp2 = buy_sig ? entry + risk * tp2_mult : entry - risk * tp2_mult
+    float tp3 = buy_sig ? entry + risk * tp3_mult : entry - risk * tp3_mult
+
+    line.delete(sl_line)
+    line.delete(tp1_line)
+    line.delete(tp2_line)
+    line.delete(tp3_line)
+
+    sl_line := line.new(bar_index, sl, bar_index + 20, sl, color=color.red, style=line.style_dotted)
+    tp1_line := line.new(bar_index, tp1, bar_index + 20, tp1, color=color.teal, style=line.style_dotted)
+    tp2_line := line.new(bar_index, tp2, bar_index + 20, tp2, color=color.teal, style=line.style_dotted)
+    tp3_line := line.new(bar_index, tp3, bar_index + 20, tp3, color=color.teal, style=line.style_dotted)
+
+    label.new(bar_index + 20, sl, "SL", color=color.new(color.red, 100), textcolor=color.red, style=label.style_label_left, size=size.tiny)
+    label.new(bar_index + 20, tp1, "TP 1", color=color.new(color.teal, 100), textcolor=color.teal, style=label.style_label_left, size=size.tiny)
+    label.new(bar_index + 20, tp2, "TP 2", color=color.new(color.teal, 100), textcolor=color.teal, style=label.style_label_left, size=size.tiny)
+    label.new(bar_index + 20, tp3, "TP 3", color=color.new(color.teal, 100), textcolor=color.teal, style=label.style_label_left, size=size.tiny)
+
+// --- DASHBOARD ---
+f_get_trend_val(o, c) => c > o ? 1 : -1
+
+// Request MTF data at global scope
+[m1_o, m1_c] = request.security(syminfo.tickerid, "1", [open[1], close[1]], lookahead=barmerge.lookahead_on)
+[m5_o, m5_c] = request.security(syminfo.tickerid, "5", [open[1], close[1]], lookahead=barmerge.lookahead_on)
+[m15_o, m15_c] = request.security(syminfo.tickerid, "15", [open[1], close[1]], lookahead=barmerge.lookahead_on)
+[h1_o, h1_c] = request.security(syminfo.tickerid, "60", [open[1], close[1]], lookahead=barmerge.lookahead_on)
+[h4_o, h4_c] = request.security(syminfo.tickerid, "240", [open[1], close[1]], lookahead=barmerge.lookahead_on)
+[d1_o, d1_c] = request.security(syminfo.tickerid, "D", [open[1], close[1]], lookahead=barmerge.lookahead_on)
+
+m1_trend  = f_get_trend_val(m1_o, m1_c)
+m5_trend  = f_get_trend_val(m5_o, m5_c)
+m15_trend = f_get_trend_val(m15_o, m15_c)
+h1_trend  = f_get_trend_val(h1_o, h1_c)
+h4_trend  = f_get_trend_val(h4_o, h4_c)
+d1_trend  = f_get_trend_val(d1_o, d1_c)
+
+var int trend_bars = 0
+if ta.change(trend) != 0
+    trend_bars := 0
+else
+    trend_bars += 1
+
+// Session Logic
+is_ny = not na(time(timeframe.period, "1300-2200", "UTC"))
+is_london = not na(time(timeframe.period, "0800-1700", "UTC"))
+is_tokyo = not na(time(timeframe.period, "0000-0900", "UTC"))
+curr_session = is_ny ? "NEW YORK" : is_london ? "LONDON" : is_tokyo ? "TOKYO" : "OFF"
+
+// Bullish Pressure (Volume-based)
+bull_vol = close > open ? volume : 0
+bear_vol = close < open ? volume : 0
+total_vol = ta.sma(volume, 20)
+bull_p = bull_vol > bear_vol ? "BULL" : "BEAR"
+
+if show_dash and barstate.islast
+    t_pos = dash_loc == "Top Right" ? position.top_right : dash_loc == "Bottom Right" ? position.bottom_right : dash_loc == "Top Left" ? position.top_left : position.bottom_left
+    var table dash = table.new(t_pos, 2, 12, bgcolor=color.new(color.black, 20), border_width=1, border_color=color.gray)
+
+    // Header
+    table.cell(dash, 0, 0, "Dashboard", text_color=color.white, text_size=size.normal)
+    table.merge_cells(dash, 0, 0, 1, 0)
+
+    // Data Rows
+    table.cell(dash, 0, 1, "SMC TREND", text_color=color.gray, text_halign=text.align_left)
+    table.cell(dash, 1, 1, trend == 1 ? "BULLISH" : "BEARISH", text_color=trend == 1 ? color.teal : color.red)
+
+    string strength_txt = trend_bars > 20 ? "STRONG" : trend_bars > 10 ? "MELLOW" : "WEAK"
+    table.cell(dash, 0, 2, "STRENGTH", text_color=color.gray, text_halign=text.align_left)
+    table.cell(dash, 1, 2, strength_txt, text_color=color.teal)
+
+    string age_txt = trend_bars > 20 ? "MATURE" : trend_bars > 10 ? "MID" : "FRESH"
+    table.cell(dash, 0, 3, "TREND AGE", text_color=color.gray, text_halign=text.align_left)
+    table.cell(dash, 1, 3, age_txt + " (" + str.tostring(trend_bars) + ")", text_color=color.orange)
+
+    float vol_val = ta.atr(14) / ta.atr(100)
+    string vol_txt = vol_val > 1.5 ? "AMPLIFIED" : vol_val > 0.8 ? "NORMAL" : "STAGNANT"
+    table.cell(dash, 0, 4, "VOLATILITY", text_color=color.gray, text_halign=text.align_left)
+    table.cell(dash, 1, 4, vol_txt, text_color=color.white)
+
+    table.cell(dash, 0, 5, "SESSION", text_color=color.gray, text_halign=text.align_left)
+    table.cell(dash, 1, 5, curr_session, text_color=color.white)
+
+    table.cell(dash, 0, 6, "BULLISH PRESH", text_color=color.gray, text_halign=text.align_left)
+    table.cell(dash, 1, 6, bull_p == "BULL" ? "BULL FRESH" : "BEAR FRESH", text_color=bull_p == "BULL" ? color.teal : color.red)
+
+    // MTF Grid
+    table.cell(dash, 0, 8, "MTF STATUS", text_color=color.white)
+    table.merge_cells(dash, 0, 8, 1, 8)
+
+    table.cell(dash, 0, 9, "M1", bgcolor=m1_trend == 1 ? color.new(color.teal, 50) : color.new(color.red, 50), text_color=color.white)
+    table.cell(dash, 1, 9, "M5", bgcolor=m5_trend == 1 ? color.new(color.teal, 50) : color.new(color.red, 50), text_color=color.white)
+    table.cell(dash, 0, 10, "M15", bgcolor=m15_trend == 1 ? color.new(color.teal, 50) : color.new(color.red, 50), text_color=color.white)
+    table.cell(dash, 1, 10, "H1", bgcolor=h1_trend == 1 ? color.new(color.teal, 50) : color.new(color.red, 50), text_color=color.white)
+    table.cell(dash, 0, 11, "H4", bgcolor=h4_trend == 1 ? color.new(color.teal, 50) : color.new(color.red, 50), text_color=color.white)
+    table.cell(dash, 1, 11, "D1", bgcolor=d1_trend == 1 ? color.new(color.teal, 50) : color.new(color.red, 50), text_color=color.white)
+
+// --- MOMENTUM OSCILLATOR (WAVETREND STYLE) ---
+// Note: This is an overlay script, so we scale the oscillator to the bottom of the price chart.
+ap = hlc3
+esa = ta.ema(ap, 10)
+d = ta.ema(math.abs(ap - esa), 10)
+ci = (ap - esa) / (0.015 * d)
+tci = ta.ema(ci, 21)
+
+wt1 = tci
+wt2 = ta.sma(wt1, 4)
+
+// Scaling to price chart (more stable scaling using EMA of range)
+var float stable_min = na
+stable_min := na(stable_min) ? low : math.min(stable_min, ta.lowest(low, 100))
+chart_range = ta.ema(high - low, 100) * 10
+osc_scale = stable_min - (chart_range * 0.2)
+
+// Normalized oscillator for visualization
+norm_wt1 = osc_scale + (wt1 / 100) * (chart_range * 0.05)
+norm_wt2 = osc_scale + (wt2 / 100) * (chart_range * 0.05)
+
+p_wt1 = plot(norm_wt1, color=color.new(color.teal, 20), title="WT1")
+p_wt2 = plot(norm_wt2, color=color.new(color.red, 20), title="WT2", style=plot.style_stepline)
+fill(p_wt1, p_wt2, color=wt1 > wt2 ? color.new(color.teal, 80) : color.new(color.red, 80))
+
+// Cross signals on oscillator
+if ta.crossover(wt1, wt2)
+    label.new(bar_index, norm_wt1, "●", color=color.new(color.teal, 100), textcolor=color.teal, style=label.style_label_center, size=size.tiny)
+if ta.crossunder(wt1, wt2)
+    label.new(bar_index, norm_wt1, "●", color=color.new(color.red, 100), textcolor=color.red, style=label.style_label_center, size=size.tiny)
