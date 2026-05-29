@@ -100,8 +100,8 @@ plotshape(short_cond, "Short Signal", shape.triangledown, location.abovebar, col
 var table aura_tbl = table.new(position.top_right, 2, 4, color.rgb(0,0,0,80), color.gray, 1, color.gray, 1)
 
 if barstate.islast
-    table.cell(aura_tbl, 0, 0, "Aura Dashboard", text_color=color.gold, text_size=size.small)
-    table.cell(aura_tbl, 1, 0, "Status", text_color=color.gold, text_size=size.small)
+    table.cell(aura_tbl, 0, 0, "Aura Dashboard", text_color=color.rgb(255, 215, 0), text_size=size.small)
+    table.cell(aura_tbl, 1, 0, "Status", text_color=color.rgb(255, 215, 0), text_size=size.small)
 
     // Momentum Row
     table.cell(aura_tbl, 0, 1, "VDM Z-Score", text_color=color.white, text_size=size.small)
