@@ -1,0 +1,193 @@
+//@version=6
+indicator("SMART_MULTITIMEFRAME V2", overlay=true, max_labels_count=500, max_boxes_count=500)
+
+// --- Colors ---
+color_bull = color.rgb(0, 255, 132)
+color_bear = color.rgb(255, 82, 82)
+color_fvg_bull = color.new(color.teal, 80)
+color_fvg_bear = color.new(color.maroon, 80)
+
+// --- EMA Ribbon ---
+ema_len_start = input.int(8, "EMA Start Length", group="EMA Ribbon")
+ema_len_step = input.int(5, "EMA Step Length", group="EMA Ribbon")
+
+ema1 = ta.ema(close, ema_len_start)
+ema2 = ta.ema(close, ema_len_start + ema_len_step * 1)
+ema3 = ta.ema(close, ema_len_start + ema_len_step * 2)
+ema4 = ta.ema(close, ema_len_start + ema_len_step * 3)
+ema5 = ta.ema(close, ema_len_start + ema_len_step * 4)
+ema6 = ta.ema(close, ema_len_start + ema_len_step * 5)
+ema7 = ta.ema(close, ema_len_start + ema_len_step * 6)
+ema8 = ta.ema(close, ema_len_start + ema_len_step * 7)
+ema9 = ta.ema(close, ema_len_start + ema_len_step * 8)
+ema10 = ta.ema(close, ema_len_start + ema_len_step * 9)
+
+ribbon_color = ema1 > ema10 ? color.new(color_bull, 50) : color.new(color_bear, 50)
+
+plot(ema1, color=ribbon_color, linewidth=1, title="EMA 1")
+plot(ema2, color=ribbon_color, linewidth=1, title="EMA 2")
+plot(ema3, color=ribbon_color, linewidth=1, title="EMA 3")
+plot(ema4, color=ribbon_color, linewidth=1, title="EMA 4")
+plot(ema5, color=ribbon_color, linewidth=1, title="EMA 5")
+plot(ema6, color=ribbon_color, linewidth=1, title="EMA 6")
+plot(ema7, color=ribbon_color, linewidth=1, title="EMA 7")
+plot(ema8, color=ribbon_color, linewidth=1, title="EMA 8")
+plot(ema9, color=ribbon_color, linewidth=1, title="EMA 9")
+plot(ema10, color=ribbon_color, linewidth=1, title="EMA 10")
+
+// --- FVG Detection ---
+show_fvg = input.bool(true, "Show FVG", group="Fair Value Gap")
+
+var box[] bull_fvgs = array.new_box()
+var box[] bear_fvgs = array.new_box()
+
+is_bull_fvg = low > high[2] and close[1] > high[2]
+is_bear_fvg = high < low[2] and close[1] < low[2]
+
+if show_fvg
+    if is_bull_fvg
+        b = box.new(bar_index - 2, low, bar_index, high[2], border_color=na, bgcolor=color_fvg_bull)
+        array.push(bull_fvgs, b)
+        label.new(bar_index - 1, (low + high[2]) / 2, "FVG", color=color.new(color.black, 100), textcolor=color.teal, style=label.style_label_center, size=size.tiny)
+
+    if is_bear_fvg
+        b = box.new(bar_index - 2, low[2], bar_index, high, border_color=na, bgcolor=color_fvg_bear)
+        array.push(bear_fvgs, b)
+        label.new(bar_index - 1, (low[2] + high) / 2, "FVG", color=color.new(color.black, 100), textcolor=color.maroon, style=label.style_label_center, size=size.tiny)
+
+// --- Market Structure & Zones ---
+pivot_left = input.int(10, "Pivot Left Strength", group="Market Structure")
+pivot_right = input.int(5, "Pivot Right Strength", group="Market Structure")
+
+ph = ta.pivothigh(high, pivot_left, pivot_right)
+pl = ta.pivotlow(low, pivot_left, pivot_right)
+
+var line last_zigzag = na
+var float last_ph = na
+var float last_pl = na
+var int last_ph_idx = na
+var int last_pl_idx = na
+
+if not na(ph)
+    if not na(last_pl)
+        line.new(last_pl_idx, last_pl, bar_index - pivot_right, ph, color=color.gray, style=line.style_dashed)
+    last_ph := ph
+    last_ph_idx := bar_index - pivot_right
+    box.new(bar_index - pivot_left - pivot_right, ph * 1.001, bar_index, ph * 0.999, border_color=na, bgcolor=color.new(color.red, 70), text="Resistance", text_size=size.tiny, text_color=color.white)
+
+if not na(pl)
+    if not na(last_ph)
+        line.new(last_ph_idx, last_ph, bar_index - pivot_right, pl, color=color.gray, style=line.style_dashed)
+    last_pl := pl
+    last_pl_idx := bar_index - pivot_right
+    box.new(bar_index - pivot_left - pivot_right, pl * 1.001, bar_index, pl * 0.999, border_color=na, bgcolor=color.new(color.green, 70), text="Support", text_size=size.tiny, text_color=color.white)
+
+// --- FVG Mitigation ---
+if array.size(bull_fvgs) > 0
+    for i = array.size(bull_fvgs) - 1 to 0
+        b = array.get(bull_fvgs, i)
+        if low < box.get_bottom(b)
+            na
+        else
+            box.set_right(b, bar_index)
+
+if array.size(bear_fvgs) > 0
+    for i = array.size(bear_fvgs) - 1 to 0
+        b = array.get(bear_fvgs, i)
+        if high > box.get_top(b)
+            na
+        else
+            box.set_right(b, bar_index)
+
+// --- Dashboards Data ---
+// Info Data
+adr = request.security(syminfo.tickerid, "D", ta.sma(high - low, 14))
+dhl = request.security(syminfo.tickerid, "D", high - low)
+[plus, minus, adx_val] = ta.dmi(14, 14)
+rsi_val = ta.rsi(close, 14)
+range_p_adr = (dhl / adr) * 100
+
+// MTF Trend Data
+f_get_trend(tf) =>
+    request.security(syminfo.tickerid, tf, close > ta.ema(close, 50) ? "BULLISH" : "BEARISH")
+
+trend_w = f_get_trend("W")
+trend_d = f_get_trend("D")
+trend_h4 = f_get_trend("240")
+trend_h1 = f_get_trend("60")
+trend_m30 = f_get_trend("30")
+trend_m15 = f_get_trend("15")
+
+// Oscillator Data
+f_get_osc(tf) =>
+    [stoch_k, stoch_d] = request.security(syminfo.tickerid, tf, [ta.stoch(close, high, low, 14), ta.sma(ta.stoch(close, high, low, 14), 3)])
+    r = request.security(syminfo.tickerid, tf, ta.rsi(close, 14))
+    s_status = stoch_k > 80 ? "Overbought" : stoch_k < 20 ? "Oversold" : "Not Over"
+    r_status = r > 70 ? "Overbought" : r < 30 ? "Oversold" : "Not Over"
+    [s_status, r_status]
+
+[s15, r15] = f_get_osc("15")
+[s5, r5] = f_get_osc("5")
+
+// --- Signal Logic ---
+long_signal = trend_m15 == "BULLISH" and trend_m30 == "BULLISH" and close > ema1 and is_bull_fvg
+short_signal = trend_m15 == "BEARISH" and trend_m30 == "BEARISH" and close < ema1 and is_bear_fvg
+
+if long_signal
+    label.new(bar_index, low, "Buy", color=color_bull, style=label.style_label_up, textcolor=color.black, size=size.small)
+
+if short_signal
+    label.new(bar_index, high, "Sell", color=color_bear, style=label.style_label_down, textcolor=color.white, size=size.small)
+
+// --- Header ---
+var table header_table = table.new(position.top_right, 1, 1)
+if barstate.islast
+    table.cell(header_table, 0, 0, "SMART_MULTITIMEFRAME", bgcolor=color.red, text_color=color.white, text_size=size.large)
+
+// --- Dashboard Tables ---
+var table info_table = table.new(position.top_left, 2, 8, bgcolor=color.new(color.black, 50), border_width=1, border_color=color.gray)
+var table trend_table = table.new(position.bottom_left, 2, 7, bgcolor=color.new(color.black, 50), border_width=1, border_color=color.gray)
+var table osc_table = table.new(position.bottom_right, 3, 3, bgcolor=color.new(color.black, 50), border_width=1, border_color=color.gray)
+
+if barstate.islast
+    // Info Table
+    table.cell(info_table, 0, 0, "ADR", text_color=color.white)
+    table.cell(info_table, 1, 0, str.tostring(adr, "#.##"), text_color=color.white)
+    table.cell(info_table, 0, 1, "DHL", text_color=color.white)
+    table.cell(info_table, 1, 1, str.tostring(dhl, "#.##"), text_color=color.white)
+    table.cell(info_table, 0, 2, "ADX", text_color=color.white)
+    table.cell(info_table, 1, 2, str.tostring(adx_val, "#.##"), text_color=color.white)
+    table.cell(info_table, 0, 3, "RANGE%", text_color=color.white)
+    table.cell(info_table, 1, 3, str.tostring(range_p_adr, "#.##"), text_color=color.white)
+    table.cell(info_table, 0, 4, "RSI", text_color=color.white)
+    table.cell(info_table, 1, 4, str.tostring(rsi_val, "#.##"), text_color=color.white)
+    table.cell(info_table, 0, 5, "PROBABILITY", text_color=color.white)
+    prob = close > ema10 ? "BUY 50%" : "SELL 50%" // Placeholder logic
+    table.cell(info_table, 1, 5, prob, text_color=color.white)
+    table.cell(info_table, 0, 6, "TIME", text_color=color.white)
+    table.cell(info_table, 1, 6, str.format("{0,time,HH:mm}", timenow), text_color=color.white)
+
+    // Trend Table
+    table.cell(trend_table, 0, 0, "TF", text_color=color.white)
+    table.cell(trend_table, 1, 0, "TREND", text_color=color.white)
+
+    tfs = array.from("W", "D", "H4", "H1", "M30", "M15")
+    trends = array.from(trend_w, trend_d, trend_h4, trend_h1, trend_m30, trend_m15)
+
+    for i = 0 to 5
+        t_val = array.get(trends, i)
+        table.cell(trend_table, 0, i + 1, array.get(tfs, i), text_color=color.white)
+        table.cell(trend_table, 1, i + 1, t_val, bgcolor=t_val == "BULLISH" ? color.new(color.green, 50) : color.new(color.red, 50), text_color=color.white)
+
+    // Oscillator Table
+    table.cell(osc_table, 0, 0, "Timeframe", text_color=color.white)
+    table.cell(osc_table, 1, 0, "Stochastic", text_color=color.white)
+    table.cell(osc_table, 2, 0, "RSI", text_color=color.white)
+
+    table.cell(osc_table, 0, 1, "15", text_color=color.white)
+    table.cell(osc_table, 1, 1, s15, bgcolor=s15 == "Not Over" ? color.gray : s15 == "Overbought" ? color.red : color.green, text_color=color.white)
+    table.cell(osc_table, 2, 1, r15, bgcolor=r15 == "Not Over" ? color.gray : r15 == "Overbought" ? color.red : color.green, text_color=color.white)
+
+    table.cell(osc_table, 0, 2, "5", text_color=color.white)
+    table.cell(osc_table, 1, 2, s5, bgcolor=s5 == "Not Over" ? color.gray : s5 == "Overbought" ? color.red : color.green, text_color=color.white)
+    table.cell(osc_table, 2, 2, r5, bgcolor=r5 == "Not Over" ? color.gray : r5 == "Overbought" ? color.red : color.green, text_color=color.white)
