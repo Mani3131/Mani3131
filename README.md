@@ -26,5 +26,6 @@ The **Aura of Midas** is a comprehensive, institutional-grade trading strategy s
 
 ## Other Strategies
 
+- **Smart Money Concepts (SMC) V6:** A professional-grade indicator focusing on institutional order flow, Order Blocks (OB), and Market Structure (BOS/CHoCH). It is highly effective for Gold due to the asset's tendency to respect institutional liquidity levels.
 - **Gold AI AlphaTrend:** A trend-following strategy using the AlphaTrend indicator with MFI/RSI filters.
 - **Apex Scalper V6:** A scalping-focused indicator featuring EMA ribbons and Fair Value Gap (FVG) detection.

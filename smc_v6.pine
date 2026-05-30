@@ -1,0 +1,217 @@
+//@version=6
+indicator("Smart Money Concepts [Jules]", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=500)
+
+// --- Inputs ---
+show_smc = input.bool(true, "Show Market Structure", group="Market Structure")
+pivot_len = input.int(5, "Pivot Length", minval=1, group="Market Structure")
+
+show_ob = input.bool(true, "Show Order Blocks", group="Order Blocks")
+ob_max_count = input.int(10, "Max OB Boxes", minval=1, group="Order Blocks")
+
+show_htf = input.bool(true, "Show HTF Levels (PDH/PDL/PWL)", group="HTF Levels")
+
+show_zones = input.bool(true, "Show Premium/Discount Zones", group="Zones")
+
+// --- Colors ---
+color_bull = input.color(color.new(color.green, 50), "Bullish Color", group="Visuals")
+color_bear = input.color(color.new(color.red, 50), "Bearish Color", group="Visuals")
+color_bos = input.color(color.green, "BOS Color", group="Visuals")
+color_choch = input.color(color.red, "CHoCH Color", group="Visuals")
+color_eql = input.color(color.teal, "EQL Color", group="Visuals")
+color_liq = input.color(color.gray, "Liquidity Color", group="Visuals")
+
+// --- Market Structure Logic ---
+var float hi_val = na
+var float lo_val = na
+var bool bull_trend = true
+var int last_ph_idx = 0
+var int last_pl_idx = 0
+
+ph = ta.pivothigh(high, pivot_len, pivot_len)
+pl = ta.pivotlow(low, pivot_len, pivot_len)
+
+if barstate.isconfirmed
+    if not na(ph)
+        hi_val := ph
+        last_ph_idx := bar_index[pivot_len]
+    if not na(pl)
+        lo_val := pl
+        last_pl_idx := bar_index[pivot_len]
+
+// Detect Breakouts
+bool bos_occured = false
+bool choch_occured = false
+
+var bool hi_broken = false
+var bool lo_broken = false
+
+if barstate.isconfirmed and show_smc
+    if bull_trend
+        if not na(hi_val) and close > hi_val and not hi_broken
+            line.new(last_ph_idx, hi_val, bar_index, hi_val, color=color.new(color_bos, 50), style=line.style_dashed)
+            label.new(int((last_ph_idx + bar_index) / 2), hi_val, "BOS", style=label.style_none, textcolor=color_bos, size=size.tiny)
+            bos_occured := true
+            hi_broken := true
+        else if not na(lo_val) and close < lo_val
+            line.new(last_pl_idx, lo_val, bar_index, lo_val, color=color.new(color_choch, 50), style=line.style_dashed)
+            label.new(int((last_pl_idx + bar_index) / 2), lo_val, "CHoCH", style=label.style_none, textcolor=color_choch, size=size.tiny)
+            bull_trend := false
+            lo_val := low
+            choch_occured := true
+            hi_broken := false
+            lo_broken := false
+    else
+        if not na(lo_val) and close < lo_val and not lo_broken
+            line.new(last_pl_idx, lo_val, bar_index, lo_val, color=color.new(color_bos, 50), style=line.style_dashed)
+            label.new(int((last_pl_idx + bar_index) / 2), lo_val, "BOS", style=label.style_none, textcolor=color_bos, size=size.tiny)
+            bos_occured := true
+            lo_broken := true
+        else if not na(hi_val) and close > hi_val
+            line.new(last_ph_idx, hi_val, bar_index, hi_val, color=color.new(color_choch, 50), style=line.style_dashed)
+            label.new(int((last_ph_idx + bar_index) / 2), hi_val, "CHoCH", style=label.style_none, textcolor=color_choch, size=size.tiny)
+            bull_trend := true
+            hi_val := high
+            choch_occured := true
+            hi_broken := false
+            lo_broken := false
+
+if not na(ph)
+    hi_broken := false
+if not na(pl)
+    lo_broken := false
+
+// --- Order Blocks & Zones ---
+var bull_obs = array.new<box>()
+var bear_obs = array.new<box>()
+
+if barstate.isconfirmed
+    if not na(ph) and show_ob
+        // Potential Bearish OB
+        box b = box.new(bar_index[pivot_len], high[pivot_len], bar_index, low[pivot_len], bgcolor=color.new(color_bear, 90), border_color=color_bear)
+        array.push(bear_obs, b)
+        if array.size(bear_obs) > ob_max_count
+            box.delete(array.shift(bear_obs))
+
+    if not na(pl) and show_ob
+        // Potential Bullish OB
+        box b = box.new(bar_index[pivot_len], high[pivot_len], bar_index, low[pivot_len], bgcolor=color.new(color_bull, 90), border_color=color_bull)
+        array.push(bull_obs, b)
+        if array.size(bull_obs) > ob_max_count
+            box.delete(array.shift(bull_obs))
+
+// OB Logic: Created on BOS/CHoCH
+if barstate.isconfirmed and show_ob
+    if bos_occured or choch_occured
+        if bull_trend
+            // Bullish OB: The last down candle before the move that caused the break
+            // We search back from the breakout bar to find the last bearish candle
+            int ob_idx = last_pl_idx
+            for i = 0 to (bar_index - last_pl_idx)
+                if close[i] < open[i]
+                    ob_idx := bar_index - i
+                    break
+
+            box b = box.new(ob_idx, high[bar_index - ob_idx], ob_idx + 1, low[bar_index - ob_idx], bgcolor=color.new(color_bull, 90), border_color=color_bull, extend=extend.right)
+            array.push(bull_obs, b)
+            if array.size(bull_obs) > ob_max_count
+                box.delete(array.shift(bull_obs))
+        else
+            // Bearish OB: The last up candle before the breakout
+            int ob_idx = last_ph_idx
+            for i = 0 to (bar_index - last_ph_idx)
+                if close[i] > open[i]
+                    ob_idx := bar_index - i
+                    break
+
+            box b = box.new(ob_idx, high[bar_index - ob_idx], ob_idx + 1, low[bar_index - ob_idx], bgcolor=color.new(color_bear, 90), border_color=color_bear, extend=extend.right)
+            array.push(bear_obs, b)
+            if array.size(bear_obs) > ob_max_count
+                box.delete(array.shift(bear_obs))
+
+    // OB Mitigation - Only on confirmed bars to prevent repainting
+    if barstate.isconfirmed
+        if array.size(bull_obs) > 0
+            for i = array.size(bull_obs) - 1 to 0
+                box b = array.get(bull_obs, i)
+                if low < box.get_bottom(b)
+                    box.set_right(b, bar_index)
+                    array.remove(bull_obs, i)
+
+        if array.size(bear_obs) > 0
+            for i = array.size(bear_obs) - 1 to 0
+                box b = array.get(bear_obs, i)
+                if high > box.get_top(b)
+                    box.set_right(b, bar_index)
+                    array.remove(bear_obs, i)
+
+// Premium/Discount Zones
+var box premium_zone = na
+var box discount_zone = na
+var box equilibrium_zone = na
+
+if show_zones and not na(hi_val) and not na(lo_val)
+    mid = (hi_val + lo_val) / 2
+    if barstate.islast
+        box.delete(premium_zone)
+        box.delete(discount_zone)
+        box.delete(equilibrium_zone)
+        premium_zone := box.new(bar_index - 100, hi_val, bar_index + 50, mid, bgcolor=color.new(color.red, 90), border_color=color.new(color.red, 70), text="POSSIBLE SELL ZONE", text_size=size.small, text_halign=text.align_right, text_valign=text.align_top, text_color=color.red)
+        discount_zone := box.new(bar_index - 100, mid, bar_index + 50, lo_val, bgcolor=color.new(color.blue, 90), border_color=color.new(color.blue, 70), text="POSSIBLE BUY ZONE\n\n\nDiscount", text_size=size.small, text_halign=text.align_right, text_valign=text.align_bottom, text_color=color.blue)
+        equilibrium_zone := box.new(bar_index - 100, mid + (hi_val-lo_val)*0.01, bar_index + 50, mid - (hi_val-lo_val)*0.01, bgcolor=color.new(color.gray, 80), border_color=color.new(color.gray, 60), text="Equilibrium", text_size=size.small, text_halign=text.align_right, text_color=color.gray)
+
+// --- HTF Liquidity Levels ---
+// Non-repainting HTF levels
+pdh_val = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+pdl_val = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_on)
+pwl_val = request.security(syminfo.tickerid, "W", low[1], lookahead=barmerge.lookahead_on)
+
+var line pdh_line = line.new(na, na, na, na, color=color.gray, width=1, style=line.style_solid)
+var line pdl_line = line.new(na, na, na, na, color=color.gray, width=1, style=line.style_solid)
+var line pwl_line = line.new(na, na, na, na, color=color.blue, width=1, style=line.style_solid)
+var label pdh_lab = label.new(na, na, "PDH", style=label.style_none, textcolor=color.gray, size=size.tiny, text_align=text.align_left)
+var label pdl_lab = label.new(na, na, "PDL", style=label.style_none, textcolor=color.gray, size=size.tiny, text_align=text.align_left)
+var label pwl_lab = label.new(na, na, "PWL", style=label.style_none, textcolor=color.blue, size=size.tiny, text_align=text.align_left)
+
+if show_htf and barstate.islast
+    line.set_xy1(pdh_line, bar_index - 50, pdh_val)
+    line.set_xy2(pdh_line, bar_index + 20, pdh_val)
+    label.set_xy(pdh_lab, bar_index + 20, pdh_val)
+
+    line.set_xy1(pdl_line, bar_index - 50, pdl_val)
+    line.set_xy2(pdl_line, bar_index + 20, pdl_val)
+    label.set_xy(pdl_lab, bar_index + 20, pdl_val)
+
+    line.set_xy1(pwl_line, bar_index - 50, pwl_val)
+    line.set_xy2(pwl_line, bar_index + 20, pwl_val)
+    label.set_xy(pwl_lab, bar_index + 20, pwl_val)
+
+// --- Watermark ---
+var table watermark = table.new(position.middle_center, 1, 1)
+if barstate.islast
+    table.cell(watermark, 0, 0, syminfo.ticker + " " + timeframe.period, text_size=size.huge, text_color=color.new(color.gray, 92))
+
+// --- Buy/Sell Signals ---
+if barstate.isconfirmed
+    if choch_occured
+        if bull_trend
+            label.new(bar_index, low, "Buy", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small)
+        else
+            label.new(bar_index, high, "Sell", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
+    else if bos_occured
+        if bull_trend
+            label.new(bar_index, low, "Buy", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small)
+        else
+            label.new(bar_index, high, "Sell", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
+
+// Equal Highs / Lows (EQL) and Liquidity
+hi_10 = ta.highest(high, 10)
+lo_20 = ta.lowest(low, 20)
+
+if barstate.isconfirmed
+    if hi_10 == high and (high == high[1] or high == high[2])
+        label.new(bar_index, high, "EQL", yloc=yloc.abovebar, style=label.style_none, textcolor=color_eql, size=size.tiny)
+
+    if low < lo_20[1] and close > low
+        label.new(bar_index, low, "Weak Low", yloc=yloc.belowbar, style=label.style_none, textcolor=color_liq, size=size.tiny)
+
+plot(close, color=color.new(color.white, 100))
