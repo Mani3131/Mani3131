@@ -1,0 +1,151 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Gold Quantum Super Indicator V6 [Ultimate Confluence]", overlay=true, max_labels_count=500, max_boxes_count=500)
+
+// ==========================================
+// 1. GLOBAL INPUTS & CONFIG
+// ==========================================
+grp_aura = "Aura of Midas (Institutional Flow)"
+vdm_length  = input.int(20, "VDM Length", group=grp_aura)
+z_threshold = input.float(2.0, "Z-Score Threshold", group=grp_aura)
+use_slc     = input.bool(true, "Show Session Liquidity (London/NY)", group=grp_aura)
+tz          = input.string("UTC+3", "Timezone", group=grp_aura)
+
+grp_smc = "Smart Money Concepts (SMC)"
+show_ob     = input.bool(true, "Show Order Blocks", group=grp_smc)
+show_ms     = input.bool(true, "Show Market Structure (BOS/CHoCH)", group=grp_smc)
+ms_period   = input.int(5, "Pivot Period", group=grp_smc)
+
+grp_trend = "AlphaTrend & Ribbons"
+show_alpha  = input.bool(true, "Show AlphaTrend", group=grp_trend)
+show_ribbon = input.bool(true, "Show EMA Ribbon", group=grp_trend)
+ribbon_base = input.int(20, "Ribbon Base Length", group=grp_trend)
+
+grp_extra = "Scalper & FVGs"
+show_fvg    = input.bool(true, "Show Fair Value Gaps", group=grp_extra)
+
+// ==========================================
+// 2. AURA OF MIDAS MODULE
+// ==========================================
+f_vdm() =>
+    mom = ta.change(close, vdm_length)
+    avg_mom = ta.sma(mom, vdm_length)
+    std_mom = ta.stdev(mom, vdm_length)
+    z_score = (mom - avg_mom) / (std_mom == 0 ? 1e-10 : std_mom)
+    ta.ema(z_score, 5)
+
+vdm_val = f_vdm()
+
+// Session Liquidity (Simplified)
+london_sess = "1000-1130"
+ny_sess     = "1500-1630"
+is_lon = not na(time(timeframe.period, london_sess, tz))
+is_ny  = not na(time(timeframe.period, ny_sess, tz))
+
+var float l_h = na, var float l_l = na
+var float n_h = na, var float n_l = na
+
+if is_lon and not is_lon[1]
+    l_h := high, l_l := low
+else if is_lon
+    l_h := math.max(l_h, high), l_l := math.min(l_l, low)
+
+if is_ny and not is_ny[1]
+    n_h := high, n_l := low
+else if is_ny
+    n_h := math.max(n_h, high), n_l := math.min(n_l, low)
+
+plot(use_slc ? l_h : na, "London High", color=color.new(color.blue, 60), style=plot.style_stepline)
+plot(use_slc ? l_l : na, "London Low", color=color.new(color.blue, 60), style=plot.style_stepline)
+plot(use_slc ? n_h : na, "NY High", color=color.new(color.orange, 60), style=plot.style_stepline)
+plot(use_slc ? n_l : na, "NY Low", color=color.new(color.orange, 60), style=plot.style_stepline)
+
+// ==========================================
+// 3. SMC MODULE
+// ==========================================
+ph = ta.pivothigh(high, ms_period, ms_period)
+pl = ta.pivotlow(low, ms_period, ms_period)
+
+// Order Block detection (simplified)
+if show_ob and not na(ph) and close[ms_period] < open[ms_period] // Bearish OB
+    box.new(bar_index[ms_period], high[ms_period], bar_index, low[ms_period], bgcolor=color.new(color.red, 90), border_color=color.new(color.red, 70))
+if show_ob and not na(pl) and close[ms_period] > open[ms_period] // Bullish OB
+    box.new(bar_index[ms_period], high[ms_period], bar_index, low[ms_period], bgcolor=color.new(color.lime, 90), border_color=color.new(color.lime, 70))
+
+// ==========================================
+// 4. ALPHATREND & RIBBON MODULE
+// ==========================================
+// AlphaTrend logic
+atr = ta.sma(ta.tr, 14)
+upT = low - atr
+downT = high + atr
+var float alphaTrend = 0.0
+trigger = ta.rsi(close, 14)
+if trigger >= 50
+    alphaTrend := upT < nz(alphaTrend[1]) ? nz(alphaTrend[1]) : upT
+else
+    alphaTrend := downT > nz(alphaTrend[1]) ? nz(alphaTrend[1]) : downT
+
+plot(show_alpha ? alphaTrend : na, "AlphaTrend", color=alphaTrend > alphaTrend[2] ? color.lime : color.red, linewidth=2)
+
+// Ribbon
+ema1 = ta.ema(close, ribbon_base)
+ema4 = ta.ema(close, ribbon_base + 15)
+plot_e1 = plot(show_ribbon ? ema1 : na, color=color.new(color.teal, 50))
+plot_e4 = plot(show_ribbon ? ema4 : na, color=color.new(color.fuchsia, 50))
+fill(plot_e1, plot_e4, color=ema1 > ema4 ? color.new(color.teal, 90) : color.new(color.fuchsia, 90))
+
+// ==========================================
+// 5. SCALPER & FVG MODULE
+// ==========================================
+if show_fvg and low > high[2]
+    box.new(bar_index[2], high[2], bar_index, low, bgcolor=color.new(color.teal, 80), border_color=color.na)
+if show_fvg and high < low[2]
+    box.new(bar_index[2], low[2], bar_index, high, bgcolor=color.new(color.fuchsia, 80), border_color=color.na)
+
+// ==========================================
+// 6. CONFLUENCE ENGINE
+// ==========================================
+aura_bull = vdm_val > -z_threshold and ((low < l_l[1] and not is_lon) or (low < n_l[1] and not is_ny)) and close > math.min(nz(l_l[1], 1e10), nz(n_l[1], 1e10))
+trend_bull = ema1 > ema4 and alphaTrend > alphaTrend[2]
+fvg_bull = low > high[2]
+
+long_confluence = (aura_bull ? 1 : 0) + (trend_bull ? 1 : 0) + (fvg_bull ? 1 : 0)
+
+aura_bear = vdm_val < z_threshold and ((high > l_h[1] and not is_lon) or (high > n_h[1] and not is_ny)) and close < math.max(nz(l_h[1]), nz(n_h[1]))
+trend_bear = ema1 < ema4 and alphaTrend < alphaTrend[2]
+fvg_bear = high < low[2]
+
+short_confluence = (aura_bear ? 1 : 0) + (trend_bear ? 1 : 0) + (fvg_bear ? 1 : 0)
+
+// Signals
+plotshape(long_confluence >= 2, "Strong Buy", shape.triangleup, location.belowbar, color.lime, size=size.small, text="QUANTUM BUY")
+plotshape(short_confluence >= 2, "Strong Sell", shape.triangledown, location.abovebar, color.red, size=size.small, text="QUANTUM SELL")
+
+// ==========================================
+// 7. SUPER DASHBOARD
+// ==========================================
+var table dash = table.new(position.top_right, 2, 6, bgcolor=color.rgb(0,0,0,80), border_width=1, border_color=color.gray)
+
+if barstate.islast
+    table.cell(dash, 0, 0, "SYSTEM", text_color=color.white)
+    table.cell(dash, 1, 0, "STATUS", text_color=color.white)
+
+    table.cell(dash, 0, 1, "Aura VDM", text_color=color.white)
+    table.cell(dash, 1, 1, str.tostring(vdm_val, "#.##"), bgcolor=vdm_val > 0 ? color.new(color.lime, 40) : color.new(color.red, 40))
+
+    table.cell(dash, 0, 2, "AlphaTrend", text_color=color.white)
+    table.cell(dash, 1, 2, alphaTrend > alphaTrend[2] ? "BULL" : "BEAR", bgcolor=alphaTrend > alphaTrend[2] ? color.new(color.lime, 40) : color.new(color.red, 40))
+
+    table.cell(dash, 0, 3, "EMA Ribbon", text_color=color.white)
+    table.cell(dash, 1, 3, ema1 > ema4 ? "BULL" : "BEAR", bgcolor=ema1 > ema4 ? color.new(color.lime, 40) : color.new(color.red, 40))
+
+    table.cell(dash, 0, 4, "Confluence", text_color=color.white)
+    score = long_confluence >= short_confluence ? long_confluence : short_confluence
+    table.cell(dash, 1, 4, str.tostring(score) + "/3", bgcolor=score >= 2 ? color.new(color.gold, 40) : color.gray)
+
+    table.cell(dash, 0, 5, "Gold Bias", text_color=color.white)
+    bias = long_confluence > short_confluence ? "BUY" : short_confluence > long_confluence ? "SELL" : "WAIT"
+    table.cell(dash, 1, 5, bias, bgcolor=bias == "BUY" ? color.lime : bias == "SELL" ? color.red : color.gray)
