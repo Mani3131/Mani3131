@@ -147,7 +147,7 @@ if long_cond and strategy.position_size == 0
     entry_tp := tp
     entry_trail_offset := t_off
     strategy.entry("Midas Long", strategy.long, comment="Aura Long")
-    strategy.exit("Exit Long", "Midas Long", stop=sl, limit=tp, trail_price=use_trail ? tp : na, trail_offset=use_trail ? t_off : na, comment_loss="SL", comment_profit="TP")
+    strategy.exit("Exit Long", "Midas Long", stop=sl, limit=use_trail ? na : tp, trail_price=use_trail ? tp : na, trail_offset=use_trail ? t_off : na, comment_loss="SL", comment_profit="TP")
 
 if short_cond and strategy.position_size == 0
     sl = high + (atr_val * sl_atr_mult)
@@ -157,7 +157,7 @@ if short_cond and strategy.position_size == 0
     entry_tp := tp
     entry_trail_offset := t_off
     strategy.entry("Midas Short", strategy.short, comment="Aura Short")
-    strategy.exit("Exit Short", "Midas Short", stop=sl, limit=tp, trail_price=use_trail ? tp : na, trail_offset=use_trail ? t_off : na, comment_loss="SL", comment_profit="TP")
+    strategy.exit("Exit Short", "Midas Short", stop=sl, limit=use_trail ? na : tp, trail_price=use_trail ? tp : na, trail_offset=use_trail ? t_off : na, comment_loss="SL", comment_profit="TP")
 
 // Breakeven Logic
 if use_be and strategy.position_size != 0 and not na(entry_sl)
@@ -165,11 +165,11 @@ if use_be and strategy.position_size != 0 and not na(entry_sl)
     if strategy.position_size > 0
         risk = entry_p - entry_sl
         if high >= entry_p + (risk * be_at_rr)
-            strategy.exit("Exit Long", "Midas Long", stop=entry_p, limit=entry_tp, trail_price=use_trail ? entry_tp : na, trail_offset=use_trail ? entry_trail_offset : na, comment="BE")
+            strategy.exit("Exit Long", "Midas Long", stop=entry_p, limit=use_trail ? na : entry_tp, trail_price=use_trail ? entry_tp : na, trail_offset=use_trail ? entry_trail_offset : na, comment="BE")
     else
         risk = entry_sl - entry_p
         if low <= entry_p - (risk * be_at_rr)
-            strategy.exit("Exit Short", "Midas Short", stop=entry_p, limit=entry_tp, trail_price=use_trail ? entry_tp : na, trail_offset=use_trail ? entry_trail_offset : na, comment="BE")
+            strategy.exit("Exit Short", "Midas Short", stop=entry_p, limit=use_trail ? na : entry_tp, trail_price=use_trail ? entry_tp : na, trail_offset=use_trail ? entry_trail_offset : na, comment="BE")
 
 // Visual signals
 plotshape(long_cond, "Long Signal", shape.triangleup, location.belowbar, color.lime, size=size.small)

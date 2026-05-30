@@ -135,6 +135,7 @@ if barstate.isconfirmed and show_ob
                 box b = array.get(bull_obs, i)
                 if low < box.get_bottom(b)
                     box.set_right(b, bar_index)
+                    box.set_extend(b, extend.none)
                     array.remove(bull_obs, i)
 
         if array.size(bear_obs) > 0
@@ -142,6 +143,7 @@ if barstate.isconfirmed and show_ob
                 box b = array.get(bear_obs, i)
                 if high > box.get_top(b)
                     box.set_right(b, bar_index)
+                    box.set_extend(b, extend.none)
                     array.remove(bear_obs, i)
 
 // Premium/Discount Zones

@@ -101,20 +101,20 @@ fill(plot_e1, plot_e4, color=ema1 > ema4 ? color.new(color.teal, 90) : color.new
 // 5. SCALPER & FVG MODULE
 // ==========================================
 if show_fvg and low > high[2]
-    box.new(bar_index[2], high[2], bar_index, low, bgcolor=color.new(color.teal, 80), border_color=color.na)
+    box.new(bar_index[2], high[2], bar_index, low, bgcolor=color.new(color.teal, 80), border_color=na)
 if show_fvg and high < low[2]
-    box.new(bar_index[2], low[2], bar_index, high, bgcolor=color.new(color.fuchsia, 80), border_color=color.na)
+    box.new(bar_index[2], low[2], bar_index, high, bgcolor=color.new(color.fuchsia, 80), border_color=na)
 
 // ==========================================
 // 6. CONFLUENCE ENGINE
 // ==========================================
-aura_bull = vdm_val > -z_threshold and ((low < l_l[1] and not is_lon) or (low < n_l[1] and not is_ny)) and close > math.min(nz(l_l[1], 1e10), nz(n_l[1], 1e10))
+aura_bull = vdm_val > -z_threshold and ((not na(l_l[1]) and low < l_l[1] and not is_lon) or (not na(n_l[1]) and low < n_l[1] and not is_ny)) and close > math.min(nz(l_l[1], 1e10), nz(n_l[1], 1e10))
 trend_bull = ema1 > ema4 and alphaTrend > alphaTrend[2]
 fvg_bull = low > high[2]
 
 long_confluence = (aura_bull ? 1 : 0) + (trend_bull ? 1 : 0) + (fvg_bull ? 1 : 0)
 
-aura_bear = vdm_val < z_threshold and ((high > l_h[1] and not is_lon) or (high > n_h[1] and not is_ny)) and close < math.max(nz(l_h[1]), nz(n_h[1]))
+aura_bear = vdm_val < z_threshold and ((not na(l_h[1]) and high > l_h[1] and not is_lon) or (not na(n_h[1]) and high > n_h[1] and not is_ny)) and close < math.max(nz(l_h[1], 0), nz(n_h[1], 0))
 trend_bear = ema1 < ema4 and alphaTrend < alphaTrend[2]
 fvg_bear = high < low[2]
 
@@ -144,7 +144,7 @@ if barstate.islast
 
     table.cell(dash, 0, 4, "Confluence", text_color=color.white)
     score = long_confluence >= short_confluence ? long_confluence : short_confluence
-    table.cell(dash, 1, 4, str.tostring(score) + "/3", bgcolor=score >= 2 ? color.new(color.gold, 40) : color.gray)
+    table.cell(dash, 1, 4, str.tostring(score) + "/3", bgcolor=score >= 2 ? color.new(color.rgb(255, 215, 0), 40) : color.gray)
 
     table.cell(dash, 0, 5, "Gold Bias", text_color=color.white)
     bias = long_confluence > short_confluence ? "BUY" : short_confluence > long_confluence ? "SELL" : "WAIT"
