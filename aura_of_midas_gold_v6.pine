@@ -1,0 +1,210 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+strategy("Aura of Midas: Quantum Institutional Flow [V6]", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, max_labels_count=500, max_boxes_count=500)
+
+// --- Volatility-Decoupled Momentum (VDM) ---
+vdm_length = input.int(20, "VDM Length", minval=1)
+vdm_smooth = input.int(5, "VDM Smoothing", minval=1)
+z_threshold = input.float(2.0, "Z-Score Threshold", step=0.1)
+
+f_vdm() =>
+    mom = ta.change(close, vdm_length)
+    avg_mom = ta.sma(mom, vdm_length)
+    std_mom = ta.stdev(mom, vdm_length)
+    z_score = (mom - avg_mom) / (std_mom == 0 ? 1e-10 : std_mom)
+    ta.ema(z_score, vdm_smooth)
+
+vdm_val = f_vdm()
+
+// --- Session Liquidity Capture (SLC) ---
+london_sess = input.session("1000-1130", "London SLC Window", group="Sessions", tooltip="First 90m of London")
+ny_sess     = input.session("1500-1630", "New York SLC Window", group="Sessions", tooltip="First 90m of New York")
+tz          = input.string("UTC+3", "Timezone", group="Sessions")
+
+is_london_slc = not na(time(timeframe.period, london_sess, tz))
+is_ny_slc     = not na(time(timeframe.period, ny_sess, tz))
+
+var float lon_high = na
+var float lon_low  = na
+var float ny_high  = na
+var float ny_low   = na
+
+// Reset levels at start of session
+if is_london_slc and not is_london_slc[1]
+    lon_high := high
+    lon_low  := low
+else if is_london_slc
+    lon_high := math.max(lon_high, high)
+    lon_low  := math.min(lon_low, low)
+
+if is_ny_slc and not is_ny_slc[1]
+    ny_high := high
+    ny_low  := low
+else if is_ny_slc
+    ny_high := math.max(ny_high, high)
+    ny_low  := math.min(ny_low, low)
+
+// --- Golden Ratio Displacement (GRD) ---
+grd_len  = input.int(50, "GRD Basis Length", group="Displacement")
+grd_mult = input.float(1.618, "GRD Multiplier", step=0.1, group="Displacement")
+atr_val  = ta.atr(grd_len)
+grd_basis = ta.ema(close, grd_len)
+grd_upper = grd_basis + (atr_val * grd_mult)
+grd_lower = grd_basis - (atr_val * grd_mult)
+
+// --- HTF Trend Filter ---
+use_htf_filter = input.bool(true, "Use HTF Trend Filter", group="Filters")
+htf_timeframe  = input.timeframe("240", "HTF Timeframe", group="Filters")
+htf_ema_len    = input.int(200, "HTF EMA Length", group="Filters")
+
+htf_ema = request.security(syminfo.tickerid, htf_timeframe, ta.ema(close, htf_ema_len)[1], lookahead=barmerge.lookahead_on)
+trend_long  = not use_htf_filter or close > htf_ema
+trend_short = not use_htf_filter or close < htf_ema
+
+// --- Wick Rejection Filter ---
+use_wick_filter = input.bool(true, "Use Wick Rejection Filter", group="Filters")
+min_wick_perc   = input.float(33.0, "Min Wick % of Range", group="Filters", step=1.0)
+
+candle_range = high - low
+lower_wick   = math.min(open, close) - low
+upper_wick   = high - math.max(open, close)
+
+wick_ok_long  = not use_wick_filter or (lower_wick / (candle_range == 0 ? 1 : candle_range) * 100 >= min_wick_perc)
+wick_ok_short = not use_wick_filter or (upper_wick / (candle_range == 0 ? 1 : candle_range) * 100 >= min_wick_perc)
+
+// --- Displacement Confirmation ---
+use_disp_filter = input.bool(true, "Use Displacement Filter", group="Filters")
+disp_mult       = input.float(0.5, "Displacement Multiplier (ATR)", group="Filters", step=0.1)
+
+disp_long  = not use_disp_filter or (close - low > (atr_val * disp_mult))
+disp_short = not use_disp_filter or (high - close > (atr_val * disp_mult))
+
+// --- Volume Filter ---
+use_vol_filter = input.bool(true, "Use Volume Filter", group="Filters")
+vol_ma_len     = input.int(20, "Volume MA Length", group="Filters")
+vol_mult       = input.float(1.0, "Volume Multiplier", group="Filters", step=0.1)
+
+vol_ma = ta.sma(volume, vol_ma_len)
+vol_ok = not use_vol_filter or volume > (vol_ma * vol_mult)
+
+// --- RSI Exhaustion Filter ---
+use_rsi_filter = input.bool(true, "Use RSI Filter", group="Filters")
+rsi_len        = input.int(14, "RSI Length", group="Filters")
+rsi_ob         = input.float(70.0, "RSI Overbought", group="Filters")
+rsi_os         = input.float(30.0, "RSI Oversold", group="Filters")
+
+rsi_val = ta.rsi(close, rsi_len)
+rsi_ok_long  = not use_rsi_filter or rsi_val < rsi_os
+rsi_ok_short = not use_rsi_filter or rsi_val > rsi_ob
+
+// --- Session Killzone Filter ---
+use_kz_filter = input.bool(true, "Use Killzone Filter", group="Filters")
+kz_session    = input.session("1000-1900", "Trade Window", group="Filters")
+
+is_kz = not use_kz_filter or not na(time(timeframe.period, kz_session, tz))
+
+// --- Visuals (Placeholder for now) ---
+plot(vdm_val, "VDM Z-Score", color=vdm_val > 0 ? color.lime : color.red, display=display.none)
+plot(grd_upper, "GRD Upper", color=color.new(color.yellow, 70))
+plot(grd_lower, "GRD Lower", color=color.new(color.yellow, 70))
+plot(lon_high, "London SLC High", color=color.new(color.blue, 50), style=plot.style_stepline)
+plot(lon_low, "London SLC Low", color=color.new(color.blue, 50), style=plot.style_stepline)
+plot(ny_high, "NY SLC High", color=color.new(color.orange, 50), style=plot.style_stepline)
+plot(ny_low, "NY SLC Low", color=color.new(color.orange, 50), style=plot.style_stepline)
+
+// --- Strategy Entry & Exit Logic ---
+sl_atr_mult = input.float(2.0, "SL ATR Multiplier", group="Risk")
+tp_atr_mult = input.float(4.0, "TP ATR Multiplier", group="Risk")
+use_trail   = input.bool(true, "Use Trailing SL", group="Risk")
+trail_perc  = input.float(1.5, "Trailing Offset (ATR mult)", group="Risk", step=0.1)
+use_be      = input.bool(true, "Use Breakeven SL", group="Risk")
+be_at_rr    = input.float(1.0, "Breakeven at RR", group="Risk", step=0.1)
+
+// Detect Sweeps
+lon_sweep_low  = low < lon_low[1] and close > lon_low[1] and not is_london_slc and not na(lon_low)
+lon_sweep_high = high > lon_high[1] and close < lon_high[1] and not is_london_slc and not na(lon_high)
+ny_sweep_low   = low < ny_low[1] and close > ny_low[1] and not is_ny_slc and not na(ny_low)
+ny_sweep_high  = high > ny_high[1] and close < ny_high[1] and not is_ny_slc and not na(ny_high)
+
+is_sweep_low  = lon_sweep_low or ny_sweep_low
+is_sweep_high = lon_sweep_high or ny_sweep_high
+
+// Conditions
+long_cond  = is_sweep_low and vdm_val > -z_threshold and close < grd_lower and trend_long and wick_ok_long and vol_ok and disp_long and rsi_ok_long and is_kz
+short_cond = is_sweep_high and vdm_val < z_threshold and close > grd_upper and trend_short and wick_ok_short and vol_ok and disp_short and rsi_ok_short and is_kz
+
+var float entry_sl   = na
+var float entry_tp   = na
+var float entry_trail_offset = na
+
+if long_cond and strategy.position_size == 0
+    sl = low - (atr_val * sl_atr_mult)
+    tp = close + (atr_val * tp_atr_mult)
+    t_off = (atr_val * trail_perc) / syminfo.mintick
+    entry_sl := sl
+    entry_tp := tp
+    entry_trail_offset := t_off
+    strategy.entry("Midas Long", strategy.long, comment="Aura Long")
+    strategy.exit("Exit Long", "Midas Long", stop=sl, limit=tp, trail_price=use_trail ? tp : na, trail_offset=use_trail ? t_off : na, comment_loss="SL", comment_profit="TP")
+
+if short_cond and strategy.position_size == 0
+    sl = high + (atr_val * sl_atr_mult)
+    tp = close - (atr_val * tp_atr_mult)
+    t_off = (atr_val * trail_perc) / syminfo.mintick
+    entry_sl := sl
+    entry_tp := tp
+    entry_trail_offset := t_off
+    strategy.entry("Midas Short", strategy.short, comment="Aura Short")
+    strategy.exit("Exit Short", "Midas Short", stop=sl, limit=tp, trail_price=use_trail ? tp : na, trail_offset=use_trail ? t_off : na, comment_loss="SL", comment_profit="TP")
+
+// Breakeven Logic
+if use_be and strategy.position_size != 0 and not na(entry_sl)
+    entry_p = strategy.opentrades.entry_price(0)
+    if strategy.position_size > 0
+        risk = entry_p - entry_sl
+        if high >= entry_p + (risk * be_at_rr)
+            strategy.exit("Exit Long", "Midas Long", stop=entry_p, limit=entry_tp, trail_price=use_trail ? entry_tp : na, trail_offset=use_trail ? entry_trail_offset : na, comment="BE")
+    else
+        risk = entry_sl - entry_p
+        if low <= entry_p - (risk * be_at_rr)
+            strategy.exit("Exit Short", "Midas Short", stop=entry_p, limit=entry_tp, trail_price=use_trail ? entry_tp : na, trail_offset=use_trail ? entry_trail_offset : na, comment="BE")
+
+// Visual signals
+plotshape(long_cond, "Long Signal", shape.triangleup, location.belowbar, color.lime, size=size.small)
+plotshape(short_cond, "Short Signal", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// --- Dashboard ---
+var table aura_tbl = table.new(position.top_right, 2, 7, color.rgb(0,0,0,80), color.gray, 1, color.gray, 1)
+
+if barstate.islast
+    table.cell(aura_tbl, 0, 0, "Aura Dashboard", text_color=color.rgb(255, 215, 0), text_size=size.small)
+    table.cell(aura_tbl, 1, 0, "Status", text_color=color.rgb(255, 215, 0), text_size=size.small)
+
+    // Momentum Row
+    table.cell(aura_tbl, 0, 1, "VDM Z-Score", text_color=color.white, text_size=size.small)
+    table.cell(aura_tbl, 1, 1, str.tostring(vdm_val, "#.##"), bgcolor=vdm_val > 0 ? color.new(color.lime, 40) : color.new(color.red, 40), text_color=color.white, text_size=size.small)
+
+    // Displacement Row
+    table.cell(aura_tbl, 0, 2, "Displacement", text_color=color.white, text_size=size.small)
+    table.cell(aura_tbl, 1, 2, disp_long ? "Long OK" : disp_short ? "Short OK" : "Wait", bgcolor=disp_long or disp_short ? color.new(color.lime, 40) : color.new(color.gray, 40), text_color=color.white, text_size=size.small)
+
+    // RSI Row
+    table.cell(aura_tbl, 0, 3, "RSI (14)", text_color=color.white, text_size=size.small)
+    table.cell(aura_tbl, 1, 3, str.tostring(rsi_val, "#.#"), bgcolor=rsi_val < rsi_os ? color.new(color.lime, 40) : rsi_val > rsi_ob ? color.new(color.red, 40) : color.new(color.gray, 40), text_color=color.white, text_size=size.small)
+
+    // Trend Filter Row
+    table.cell(aura_tbl, 0, 4, "Trend Filter", text_color=color.white, text_size=size.small)
+    trend_status = not use_htf_filter ? "Disabled" : close > htf_ema ? "Bullish" : "Bearish"
+    table.cell(aura_tbl, 1, 4, trend_status, bgcolor=trend_status == "Bullish" ? color.new(color.lime, 40) : trend_status == "Bearish" ? color.new(color.red, 40) : color.new(color.gray, 40), text_color=color.white, text_size=size.small)
+
+    // Rejection Quality Row
+    table.cell(aura_tbl, 0, 5, "Wick Rejection", text_color=color.white, text_size=size.small)
+    rej_val = math.max(lower_wick, upper_wick) / (candle_range == 0 ? 1 : candle_range) * 100
+    table.cell(aura_tbl, 1, 5, str.tostring(rej_val, "#") + "%", bgcolor=rej_val >= min_wick_perc ? color.new(color.lime, 40) : color.new(color.red, 40), text_color=color.white, text_size=size.small)
+
+    // Sweep Row
+    last_sweep = is_sweep_low ? "Bullish" : is_sweep_high ? "Bearish" : "None"
+    table.cell(aura_tbl, 0, 6, "Last Sweep", text_color=color.white, text_size=size.small)
+    table.cell(aura_tbl, 1, 6, last_sweep, bgcolor=last_sweep == "Bullish" ? color.new(color.lime, 40) : last_sweep == "Bearish" ? color.new(color.red, 40) : color.new(color.gray, 40), text_color=color.white, text_size=size.small)
