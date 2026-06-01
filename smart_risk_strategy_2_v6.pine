@@ -1,0 +1,119 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Smart_Risk / Jules (Engineer)
+
+//@version=6
+strategy("Smart Risk Strategy 2 - Gold Scalper V6", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, max_labels_count=500, max_boxes_count=500)
+
+// --- Inputs ---
+lookback_p = input.int(20, "Pivot Lookback", minval=1)
+use_htf = input.bool(true, "Use 1H Trend Filter")
+htf_tf = input.string("60", "HTF Timeframe", options=["15", "30", "60", "240", "D"])
+rr_ratio = input.float(2.0, "Risk:Reward Ratio")
+use_session = input.bool(true, "Use Trading Session")
+session_str = input.string("0800-2200:1234567", "Session (UTC)", tooltip="London & NY Sessions")
+show_visuals = input.bool(true, "Show Visuals")
+
+// --- Session Check ---
+is_in_session = not use_session or not na(time(timeframe.period, session_str, "UTC"))
+
+// --- HTF Trend Filter ---
+// Using previous bar HTF data to avoid repainting
+htf_ema = request.security(syminfo.tickerid, htf_tf, ta.ema(close, 200)[1], lookahead=barmerge.lookahead_on)
+htf_trend_up = not use_htf or close > htf_ema
+htf_trend_down = not use_htf or close < htf_ema
+
+// --- Pivot & Liquidity Detection ---
+ph = ta.pivothigh(lookback_p, lookback_p)
+pl = ta.pivotlow(lookback_p, lookback_p)
+
+// Add max_bars_back for security if lookback is dynamic, though here it's fixed.
+// But it's good practice in v6 for series referenced with offsets.
+max_bars_back(high, 500)
+max_bars_back(low, 500)
+
+var float last_ph = na
+var float last_pl = na
+var int last_ph_idx = na
+var int last_pl_idx = na
+
+if not na(ph)
+    last_ph := ph
+    last_ph_idx := bar_index[lookback_p]
+if not na(pl)
+    last_pl := pl
+    last_pl_idx := bar_index[lookback_p]
+
+// --- Sweep Detection ---
+// Bullish Sweep: Price goes below last PL then closes back above it (wick rejection)
+bull_sweep = not na(last_pl) and low < last_pl and close > last_pl and htf_trend_up
+// Bearish Sweep: Price goes above last PH then closes back below it
+bear_sweep = not na(last_ph) and high > last_ph and close < last_ph and htf_trend_down
+
+var bool waiting_for_mss_bull = false
+var bool waiting_for_mss_bear = false
+var float sweep_extreme = na
+
+if bull_sweep
+    waiting_for_mss_bull := true
+    waiting_for_mss_bear := false
+    sweep_extreme := low
+    if show_visuals
+        label.new(bar_index, low, "Bull Sweep", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.tiny)
+
+if bear_sweep
+    waiting_for_mss_bear := true
+    waiting_for_mss_bull := false
+    sweep_extreme := high
+    if show_visuals
+        label.new(bar_index, high, "Bear Sweep", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.tiny)
+
+// --- Market Structure Shift (MSS) ---
+// MSS is confirmed when price breaks the most recent opposite pivot after a sweep
+mss_bull = waiting_for_mss_bull and ta.crossover(close, last_ph)
+mss_bear = waiting_for_mss_bear and ta.crossunder(close, last_pl)
+
+if mss_bull and show_visuals
+    label.new(bar_index, high, "MSS", style=label.style_label_down, color=color.blue, textcolor=color.white, size=size.tiny)
+if mss_bear and show_visuals
+    label.new(bar_index, low, "MSS", style=label.style_label_up, color=color.blue, textcolor=color.white, size=size.tiny)
+
+// --- FVG Detection ---
+// Bullish FVG: Low of current bar > High of 2 bars ago
+bull_fvg = mss_bull and low > high[2]
+// Bearish FVG: High of current bar < Low of 2 bars ago
+bear_fvg = mss_bear and high < low[2]
+
+// --- Strategy Execution ---
+if bull_fvg and strategy.position_size == 0 and is_in_session
+    float sl = sweep_extreme
+    float risk = close - sl
+    float tp = close + (risk * rr_ratio)
+    strategy.entry("Long", strategy.long, comment="MSS+FVG")
+    strategy.exit("Exit Long", "Long", stop=sl, limit=tp, comment_loss="SL", comment_profit="TP")
+    waiting_for_mss_bull := false
+    if show_visuals
+        box.new(bar_index[1], high[2], bar_index, low, bgcolor=color.new(color.green, 80), border_color=color.green)
+
+if bear_fvg and strategy.position_size == 0 and is_in_session
+    float sl = sweep_extreme
+    float risk = sl - close
+    float tp = close - (risk * rr_ratio)
+    strategy.entry("Short", strategy.short, comment="MSS+FVG")
+    strategy.exit("Exit Short", "Short", stop=sl, limit=tp, comment_loss="SL", comment_profit="TP")
+    waiting_for_mss_bear := false
+    if show_visuals
+        box.new(bar_index[1], low[2], bar_index, high, bgcolor=color.new(color.red, 80), border_color=color.red)
+
+// Reset state if too much time passes
+var int last_sweep_bar = 0
+if bull_sweep or bear_sweep
+    last_sweep_bar := bar_index
+
+if bar_index - last_sweep_bar > 50 // Timeout after 50 bars
+    waiting_for_mss_bull := false
+    waiting_for_mss_bear := false
+
+// Plotting
+plot(use_htf ? htf_ema : na, "HTF EMA", color=color.new(color.gray, 50), linewidth=2)
+plot(last_ph, "Last PH", color=color.new(color.red, 50), style=plot.style_linebr, linewidth=1)
+plot(last_pl, "Last PL", color=color.new(color.green, 50), style=plot.style_linebr, linewidth=1)
