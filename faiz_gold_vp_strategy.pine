@@ -68,7 +68,14 @@ if is_in_session
                 array.set(bins, j, array.get(bins, j) + vol_per_bin)
 
         // Calculate POC
-        int poc_idx = array.argmax(bins)
+        int poc_idx = 0
+        float max_v = -1.0
+        for i = 0 to row_size - 1
+            float v = array.get(bins, i)
+            if v > max_v
+                max_v := v
+                poc_idx := i
+
         poc := s_low + (poc_idx * step) + (step / 2)
 
         // Calculate Value Area
