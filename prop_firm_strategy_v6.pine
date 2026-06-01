@@ -1,0 +1,117 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+strategy("Prop Firm Bankrupter Strategy v6", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, max_boxes_count=500, max_labels_count=500)
+
+// --- Inputs ---
+grp_trend = "Trend Filter"
+ema_len = input.int(200, "EMA Length", group=grp_trend)
+tf_trend = input.timeframe("15", "Trend Timeframe", group=grp_trend)
+
+grp_liquidity = "Liquidity"
+pivot_lookback = input.int(3, "Pivot Lookback", group=grp_liquidity)
+show_liquidity = input.bool(true, "Show Liquidity Levels", group=grp_liquidity)
+
+grp_fvg = "Fair Value Gap (FVG)"
+fvg_extend = input.int(5, "FVG Extend Bars", group=grp_fvg)
+bull_fvg_color = input.color(color.new(color.green, 80), "Bullish FVG Color", group=grp_fvg)
+bear_fvg_color = input.color(color.new(color.red, 80), "Bearish FVG Color", group=grp_fvg)
+
+// --- Globals & Variables ---
+var float last_high = na
+var float last_low = na
+
+// --- Trend Filter ---
+// Use request.security with [1] and lookahead_on for non-repainting MTF data
+ema_val = request.security(syminfo.tickerid, tf_trend, ta.ema(close, ema_len)[1], lookahead=barmerge.lookahead_on)
+is_bullish_trend = close > ema_val
+is_bearish_trend = close < ema_val
+
+plot(ema_val, "15m EMA Trend Filter", color=is_bullish_trend ? color.new(color.green, 0) : color.new(color.red, 0), linewidth=2)
+
+// --- Liquidity Logic ---
+ph = ta.pivothigh(pivot_lookback, pivot_lookback)
+pl = ta.pivotlow(pivot_lookback, pivot_lookback)
+
+if not na(ph)
+    last_high := ph
+if not na(pl)
+    last_low := pl
+
+// Sweep Detection: High or Low of current bar breaks the last pivot and closes back
+// Bullish Sweep: Low goes below last_low, but close is above last_low
+bull_sweep = low < last_low and close > last_low
+// Bearish Sweep: High goes above last_high, but close is below last_high
+bear_sweep = high > last_high and close < last_high
+
+plotshape(bull_sweep, "Bullish Sweep", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(bear_sweep, "Bearish Sweep", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// --- FVG Detection & Visualization ---
+is_bull_fvg = low[0] > high[2]
+is_bear_fvg = high[0] < low[2]
+
+if is_bull_fvg
+    box.new(bar_index - 2, low[0], bar_index + fvg_extend, high[2], bgcolor=bull_fvg_color, border_color=color.new(color.green, 50))
+
+if is_bear_fvg
+    box.new(bar_index - 2, high[0], bar_index + fvg_extend, low[2], bgcolor=bear_fvg_color, border_color=color.new(color.red, 50))
+
+// --- Strategy Logic ---
+var bool waiting_for_bull_fvg = false
+var bool waiting_for_bear_fvg = false
+var float sweep_low_level = na
+var float sweep_high_level = na
+
+// Reset or Set waiting flags
+if bull_sweep
+    waiting_for_bull_fvg := true
+    waiting_for_bear_fvg := false
+    sweep_low_level := low
+if bear_sweep
+    waiting_for_bear_fvg := true
+    waiting_for_bull_fvg := false
+    sweep_high_level := high
+
+// Entry Logic
+long_condition = is_bullish_trend and waiting_for_bull_fvg and is_bull_fvg
+short_condition = is_bearish_trend and waiting_for_bear_fvg and is_bear_fvg
+
+if long_condition
+    strategy.entry("Long", strategy.long, comment="Sweep + FVG")
+    strategy.exit("TP/SL", "Long", limit=last_high, stop=sweep_low_level, comment_loss="SL", comment_profit="TP")
+    waiting_for_bull_fvg := false
+
+if short_condition
+    strategy.entry("Short", strategy.short, comment="Sweep + FVG")
+    strategy.exit("TP/SL", "Short", limit=last_low, stop=sweep_high_level, comment_loss="SL", comment_profit="TP")
+    waiting_for_bear_fvg := false
+
+// --- Dashboard ---
+var table status_table = table.new(position.top_right, 2, 3, bgcolor=color.new(color.black, 0), border_width=1)
+if barstate.islast
+    table.cell(status_table, 0, 0, "Metric", text_color=color.white)
+    table.cell(status_table, 1, 0, "Value", text_color=color.white)
+
+    table.cell(status_table, 0, 1, "15m Trend", text_color=color.white)
+    table.cell(status_table, 1, 1, is_bullish_trend ? "Bullish" : is_bearish_trend ? "Bearish" : "Neutral", bgcolor=is_bullish_trend ? color.green : is_bearish_trend ? color.red : color.gray)
+
+    table.cell(status_table, 0, 2, "Signal Status", text_color=color.white)
+    table.cell(status_table, 1, 2, waiting_for_bull_fvg ? "Waiting Bull FVG" : waiting_for_bear_fvg ? "Waiting Bear FVG" : "Searching", bgcolor=waiting_for_bull_fvg or waiting_for_bear_fvg ? color.orange : color.blue)
+
+// --- Visuals for Liquidity ---
+var line high_liq_line = na
+var line low_liq_line = na
+var label high_liq_label = na
+var label low_liq_label = na
+
+if show_liquidity and barstate.islast
+    line.delete(high_liq_line)
+    line.delete(low_liq_line)
+    label.delete(high_liq_label)
+    label.delete(low_liq_label)
+    high_liq_line := line.new(bar_index - 50, last_high, bar_index, last_high, color=color.new(color.red, 20), style=line.style_dashed, width=1)
+    low_liq_line := line.new(bar_index - 50, last_low, bar_index, last_low, color=color.new(color.green, 20), style=line.style_dashed, width=1)
+    high_liq_label := label.new(bar_index, last_high, "Opposing Buy Liquidity", color=color.new(color.red, 100), textcolor=color.red, style=label.style_label_left, size=size.small)
+    low_liq_label := label.new(bar_index, last_low, "Opposing Sell Liquidity", color=color.new(color.green, 100), textcolor=color.green, style=label.style_label_left, size=size.small)
