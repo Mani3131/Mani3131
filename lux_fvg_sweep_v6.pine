@@ -26,8 +26,10 @@ f_add_row(table tbl, int row, string txt1, string txt2, color c1, color c2) =>
 var dash_tbl = table.new(position.top_right, 2, 5, bgcolor = color.new(color.black, 50), border_width = 1, border_color = color_neutral)
 
 if barstate.islast
-    table.cell(dash_tbl, 0, 0, "LIVE", text_color = color_gold, text_size = size.huge, text_halign = text.align_center, column_span = 2)
-    table.cell(dash_tbl, 0, 1, "MONITORING", text_color = color.white, text_size = size.small, text_halign = text.align_center, column_span = 2)
+    table.cell(dash_tbl, 0, 0, "LIVE", text_color = color_gold, text_size = size.huge, text_halign = text.align_center)
+    table.cell(dash_tbl, 0, 1, "MONITORING", text_color = color.white, text_size = size.small, text_halign = text.align_center)
+    table.merge_cells(dash_tbl, 0, 0, 1, 0)
+    table.merge_cells(dash_tbl, 0, 1, 1, 1)
     f_add_row(dash_tbl, 2, "Status", "Active", color.gray, color_bull)
     f_add_row(dash_tbl, 3, "TF", htf_tf, color.gray, color.white)
     f_add_row(dash_tbl, 4, "Strategy", "FVG + Sweep", color.gray, color.white)
