@@ -20,14 +20,14 @@ color_gold = color.rgb(255, 215, 0)
 
 // --- Dashboard ---
 f_add_row(table tbl, int row, string txt1, string txt2, color c1, color c2) =>
-    table.cell(tbl, 0, row, txt1, text_color = c1, text_size = size.small, text_halign = text.halign_left)
-    table.cell(tbl, 1, row, txt2, text_color = c2, text_size = size.small, text_halign = text.halign_right)
+    table.cell(tbl, 0, row, txt1, text_color = c1, text_size = size.small, text_halign = text.align_left)
+    table.cell(tbl, 1, row, txt2, text_color = c2, text_size = size.small, text_halign = text.align_right)
 
 var dash_tbl = table.new(position.top_right, 2, 5, bgcolor = color.new(color.black, 50), border_width = 1, border_color = color_neutral)
 
 if barstate.islast
-    table.cell(dash_tbl, 0, 0, "LIVE", text_color = color_gold, text_size = size.huge, text_halign = text.halign_center, column_span = 2)
-    table.cell(dash_tbl, 0, 1, "MONITORING", text_color = color.white, text_size = size.small, text_halign = text.halign_center, column_span = 2)
+    table.cell(dash_tbl, 0, 0, "LIVE", text_color = color_gold, text_size = size.huge, text_halign = text.align_center, column_span = 2)
+    table.cell(dash_tbl, 0, 1, "MONITORING", text_color = color.white, text_size = size.small, text_halign = text.align_center, column_span = 2)
     f_add_row(dash_tbl, 2, "Status", "Active", color.gray, color_bull)
     f_add_row(dash_tbl, 3, "TF", htf_tf, color.gray, color.white)
     f_add_row(dash_tbl, 4, "Strategy", "FVG + Sweep", color.gray, color.white)
