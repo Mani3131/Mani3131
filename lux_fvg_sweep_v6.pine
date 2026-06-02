@@ -1,0 +1,164 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © LuxAlgo (Replicated for Educational Purposes)
+
+//@version=6
+indicator("Lux FVG + Sweep [v6]", overlay = true, max_labels_count = 500, max_boxes_count = 500)
+
+// --- Inputs ---
+pivotLen = input.int(5, "Pivot Length", minval = 1)
+showStructure = input.bool(true, "Show Market Structure")
+showSweeps = input.bool(true, "Show Liquidity Sweeps")
+htf_tf = input.timeframe("15", "HTF FVG Timeframe")
+showFVG = input.bool(true, "Show HTF FVGs")
+fvg_limit = input.int(20, "FVG Limit", minval = 1)
+
+// --- Colors ---
+color_bull = color.teal
+color_bear = color.fuchsia
+color_neutral = color.gray
+color_gold = color.rgb(255, 215, 0)
+
+// --- Dashboard ---
+f_add_row(table tbl, int row, string txt1, string txt2, color c1, color c2) =>
+    table.cell(tbl, 0, row, txt1, text_color = c1, text_size = size.small, text_halign = text.halign_left)
+    table.cell(tbl, 1, row, txt2, text_color = c2, text_size = size.small, text_halign = text.halign_right)
+
+var dash_tbl = table.new(position.top_right, 2, 5, bgcolor = color.new(color.black, 50), border_width = 1, border_color = color_neutral)
+
+if barstate.islast
+    table.cell(dash_tbl, 0, 0, "LIVE", text_color = color_gold, text_size = size.huge, text_halign = text.halign_center, column_span = 2)
+    table.cell(dash_tbl, 0, 1, "MONITORING", text_color = color.white, text_size = size.small, text_halign = text.halign_center, column_span = 2)
+    f_add_row(dash_tbl, 2, "Status", "Active", color.gray, color_bull)
+    f_add_row(dash_tbl, 3, "TF", htf_tf, color.gray, color.white)
+    f_add_row(dash_tbl, 4, "Strategy", "FVG + Sweep", color.gray, color.white)
+
+// --- Pivot Detection ---
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+
+var float last_ph_price = na
+var int last_ph_index = na
+var float last_pl_price = na
+var int last_pl_index = na
+
+if not na(ph)
+    last_ph_price := ph
+    last_ph_index := bar_index - pivotLen
+
+if not na(pl)
+    last_pl_price := pl
+    last_pl_index := bar_index - pivotLen
+
+// --- Market Structure (BOS/CHoCH) ---
+var trend = 0 // 1 for bullish, -1 for bearish
+var float high_target = na
+var float low_target = na
+
+if barstate.isconfirmed
+    if not na(last_ph_price) and close > last_ph_price
+        if trend == -1
+            if showStructure
+                label.new(bar_index, high, "CHoCH", color = color.none, textcolor = color_bull, style = label.style_label_down, size = size.tiny)
+            trend := 1
+        else
+            if showStructure
+                label.new(bar_index, high, "BOS", color = color.none, textcolor = color_bull, style = label.style_label_down, size = size.tiny)
+        last_ph_price := na // Reset target after break
+
+    if not na(last_pl_price) and close < last_pl_price
+        if trend == 1
+            if showStructure
+                label.new(bar_index, low, "CHoCH", color = color.none, textcolor = color_bear, style = label.style_label_up, size = size.tiny)
+            trend := -1
+        else
+            if showStructure
+                label.new(bar_index, low, "BOS", color = color.none, textcolor = color_bear, style = label.style_label_up, size = size.tiny)
+        last_pl_price := na // Reset target after break
+
+// --- MTF FVG Detection ---
+fvg_check() =>
+    bull = low > high[2]
+    bear = high < low[2]
+    [bull, bear, bull ? low : bear ? high : na, bull ? high[2] : bear ? low[2] : na, time]
+
+// Non-repainting MTF FVG fetch
+[htf_bull, htf_bear, htf_top, htf_btm, htf_start_time] = request.security(syminfo.tickerid, htf_tf, fvg_check(), lookahead = barmerge.lookahead_off)
+
+var box[] bull_fvgs = array.new_box()
+var box[] bear_fvgs = array.new_box()
+
+if ta.change(htf_start_time) != 0
+    if htf_bull and showFVG
+        array.push(bull_fvgs, box.new(bar_index, htf_top, bar_index, htf_btm, border_color = color.new(color_bull, 80), bgcolor = color.new(color_bull, 90), text = "15m FVG", text_size = size.tiny, text_color = color_bull))
+    if htf_bear and showFVG
+        array.push(bear_fvgs, box.new(bar_index, htf_top, bar_index, htf_btm, border_color = color.new(color_bear, 80), bgcolor = color.new(color_bear, 90), text = "15m FVG", text_size = size.tiny, text_color = color_bear))
+
+// Cleanup and mitigation
+if array.size(bull_fvgs) > fvg_limit
+    box.delete(array.shift(bull_fvgs))
+if array.size(bear_fvgs) > fvg_limit
+    box.delete(array.shift(bear_fvgs))
+
+if array.size(bull_fvgs) > 0
+    for i = 0 to array.size(bull_fvgs) - 1
+        b = array.get(bull_fvgs, i)
+        box.set_right(b, bar_index)
+
+if array.size(bear_fvgs) > 0
+    for i = 0 to array.size(bear_fvgs) - 1
+        b = array.get(bear_fvgs, i)
+        box.set_right(b, bar_index)
+
+// --- Liquidity Sweep Detection ---
+// Logic: Price exceeds previous pivot but closes back inside.
+var float swept_high = na
+var float swept_low = na
+
+// Signals
+var bool buy_signal = false
+var bool sell_signal = false
+
+// Signal Logic: Look for price being inside a FVG after a sweep
+bool price_in_bull_fvg = false
+if array.size(bull_fvgs) > 0
+    for i = 0 to array.size(bull_fvgs) - 1
+        b = array.get(bull_fvgs, i)
+        if close > box.get_bottom(b) and close < box.get_top(b)
+            price_in_bull_fvg := true
+            break
+
+bool price_in_bear_fvg = false
+if array.size(bear_fvgs) > 0
+    for i = 0 to array.size(bear_fvgs) - 1
+        b = array.get(bear_fvgs, i)
+        if close > box.get_bottom(b) and close < box.get_top(b)
+            price_in_bear_fvg := true
+            break
+
+if barstate.isconfirmed
+    // Sweep of High
+    if not na(last_ph_price) and high > last_ph_price and close < last_ph_price
+        if showSweeps
+            label.new(bar_index, high, "Sweep", color = color.none, textcolor = color_bear, style = label.style_label_down, size = size.tiny)
+            line.new(last_ph_index, last_ph_price, bar_index, last_ph_price, color = color_bear, style = line.style_dashed)
+        swept_high := last_ph_price
+
+    // Sweep of Low
+    if not na(last_pl_price) and low < last_pl_price and close > last_pl_price
+        if showSweeps
+            label.new(bar_index, low, "Sweep", color = color.none, textcolor = color_bull, style = label.style_label_up, size = size.tiny)
+            line.new(last_pl_index, last_pl_price, bar_index, last_pl_price, color = color_bull, style = line.style_dashed)
+        swept_low := last_pl_price
+
+    // Reset sweeps if structure breaks or after some time?
+    // For now, trigger signal if sweep happened recently and we are in FVG
+    if not na(swept_low) and price_in_bull_fvg
+        label.new(bar_index, low, "BUY", color = color_bull, textcolor = color.white, style = label.style_label_up, size = size.small)
+        swept_low := na // Reset after signal
+
+    if not na(swept_high) and price_in_bear_fvg
+        label.new(bar_index, high, "SELL", color = color_bear, textcolor = color.white, style = label.style_label_down, size = size.small)
+        swept_high := na // Reset after signal
+
+// Placeholder for next steps
+plot(trend, "Trend Debug", color = color.new(color.white, 100), display = display.none)
