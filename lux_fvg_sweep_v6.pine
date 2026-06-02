@@ -60,21 +60,21 @@ if barstate.isconfirmed
     if not na(last_ph_price) and close > last_ph_price
         if trend == -1
             if showStructure
-                label.new(bar_index, high, "CHoCH", color = color.none, textcolor = color_bull, style = label.style_label_down, size = size.tiny)
+                label.new(bar_index, high, "CHoCH", color = color.new(color.white, 100), textcolor = color_bull, style = label.style_label_down, size = size.tiny)
             trend := 1
         else
             if showStructure
-                label.new(bar_index, high, "BOS", color = color.none, textcolor = color_bull, style = label.style_label_down, size = size.tiny)
+                label.new(bar_index, high, "BOS", color = color.new(color.white, 100), textcolor = color_bull, style = label.style_label_down, size = size.tiny)
         last_ph_price := na // Reset target after break
 
     if not na(last_pl_price) and close < last_pl_price
         if trend == 1
             if showStructure
-                label.new(bar_index, low, "CHoCH", color = color.none, textcolor = color_bear, style = label.style_label_up, size = size.tiny)
+                label.new(bar_index, low, "CHoCH", color = color.new(color.white, 100), textcolor = color_bear, style = label.style_label_up, size = size.tiny)
             trend := -1
         else
             if showStructure
-                label.new(bar_index, low, "BOS", color = color.none, textcolor = color_bear, style = label.style_label_up, size = size.tiny)
+                label.new(bar_index, low, "BOS", color = color.new(color.white, 100), textcolor = color_bear, style = label.style_label_up, size = size.tiny)
         last_pl_price := na // Reset target after break
 
 // --- MTF FVG Detection ---
@@ -141,14 +141,14 @@ if barstate.isconfirmed
     // Sweep of High
     if not na(last_ph_price) and high > last_ph_price and close < last_ph_price
         if showSweeps
-            label.new(bar_index, high, "Sweep", color = color.none, textcolor = color_bear, style = label.style_label_down, size = size.tiny)
+            label.new(bar_index, high, "Sweep", color = color.new(color.white, 100), textcolor = color_bear, style = label.style_label_down, size = size.tiny)
             line.new(last_ph_index, last_ph_price, bar_index, last_ph_price, color = color_bear, style = line.style_dashed)
         swept_high := last_ph_price
 
     // Sweep of Low
     if not na(last_pl_price) and low < last_pl_price and close > last_pl_price
         if showSweeps
-            label.new(bar_index, low, "Sweep", color = color.none, textcolor = color_bull, style = label.style_label_up, size = size.tiny)
+            label.new(bar_index, low, "Sweep", color = color.new(color.white, 100), textcolor = color_bull, style = label.style_label_up, size = size.tiny)
             line.new(last_pl_index, last_pl_price, bar_index, last_pl_price, color = color_bull, style = line.style_dashed)
         swept_low := last_pl_price
 
