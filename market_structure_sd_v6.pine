@@ -1,0 +1,209 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Market Structure with HTF S&D and Strength Score", overlay = true, max_labels_count = 500, max_boxes_count = 500)
+
+// --- Inputs ---
+grp_htf = "Higher Timeframe Settings"
+htf_tf = input.timeframe("60", "HTF Timeframe", group = grp_htf)
+htf_show = input.bool(true, "Show HTF Zones", group = grp_htf)
+
+grp_sd = "Supply & Demand Settings"
+sd_displacement_mult = input.float(1.5, "Displacement Multiplier (ATR)", minval = 0.5, step = 0.1, group = grp_sd)
+sd_max_zones = input.int(10, "Max Zones to Display", minval = 1, maxval = 50, group = grp_sd)
+sd_mitigation = input.string("Close", "Mitigation Method", options = ["Touch", "Close", "None"], group = grp_sd)
+
+grp_ms = "Market Structure Settings"
+ms_show = input.bool(true, "Show HTF BOS/CHoCH", group = grp_ms)
+ms_pivot_len = input.int(3, "MS Pivot Length", minval = 1, group = grp_ms)
+
+grp_filter = "Profitability Filters"
+filter_ema_len = input.int(200, "Trend EMA Length", minval = 1, group = grp_filter)
+filter_show_fvg = input.bool(true, "Show Fair Value Gaps", group = grp_filter)
+
+grp_visual = "Visual Settings"
+color_supply = input.color(color.new(color.red, 80), "Supply Color", group = grp_visual)
+color_demand = input.color(color.new(color.blue, 80), "Demand Color", group = grp_visual)
+color_bos = input.color(color.gray, "BOS Color", group = grp_visual)
+color_choch = input.color(color.fuchsia, "CHoCH Color", group = grp_visual)
+
+// --- Helper Functions ---
+f_format_vol(float _vol) =>
+    _vol >= 1000000 ? str.tostring(_vol / 1000000, "#.##") + "M" :
+     _vol >= 1000 ? str.tostring(_vol / 1000, "#.##") + "K" :
+     str.tostring(_vol, "#")
+
+// --- HTF Data Fetching (Non-Repainting) ---
+f_get_htf_data() =>
+    [open[1], high[1], low[1], close[1], volume[1], ta.atr(14)[1], ta.sma(volume, 20)[1], ta.pivothigh(high, 3, 3)[1], ta.pivotlow(low, 3, 3)[1]]
+
+[htf_open, htf_high, htf_low, htf_close, htf_vol, htf_atr, htf_avg_vol, htf_ph_raw, htf_pl_raw] = request.security(syminfo.tickerid, htf_tf, f_get_htf_data(), lookahead = barmerge.lookahead_on)
+
+// --- EMA Filter & MTF Trend ---
+ema_filter = ta.ema(close, filter_ema_len)
+plot(ema_filter, "Trend EMA", color = color.new(color.orange, 50), linewidth = 2)
+is_uptrend = close > ema_filter
+is_downtrend = close < ema_filter
+
+f_get_trend_status() =>
+    _ema = ta.ema(close, filter_ema_len)
+    close > _ema ? 1 : -1
+
+trend_15m = request.security(syminfo.tickerid, "15", f_get_trend_status(), lookahead = barmerge.lookahead_on)
+trend_30m = request.security(syminfo.tickerid, "30", f_get_trend_status(), lookahead = barmerge.lookahead_on)
+trend_1h  = request.security(syminfo.tickerid, "60", f_get_trend_status(), lookahead = barmerge.lookahead_on)
+trend_4h  = request.security(syminfo.tickerid, "240", f_get_trend_status(), lookahead = barmerge.lookahead_on)
+trend_1d  = request.security(syminfo.tickerid, "D", f_get_trend_status(), lookahead = barmerge.lookahead_on)
+
+// --- S&D Detection Logic (HTF Context) ---
+htf_changed = ta.change(time(htf_tf)) != 0
+var htf_supply_boxes = array.new<box>()
+var htf_demand_boxes = array.new<box>()
+
+f_calc_strength(_open, _high, _low, _close, _vol, _avg_vol, _atr) =>
+    body_size = math.abs(_close - _open)
+    disp_score = math.min((body_size / _atr) * 2, 6.0)
+    vol_score = math.min((_vol / _avg_vol) * 2, 4.0)
+    math.round(disp_score + vol_score)
+
+f_manage_zones(boxes, is_supply) =>
+    if array.size(boxes) > 0
+        for i = array.size(boxes) - 1 to 0
+            b = array.get(boxes, i)
+            top = box.get_top(b)
+            btm = box.get_bottom(b)
+            mitigated = false
+            if is_supply
+                if sd_mitigation == "Touch" and high >= top
+                    mitigated := true
+                else if sd_mitigation == "Close" and close >= top
+                    mitigated := true
+            else
+                if sd_mitigation == "Touch" and low <= btm
+                    mitigated := true
+                else if sd_mitigation == "Close" and close <= btm
+                    mitigated := true
+            if mitigated
+                box.delete(array.remove(boxes, i))
+            else
+                box.set_right(b, bar_index + 10)
+
+if htf_changed
+    if htf_close - htf_open > htf_atr * sd_displacement_mult
+        strength = f_calc_strength(htf_open, htf_high, htf_low, htf_close, htf_vol, htf_avg_vol, htf_atr)
+        vol_str = f_format_vol(htf_vol)
+        b = box.new(bar_index[1], htf_open, bar_index + 10, htf_low, border_color = color_demand, bgcolor = color_demand, text = "DEMAND | STR: " + str.tostring(strength) + " | VOL: " + vol_str, text_size = size.small, text_color = color.white, text_halign = text.align_right)
+        array.push(htf_demand_boxes, b)
+        if array.size(htf_demand_boxes) > sd_max_zones
+            box.delete(array.shift(htf_demand_boxes))
+    if htf_open - htf_close > htf_atr * sd_displacement_mult
+        strength = f_calc_strength(htf_open, htf_high, htf_low, htf_close, htf_vol, htf_avg_vol, htf_atr)
+        vol_str = f_format_vol(htf_vol)
+        b = box.new(bar_index[1], htf_high, bar_index + 10, htf_open, border_color = color_supply, bgcolor = color_supply, text = "SUPPLY | STR: " + str.tostring(strength) + " | VOL: " + vol_str, text_size = size.small, text_color = color.white, text_halign = text.align_right)
+        array.push(htf_supply_boxes, b)
+        if array.size(htf_supply_boxes) > sd_max_zones
+            box.delete(array.shift(htf_supply_boxes))
+
+if sd_mitigation != "None"
+    f_manage_zones(htf_supply_boxes, true)
+    f_manage_zones(htf_demand_boxes, false)
+else
+    for b in htf_supply_boxes
+        box.set_right(b, bar_index + 10)
+    for b in htf_demand_boxes
+        box.set_right(b, bar_index + 10)
+
+// --- FVG Detection ---
+if filter_show_fvg
+    fvg_bullish = low > high[2]
+    fvg_bearish = high < low[2]
+    if fvg_bullish
+        box.new(bar_index[2], high[2], bar_index, low, bgcolor = color.new(color.teal, 90), border_color = na)
+    if fvg_bearish
+        box.new(bar_index[2], low[2], bar_index, high, bgcolor = color.new(color.fuchsia, 90), border_color = na)
+
+// --- Market Structure (HTF Logic, Minimized Visuals) ---
+var float htf_last_ph = na
+var float htf_last_pl = na
+var bool htf_is_bullish = true
+
+if not na(htf_ph_raw)
+    htf_last_ph := htf_ph_raw
+if not na(htf_pl_raw)
+    htf_last_pl := htf_pl_raw
+
+htf_choch_bullish = htf_is_bullish == false and close > htf_last_ph
+htf_choch_bearish = htf_is_bullish == true and close < htf_last_pl
+htf_bos_bullish = htf_is_bullish == true and close > htf_last_ph
+htf_bos_bearish = htf_is_bullish == false and close < htf_last_pl
+
+if htf_choch_bullish or htf_choch_bearish
+    htf_is_bullish := htf_choch_bullish
+    if ms_show
+        label.new(bar_index, high, "HTF CHoCH", color = color_choch, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+else if htf_bos_bullish or htf_bos_bearish
+    if ms_show
+        label.new(bar_index, high, "HTF BOS", color = color_bos, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+
+// --- LTF Reaction Logic (Internal for Signals) ---
+var float ltf_last_ph = na
+var float ltf_last_pl = na
+var bool ltf_is_bullish = true
+
+ltf_ph = ta.pivothigh(ms_pivot_len, ms_pivot_len)
+ltf_pl = ta.pivotlow(ms_pivot_len, ms_pivot_len)
+
+if not na(ltf_ph)
+    ltf_last_ph := ltf_ph
+if not na(ltf_pl)
+    ltf_last_pl := ltf_pl
+
+ltf_choch_bullish = ltf_is_bullish == false and close > ltf_last_ph
+ltf_choch_bearish = ltf_is_bullish == true and close < ltf_last_pl
+
+if ltf_choch_bullish or ltf_choch_bearish
+    ltf_is_bullish := ltf_choch_bullish
+
+// --- Entry Signals ---
+f_is_in_zone(boxes) =>
+    in_zone = false
+    if array.size(boxes) > 0
+        for b in boxes
+            if close >= box.get_bottom(b) and close <= box.get_top(b)
+                in_zone := true
+                break
+    in_zone
+
+long_signal = f_is_in_zone(htf_demand_boxes) and ltf_choch_bullish and is_uptrend
+short_signal = f_is_in_zone(htf_supply_boxes) and ltf_choch_bearish and is_downtrend
+
+plotshape(long_signal, "Long Signal", shape.triangleup, location.belowbar, color.green, size = size.normal, text = "BUY")
+plotshape(short_signal, "Short Signal", shape.triangledown, location.abovebar, color.red, size = size.normal, text = "SELL")
+
+// Dashboard Table
+var table dash = table.new(position.top_right, 2, 8, bgcolor = color.new(color.black, 50), border_width = 1)
+if barstate.islast
+    table.cell(dash, 0, 0, "Timeframe", text_color = color.white)
+    table.cell(dash, 1, 0, "Trend", text_color = color.white)
+
+    table.cell(dash, 0, 1, "15m", text_color = color.white)
+    table.cell(dash, 1, 1, trend_15m == 1 ? "BULLISH" : "BEARISH", text_color = trend_15m == 1 ? color.green : color.red)
+
+    table.cell(dash, 0, 2, "30m", text_color = color.white)
+    table.cell(dash, 1, 2, trend_30m == 1 ? "BULLISH" : "BEARISH", text_color = trend_30m == 1 ? color.green : color.red)
+
+    table.cell(dash, 0, 3, "1h", text_color = color.white)
+    table.cell(dash, 1, 3, trend_1h == 1 ? "BULLISH" : "BEARISH", text_color = trend_1h == 1 ? color.green : color.red)
+
+    table.cell(dash, 0, 4, "4h", text_color = color.white)
+    table.cell(dash, 1, 4, trend_4h == 1 ? "BULLISH" : "BEARISH", text_color = trend_4h == 1 ? color.green : color.red)
+
+    table.cell(dash, 0, 5, "1d", text_color = color.white)
+    table.cell(dash, 1, 5, trend_1d == 1 ? "BULLISH" : "BEARISH", text_color = trend_1d == 1 ? color.green : color.red)
+
+    table.cell(dash, 0, 6, "HTF TF", text_color = color.white)
+    table.cell(dash, 1, 6, htf_tf, text_color = color.yellow)
+
+    table.cell(dash, 0, 7, "Active Zones", text_color = color.white)
+    table.cell(dash, 1, 7, str.tostring(array.size(htf_supply_boxes) + array.size(htf_demand_boxes)), text_color = color.aqua)
