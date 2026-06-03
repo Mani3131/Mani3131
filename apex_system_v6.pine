@@ -110,8 +110,8 @@ bool is_sell = sell_signal and can_signal
 if is_buy
     last_signal_bar := bar_index
     label.new(bar_index, low, "BUY", color = color.green, textcolor = color.white, style = label.style_label_up, size = size.normal)
-    // Add the cyan circle highlight mentioned in plan
-    label.new(bar_index, low, "●", color = color.new(color.cyan, 100), textcolor = color.cyan, style = label.style_label_up, size = size.small)
+    // Add the aqua circle highlight mentioned in plan
+    label.new(bar_index, low, "●", color = color.new(color.aqua, 100), textcolor = color.aqua, style = label.style_label_up, size = size.small)
 
 if is_sell
     last_signal_bar := bar_index
