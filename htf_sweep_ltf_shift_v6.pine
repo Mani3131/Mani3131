@@ -1,0 +1,169 @@
+//@version=6
+indicator("HTF Sweep & LTF Shift Strategy [v6]", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// --- Inputs ---
+htf_res = input.timeframe("240", "Higher Timeframe")
+pivot_len = input.int(3, "Pivot Lookback", minval=1)
+max_bars_sweep = input.int(20, "Max Bars (Sweep to MSS)", minval=1, tooltip="Maximum bars to wait for an LTF Shift after an HTF Sweep")
+max_bars_mss = input.int(10, "Max Bars (MSS to FVG)", minval=1, tooltip="Maximum bars to wait for an FVG after an LTF Shift")
+show_htf_levels = input.bool(true, "Show HTF Levels")
+
+// --- HTF Data Fetching ---
+// Function to identify pivots
+f_get_pivots(p_len) =>
+    ph = ta.pivothigh(high, p_len, p_len)
+    pl = ta.pivotlow(low, p_len, p_len)
+    [ph, pl]
+
+// Fetch HTF pivots without repainting
+[htf_ph, htf_pl] = request.security(syminfo.tickerid, htf_res, f_get_pivots(pivot_len), lookahead=barmerge.lookahead_off)
+
+// Persistent variables for the latest HTF liquidity levels
+var float last_htf_ph = na
+var float last_htf_pl = na
+
+if not na(htf_ph)
+    last_htf_ph := htf_ph
+if not na(htf_pl)
+    last_htf_pl := htf_pl
+
+// Visuals for HTF levels
+plot(show_htf_levels ? last_htf_ph : na, "HTF BSL (Buy Side Liquidity)", color.new(color.red, 60), 1, plot.style_linebr)
+plot(show_htf_levels ? last_htf_pl : na, "HTF SSL (Sell Side Liquidity)", color.new(color.green, 60), 1, plot.style_linebr)
+
+// --- HTF Liquidity Sweep Detection ---
+// Bullish Sweep: Price goes below HTF SSL but closes above it
+bull_sweep = low < last_htf_pl and close > last_htf_pl
+// Bearish Sweep: Price goes above HTF BSL but closes below it
+bear_sweep = high > last_htf_ph and close < last_htf_ph
+
+var bool bull_sweep_active = false
+var bool bear_sweep_active = false
+var int bull_sweep_idx = 0
+var int bear_sweep_idx = 0
+
+if bull_sweep
+    bull_sweep_active := true
+    bull_sweep_idx := bar_index
+    bear_sweep_active := false // Reset opposing
+if bear_sweep
+    bear_sweep_active := true
+    bear_sweep_idx := bar_index
+    bull_sweep_active := false // Reset opposing
+
+// Timeout for Sweeps
+if bull_sweep_active and bar_index - bull_sweep_idx > max_bars_sweep
+    bull_sweep_active := false
+if bear_sweep_active and bar_index - bear_sweep_idx > max_bars_sweep
+    bear_sweep_active := false
+
+plotshape(bull_sweep, "Bull Sweep", shape.labelup, location.belowbar, color.green, 0, "4H SWEEP", color.white, size=size.small)
+plotshape(bear_sweep, "Bear Sweep", shape.labeldown, location.abovebar, color.red, 0, "4H SWEEP", color.white, size=size.small)
+
+// --- LTF Market Structure Shift (MSS) ---
+// Detecting LTF pivots
+ltf_ph = ta.pivothigh(high, pivot_len, pivot_len)
+ltf_pl = ta.pivotlow(low, pivot_len, pivot_len)
+
+var float last_ltf_ph = na
+var float last_ltf_pl = na
+
+if not na(ltf_ph)
+    last_ltf_ph := ltf_ph
+if not na(ltf_pl)
+    last_ltf_pl := ltf_pl
+
+bool bull_mss = false
+bool bear_mss = false
+
+var bool bull_mss_active = false
+var bool bear_mss_active = false
+var int bull_mss_idx = 0
+var int bear_mss_idx = 0
+
+// Bullish MSS: After HTF Bull Sweep, price breaks above the last LTF pivot high
+if bull_sweep_active and close > last_ltf_ph
+    bull_mss := true
+    bull_mss_active := true
+    bull_mss_idx := bar_index
+    bull_sweep_active := false // Consume the sweep
+
+// Bearish MSS: After HTF Bear Sweep, price breaks below the last LTF pivot low
+if bear_sweep_active and close < last_ltf_pl
+    bear_mss := true
+    bear_mss_active := true
+    bear_mss_idx := bar_index
+    bear_sweep_active := false // Consume the sweep
+
+// Timeout for MSS
+if bull_mss_active and bar_index - bull_mss_idx > max_bars_mss
+    bull_mss_active := false
+if bear_mss_active and bar_index - bear_mss_idx > max_bars_mss
+    bear_mss_active := false
+
+plotshape(bull_mss, "Bull MSS", shape.labelup, location.belowbar, color.aqua, 0, "5M SHIFT", color.black, size=size.small)
+plotshape(bear_mss, "Bear MSS", shape.labeldown, location.abovebar, color.fuchsia, 0, "5M SHIFT", color.white, size=size.small)
+
+// --- FVG and Signal Entry ---
+// Bullish FVG: low[0] > high[2]
+bull_fvg = low[0] > high[2]
+// Bearish FVG: high[0] < low[2]
+bear_fvg = high[0] < low[2]
+
+var float entry_fvg_top = na
+var float entry_fvg_btm = na
+var bool waiting_for_entry = false
+var int entry_dir = 0 // 1 for long, -1 for short
+
+if bull_mss_active and bull_fvg
+    entry_fvg_top := low[0]
+    entry_fvg_btm := high[2]
+    waiting_for_entry := true
+    entry_dir := 1
+    bull_mss_active := false // Consume the MSS
+
+if bear_mss_active and bear_fvg
+    entry_fvg_top := low[2]
+    entry_fvg_btm := high[0]
+    waiting_for_entry := true
+    entry_dir := -1
+    bear_mss_active := false // Consume the MSS
+
+// Signal Entry Detection
+bool buy_signal = false
+bool sell_signal = false
+
+if waiting_for_entry
+    if entry_dir == 1 and low <= entry_fvg_top and high >= entry_fvg_btm
+        buy_signal := true
+        waiting_for_entry := false
+    else if entry_dir == -1 and high >= entry_fvg_btm and low <= entry_fvg_top
+        sell_signal := true
+        waiting_for_entry := false
+
+plotshape(buy_signal, "Buy Signal", shape.labelup, location.belowbar, color.green, 0, "BUY", color.white, size=size.normal)
+plotshape(sell_signal, "Sell Signal", shape.labeldown, location.abovebar, color.red, 0, "SELL", color.white, size=size.normal)
+
+// --- Visualizations for Zones and Targets ---
+var box entry_box = na
+if waiting_for_entry and barstate.islast
+    if not na(entry_box)
+        box.delete(entry_box)
+    entry_box := box.new(bar_index, entry_fvg_top, bar_index + 10, entry_fvg_btm,
+                         bgcolor=entry_dir == 1 ? color.new(color.green, 80) : color.new(color.red, 80),
+                         border_color=entry_dir == 1 ? color.green : color.red)
+
+var line sl_line = na
+var line tp_line = na
+
+if buy_signal
+    sl_line := line.new(bar_index, last_htf_pl, bar_index + 20, last_htf_pl, color=color.red, width=2, style=line.style_dashed)
+    tp_line := line.new(bar_index, last_htf_ph, bar_index + 20, last_htf_ph, color=color.green, width=2, style=line.style_dashed)
+    label.new(bar_index + 20, last_htf_pl, "SL", color=color.new(color.red, 100), textcolor=color.red, style=label.style_label_left)
+    label.new(bar_index + 20, last_htf_ph, "TP", color=color.new(color.green, 100), textcolor=color.green, style=label.style_label_left)
+
+if sell_signal
+    sl_line := line.new(bar_index, last_htf_ph, bar_index + 20, last_htf_ph, color=color.red, width=2, style=line.style_dashed)
+    tp_line := line.new(bar_index, last_htf_pl, bar_index + 20, last_htf_pl, color=color.green, width=2, style=line.style_dashed)
+    label.new(bar_index + 20, last_htf_ph, "SL", color=color.new(color.red, 100), textcolor=color.red, style=label.style_label_left)
+    label.new(bar_index + 20, last_htf_pl, "TP", color=color.new(color.green, 100), textcolor=color.green, style=label.style_label_left)
