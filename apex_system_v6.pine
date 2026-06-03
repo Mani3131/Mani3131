@@ -46,20 +46,20 @@ f_quad_reg(src, length) =>
     // [ sumX2  sumX   n     ] [ c ]   [ sumY   ]
 
     float det = sumX4 * (sumX2 * n - sumX * sumX) -
-                sumX3 * (sumX3 * n - sumX * sumX2) +
-                sumX2 * (sumX3 * sumX - sumX2 * sumX2)
+      sumX3 * (sumX3 * n - sumX * sumX2) +
+      sumX2 * (sumX3 * sumX - sumX2 * sumX2)
 
     float a = (sumX2Y * (sumX2 * n - sumX * sumX) -
-               sumX3  * (sumXY  * n - sumX * sumY) +
-               sumX2  * (sumXY  * sumX - sumX2 * sumY)) / det
+      sumX3  * (sumXY  * n - sumX * sumY) +
+      sumX2  * (sumXY  * sumX - sumX2 * sumY)) / det
 
     float b = (sumX4  * (sumXY  * n - sumX * sumY) -
-               sumX2Y * (sumX3  * n - sumX * sumX2) +
-               sumX2  * (sumX3  * sumY - sumXY * sumX2)) / det
+      sumX2Y * (sumX3  * n - sumX * sumX2) +
+      sumX2  * (sumX3  * sumY - sumXY * sumX2)) / det
 
     float c = (sumX4  * (sumX2  * sumY - sumXY * sumX) -
-               sumX3  * (sumX3  * sumY - sumXY * sumX2) +
-               sumX2Y * (sumX3  * sumX - sumX2 * sumX2)) / det
+      sumX3  * (sumX3  * sumY - sumXY * sumX2) +
+      sumX2Y * (sumX3  * sumX - sumX2 * sumX2)) / det
 
     // Predicted value at current bar (x = length - 1)
     float x_curr = float(length - 1)
