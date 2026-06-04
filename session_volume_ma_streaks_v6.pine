@@ -29,8 +29,9 @@ bull_col    = input.color(color.new(color.aqua, 50), "Bullish Volume Color", gro
 bear_col    = input.color(color.new(color.orange, 50), "Bearish Volume Color", group = grp_visuals)
 
 // --- Session Logic ---
-is_in_session = not na(time(timeframe.period, sess_input, tz_input))
-new_session   = is_in_session and (not is_in_session[1] or na(is_in_session[1]))
+sess_time     = time(timeframe.period, sess_input, tz_input)
+is_in_session = not na(sess_time)
+new_session   = is_in_session and na(sess_time[1])
 
 // --- Global TA Calculations ---
 atr_val = ta.atr(14)
