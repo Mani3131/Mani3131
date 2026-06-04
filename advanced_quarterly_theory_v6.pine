@@ -1,0 +1,115 @@
+//@version=6
+indicator("Advanced Quarterly Theory [BigBoss]", overlay = true, max_boxes_count = 500, max_labels_count = 500)
+
+// ==========================================
+// Inputs
+// ==========================================
+sessionStartInput = input.string("2000", "Day Start Time (NY)", tooltip = "The day start time in HHMM format (New York Time). Default is 20:00 (8:00 PM).")
+timezoneInput     = input.string("America/New_York", "Timezone", tooltip = "New York Timezone location string. Use 'America/New_York' to automatically handle Daylight Savings Time (DST).")
+
+showLabels        = input.bool(true, "Show Labels")
+showBoxes         = input.bool(true, "Show Quarter Boxes")
+
+// Quarter Colors
+colorQ1 = input.color(color.new(color.blue, 85), "Q1 (Accumulation) Color", group = "Appearance")
+colorQ2 = input.color(color.new(color.red, 85), "Q2 (Manipulation) Color", group = "Appearance")
+colorQ3 = input.color(color.new(color.green, 85), "Q3 (Distribution) Color", group = "Appearance")
+colorQ4 = input.color(color.new(color.gray, 85), "Q4 (X) Color", group = "Appearance")
+textColor = input.color(color.white, "Text Color", group = "Appearance")
+
+// ==========================================
+// Time Logic
+// ==========================================
+// Convert session start to minutes from midnight
+startHour = math.floor(str.tonumber(sessionStartInput) / 100)
+startMin  = math.floor(str.tonumber(sessionStartInput) % 100)
+dayStartMinutes = startHour * 60 + startMin
+
+// Current bar time in the specified timezone
+// Using time(timeframe.period) to get the bar's open time
+currentTime = time(timeframe.period, "0000-2359", timezoneInput)
+currentHour = hour(currentTime, timezoneInput)
+currentMinute = minute(currentTime, timezoneInput)
+
+// Total minutes from midnight
+totalMinutes = currentHour * 60 + currentMinute
+// Relative minutes from the day start
+relativeMinutes = (totalMinutes - dayStartMinutes + 1440) % 1440
+
+// Session index (0-3) - Each session is 6 hours (360 minutes)
+sessionIndex = math.floor(relativeMinutes / 360)
+// Quarter index (0-3) - Each quarter is 90 minutes
+quarterIndex = math.floor((relativeMinutes % 360) / 90)
+
+// Detect changes to start a new box/label
+var int lastSessionIdx = -1
+var int lastQuarterIdx = -1
+
+bool newQuarter = sessionIndex != lastSessionIdx or quarterIndex != lastQuarterIdx
+
+if newQuarter
+    lastSessionIdx := sessionIndex
+    lastQuarterIdx := quarterIndex
+
+// ==========================================
+// Helper Functions
+// ==========================================
+sessionName(idx) =>
+    switch idx
+        0 => "Asia"
+        1 => "London"
+        2 => "New York"
+        3 => "PM Session"
+        => ""
+
+quarterName(idx) =>
+    switch idx
+        0 => "Q1 (A)"
+        1 => "Q2 (M)"
+        2 => "Q3 (D)"
+        3 => "Q4 (X)"
+        => ""
+
+getQuarterColor(idx) =>
+    switch idx
+        0 => colorQ1
+        1 => colorQ2
+        2 => colorQ3
+        3 => colorQ4
+        => color.new(color.white, 100)
+
+// ==========================================
+// Drawing Logic
+// ==========================================
+var box qBox = na
+var label qLabel = na
+
+// Only create boxes/labels when time() is valid (non-na)
+if newQuarter and not na(currentTime)
+    if showBoxes
+        qBox := box.new(bar_index, high, bar_index, low,
+         bgcolor = getQuarterColor(quarterIndex),
+         border_color = color.new(color.white, 70),
+         border_style = line.style_dotted)
+
+    if showLabels
+        qLabel := label.new(bar_index, high,
+         text = sessionName(sessionIndex) + "\n" + quarterName(quarterIndex),
+         color = color.new(color.black, 100),
+         textcolor = textColor,
+         style = label.style_label_down,
+         size = size.small)
+
+// Update the current box and label to encompass the full range of the quarter
+if not na(qBox)
+    box.set_right(qBox, bar_index)
+    // Use math.max/min to expand the box
+    currentTop = box.get_top(qBox)
+    currentBottom = box.get_bottom(qBox)
+    box.set_top(qBox, math.max(high, currentTop))
+    box.set_bottom(qBox, math.min(low, currentBottom))
+
+    if not na(qLabel)
+        // Center label horizontally over the box
+        label.set_x(qLabel, math.floor((box.get_left(qBox) + bar_index) / 2))
+        label.set_y(qLabel, box.get_top(qBox))
