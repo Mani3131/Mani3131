@@ -68,7 +68,8 @@ if is_in_session
 //------------------------------------------------------------------------------
 // Plots
 //------------------------------------------------------------------------------
-plot_avg = plot(historical_avg, "Average Session Volume", color=color.new(color.gray, 50), style=plot.style_linebr, linestyle=plot.style_dotted)
+// Plot historical average as circles to simulate a dotted line (plot() does not support dotted styles directly)
+plot_avg = plot(historical_avg, "Average Session Volume", color=color.new(color.gray, 50), style=plot.style_circles)
 plot_cum = plot(cum_vol, "Current Session Volume", color=cum_vol > historical_avg ? bull_color : bear_color, style=plot.style_linebr, linewidth=2)
 
 fill(plot_cum, plot_avg, color = cum_vol > historical_avg ? color.new(bull_color, 80) : color.new(bear_color, 80), title = "Volume Difference Fill")
