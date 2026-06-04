@@ -9,15 +9,14 @@ indicator("Session Volume Moving Average [LuxAlgo]", shorttitle="LuxAlgo - SVMA"
 //------------------------------------------------------------------------------
 string session_str = input.session("0930-1600", "Session Time")
 string timezone    = input.string("America/New_York", "Timezone")
-int    ma_length   = input.int(10, "Historical MA Length (Sessions)", minval=1)
+int    ma_length   = input.int(10, "Historical MA Length (Sessions)", minval=1, maxval=60)
 
-group "Visuals"
-color  bull_color  = input.color(color.rgb(0, 255, 136), "Above Average Color")
-color  bear_color  = input.color(color.rgb(255, 68, 68), "Below Average Color")
-int    bar_offset  = input.int(20, "Heatmap Vertical Offset (Ticks)", minval=0)
-int    bar_height  = input.int(10, "Heatmap Height (Ticks)", minval=1)
-bool   show_vwap   = input.bool(true, "Show Session VWAP")
-bool   show_box    = input.bool(true, "Show Session Box")
+color  bull_color  = input.color(color.rgb(0, 255, 136), "Above Average Color", group="Visuals")
+color  bear_color  = input.color(color.rgb(255, 68, 68), "Below Average Color", group="Visuals")
+int    bar_offset  = input.int(20, "Heatmap Vertical Offset (Ticks)", minval=0, group="Visuals")
+int    bar_height  = input.int(10, "Heatmap Height (Ticks)", minval=1, group="Visuals")
+bool   show_vwap   = input.bool(true, "Show Session VWAP", group="Visuals")
+bool   show_box    = input.bool(true, "Show Session Box", group="Visuals")
 
 //------------------------------------------------------------------------------
 // Calculation Logic
@@ -140,15 +139,15 @@ if is_in_session
 
     box.new(bar_index - 1, bar_top, bar_index, bar_btm, border_color=color.na, bgcolor=heatmap_color)
 
-    // Session Name Label (e.g. New York)
+    // Session Name Label
     if is_new_session
-        session_lbl := label.new(bar_index, bar_top, "New York", style=label.style_label_down, color=color.new(color.black, 100), textcolor=color.gray, size=size.small)
+        session_lbl := label.new(bar_index, bar_top, "Session", style=label.style_label_down, color=color.new(color.black, 100), textcolor=color.gray, size=size.small)
 
     if not na(session_lbl)
-        label.set_xy(session_lbl, (session_start_bar + bar_index) / 2, bar_top)
+        label.set_xy(session_lbl, int(math.round((session_start_bar + bar_index) / 2)), bar_top)
 
     if not na(date_lbl)
         label.set_xy(date_lbl, session_start_bar, session_high)
 
 // Plots
-plot(show_vwap ? s_vwap : na, "Session VWAP", color=color.new(color.blue, 50), linewidth=2, style=plot.style_linebr)
+plot(show_vwap ? s_vwap : na, "Session Volume MA", color=color.new(color.blue, 50), linewidth=2, style=plot.style_linebr)
