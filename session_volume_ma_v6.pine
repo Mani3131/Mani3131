@@ -104,9 +104,9 @@ if is_new_session
     array.fill(vp_bins, 0.0)
 
 if is_in_session and show_vp
-    float range = session_high - session_low
-    if range > 0
-        int bin_idx = int(math.min(29, math.max(0, math.floor((close - session_low) / range * 30))))
+    float session_span = session_high - session_low
+    if session_span > 0
+        int bin_idx = int(math.min(29, math.max(0, math.floor((close - session_low) / session_span * 30))))
         array.set(vp_bins, bin_idx, array.get(vp_bins, bin_idx) + volume)
 
 //------------------------------------------------------------------------------
