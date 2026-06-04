@@ -1,0 +1,160 @@
+//@version=6
+strategy("Wadan - Aura of Midas Gold Strategy v6", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, currency=currency.USD)
+
+// ==========================================
+// User Inputs
+// ==========================================
+// Session Settings
+session_london = input.session("0800-1700:1234567", "London Session")
+session_ny     = input.session("1300-2200:1234567", "New York Session")
+tz             = input.string("UTC+3", "Timezone")
+
+// VDM Settings
+vdm_length     = input.int(14, "VDM Length", minval=1)
+vdm_z_length   = input.int(20, "Z-Score Length", minval=1)
+vdm_threshold  = input.float(1.5, "VDM Z-Score Threshold", step=0.1)
+
+// GRD Bands
+grd_ema_len    = input.int(50, "GRD Base EMA", minval=1)
+grd_mult       = input.float(1.618, "GRD Multiplier (Golden Ratio)", step=0.001)
+
+// Trend & Filters
+htf_timeframe  = input.timeframe("60", "HTF Trend Timeframe")
+htf_ema_len    = input.int(200, "HTF EMA Length")
+rsi_len        = input.int(14, "RSI Length")
+rsi_ob         = input.float(70, "RSI Overbought")
+rsi_os         = input.float(30, "RSI Oversold")
+vol_ma_len     = input.int(20, "Volume MA Length")
+wick_threshold = input.float(0.5, "Wick Rejection Ratio", minval=0, maxval=1)
+
+// Risk Management
+tp_atr_mult    = input.float(3.0, "Take Profit ATR Multiplier")
+sl_atr_mult    = input.float(1.5, "Stop Loss ATR Multiplier")
+atr_len        = input.int(14, "ATR Length")
+enable_be      = input.bool(true, "Enable Breakeven")
+be_trigger     = input.float(1.0, "Breakeven Trigger (R:R)")
+
+// ==========================================
+// Indicator Calculations
+// ==========================================
+// ATR
+atr = ta.atr(atr_len)
+
+// HTF Trend Filter (Non-repainting)
+htf_ema = request.security(syminfo.tickerid, htf_timeframe, ta.ema(close, htf_ema_len), lookahead=barmerge.lookahead_off)
+trend_bull = close > htf_ema
+trend_bear = close < htf_ema
+
+// Volatility-Decoupled Momentum (VDM)
+mom = close - close[1]
+vdm = mom / (ta.stdev(close, vdm_length) + 1e-9) // Volatility decoupling
+vdm_z = (vdm - ta.sma(vdm, vdm_z_length)) / (ta.stdev(vdm, vdm_z_length) + 1e-9)
+
+// Golden Ratio Displacement (GRD) Bands
+grd_ema = ta.ema(close, grd_ema_len)
+grd_upper = grd_ema + (atr * grd_mult)
+grd_lower = grd_ema - (atr * grd_mult)
+
+// RSI Filter
+rsi = ta.rsi(close, rsi_len)
+
+// Volume Confirmation
+vol_ma = ta.sma(volume, vol_ma_len)
+vol_conf = volume > vol_ma
+
+// Session Liquidity Capture (SLC)
+in_session(sess) => not na(time(timeframe.period, sess, tz))
+
+var float sess_high = na
+var float sess_low = na
+var bool sess_reset = false
+
+if in_session(session_london) or in_session(session_ny)
+    if not in_session(session_london)[1] and not in_session(session_ny)[1]
+        sess_high := high
+        sess_low := low
+        sess_reset := true
+    else
+        sess_high := math.max(high, sess_high)
+        sess_low := math.min(low, sess_low)
+        sess_reset := false
+else
+    sess_high := na
+    sess_low := na
+
+// Sweep Detection
+sweep_bull = low[1] < sess_low[2] and close[1] > sess_low[2] and not na(sess_low[2])
+sweep_bear = high[1] > sess_high[2] and close[1] < sess_high[2] and not na(sess_high[2])
+
+// Wick Rejection Quality
+wick_top = (high - math.max(open, close)) / (high - low + 1e-9)
+wick_bottom = (math.min(open, close) - low) / (high - low + 1e-9)
+wick_rej_bull = wick_bottom > wick_threshold
+wick_rej_bear = wick_top > wick_threshold
+
+// ==========================================
+// Strategy Logic (Entry)
+// ==========================================
+long_cond = sweep_bull and vdm_z > vdm_threshold and trend_bull and vol_conf and rsi < rsi_ob
+short_cond = sweep_bear and vdm_z < -vdm_threshold and trend_bear and vol_conf and rsi > rsi_os
+
+var float entry_price = na
+var float stop_loss = na
+var float take_profit = na
+
+if long_cond and strategy.position_size == 0
+    entry_price := close
+    stop_loss := close - (atr * sl_atr_mult)
+    take_profit := close + (atr * tp_atr_mult)
+    strategy.entry("Long", strategy.long, comment="Aura Long")
+
+if short_cond and strategy.position_size == 0
+    entry_price := close
+    stop_loss := close + (atr * sl_atr_mult)
+    take_profit := close - (atr * tp_atr_mult)
+    strategy.entry("Short", strategy.short, comment="Aura Short")
+
+// ==========================================
+// Risk Management (Exits)
+// ==========================================
+// Breakeven Logic
+if enable_be and strategy.position_size != 0
+    risk = math.abs(entry_price - stop_loss)
+    if strategy.position_size > 0 and high >= entry_price + (risk * be_trigger)
+        stop_loss := entry_price
+    if strategy.position_size < 0 and low <= entry_price - (risk * be_trigger)
+        stop_loss := entry_price
+
+// Exit Execution
+if strategy.position_size > 0
+    strategy.exit("Exit Long", "Long", stop=stop_loss, limit=take_profit, comment_loss="SL", comment_profit="TP")
+if strategy.position_size < 0
+    strategy.exit("Exit Short", "Short", stop=stop_loss, limit=take_profit, comment_loss="SL", comment_profit="TP")
+
+// Reset levels after trade
+if strategy.position_size == 0
+    entry_price := na
+    stop_loss := na
+    take_profit := na
+
+// ==========================================
+// Visuals
+// ==========================================
+plot(htf_ema, "HTF EMA", color.new(color.blue, 50), 2)
+plot(grd_upper, "GRD Upper", color.new(color.orange, 70))
+plot(grd_lower, "GRD Lower", color.new(color.orange, 70))
+
+plotshape(long_cond, "Long Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(short_cond, "Short Signal", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// Dashboard
+var table dash = table.new(position.top_right, 2, 4, color.black, color.gray, 1)
+if barstate.islast
+    table.cell(dash, 0, 0, "Aura Dashboard", text_color=color.white, text_halign=text.align_center)
+    table.merge_cells(dash, 0, 0, 1, 0)
+    table.cell(dash, 0, 1, "Trend", text_color=color.white)
+    table.cell(dash, 1, 1, trend_bull ? "BULLISH" : "BEARISH", bgcolor=trend_bull ? color.green : color.red)
+    table.cell(dash, 0, 2, "VDM Z-Score", text_color=color.white)
+    table.cell(dash, 1, 2, str.tostring(vdm_z, "#.##"), bgcolor=math.abs(vdm_z) > vdm_threshold ? color.yellow : color.gray)
+    table.cell(dash, 0, 3, "Session", text_color=color.white)
+    table.cell(dash, 1, 3, in_session(session_london) ? "London" : in_session(session_ny) ? "NY" : "None", bgcolor=color.aqua)
