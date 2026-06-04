@@ -26,11 +26,11 @@ type Zone
 var active_zones = array.new<Zone>()
 
 // --- Candle Classification ---
-float range = high - low
+float c_range = high - low
 float body = math.abs(close - open)
 float atr = ta.atr(atr_len)
 
-bool is_erc = range > 0 and body >= range * (body_perc_input / 100.0) and range >= atr * min_legout_atr
+bool is_erc = c_range > 0 and body >= c_range * (body_perc_input / 100.0) and c_range >= atr * min_legout_atr
 bool is_boring = not is_erc
 
 // --- Detection Logic ---
