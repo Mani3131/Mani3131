@@ -2,17 +2,22 @@
 // © LuxAlgo
 
 //@version=6
-indicator("Session Volume Moving Average [LuxAlgo]", shorttitle="LuxAlgo - SVMA", overlay=false, format=format.volume)
+indicator("Session Volume Moving Average [LuxAlgo]", shorttitle="LuxAlgo - SVMA", overlay=true, max_boxes_count=500)
 
 //------------------------------------------------------------------------------
 // Inputs
 //------------------------------------------------------------------------------
-int    ma_length  = input.int(10, "MA Length (Sessions)", minval=1)
 string session_str = input.session("0930-1600", "Session Time")
 string timezone    = input.string("America/New_York", "Timezone")
-color  bull_color  = input.color(color.rgb(0, 255, 255), "Above Average Color")
-color  bear_color  = input.color(color.rgb(128, 128, 128), "Below Average Color")
-bool   show_dash   = input.bool(true, "Show Dashboard")
+int    ma_length   = input.int(10, "Historical MA Length (Sessions)", minval=1)
+
+group "Visuals"
+color  bull_color  = input.color(color.rgb(0, 255, 136), "Above Average Color")
+color  bear_color  = input.color(color.rgb(255, 68, 68), "Below Average Color")
+int    bar_offset  = input.int(20, "Heatmap Vertical Offset (Ticks)", minval=0)
+int    bar_height  = input.int(10, "Heatmap Height (Ticks)", minval=1)
+bool   show_vwap   = input.bool(true, "Show Session VWAP")
+bool   show_box    = input.bool(true, "Show Session Box")
 
 //------------------------------------------------------------------------------
 // Calculation Logic
@@ -20,6 +25,7 @@ bool   show_dash   = input.bool(true, "Show Dashboard")
 // Detect session status
 bool is_in_session = not na(time(timeframe.period, session_str, timezone))
 bool is_new_session = is_in_session and not is_in_session[1]
+bool is_session_end = not is_in_session and is_in_session[1]
 
 // Cumulative Volume calculation
 var float cum_vol = 0.0
@@ -33,27 +39,21 @@ else
 // Time-based Indexing (Minute of the day)
 int minute_index = hour(time, timezone) * 60 + minute(time, timezone)
 
-// Historical Average Calculation
-// We use a matrix to store cumulative volume for the last 'ma_length' sessions
-// Rows: Minute of the day (0-1439)
-// Columns: Session values (0 to ma_length - 1)
+// Historical Average Calculation (Matrix-based)
+// Rows: Minute of the day (0-1439), Columns: Session values
 var matrix<float> history = matrix.new<float>(1440, ma_length, 0.0)
 var int current_col = 0
 
-// Detect end of session to rotate column
-if not is_in_session and is_in_session[1]
+if is_session_end
     current_col := (current_col + 1) % ma_length
 
-// Calculate Average from previous sessions (excluding current_col)
 float historical_sum = 0.0
 int valid_sessions = 0
 
 if is_in_session
     for i = 0 to ma_length - 1
-        // Skip the current session's column to get a true historical average
         if i == current_col
             continue
-
         float val = history.get(minute_index, i)
         if val > 0
             historical_sum += val
@@ -65,31 +65,90 @@ float historical_avg = valid_sessions > 0 ? historical_sum / valid_sessions : na
 if is_in_session
     history.set(minute_index, current_col, cum_vol)
 
+// Session VWAP calculation
+var float vwap_sum_pv = 0.0
+var float vwap_sum_v = 0.0
+if is_new_session
+    vwap_sum_pv := (high + low + close) / 3 * volume
+    vwap_sum_v := volume
+else if is_in_session
+    vwap_sum_pv += (high + low + close) / 3 * volume
+    vwap_sum_v += volume
+
+float s_vwap = vwap_sum_v > 0 ? vwap_sum_pv / vwap_sum_v : na
+
+// Session Range
+var float session_high = 0.0
+var float session_low = 0.0
+var int session_start_bar = 0
+if is_new_session
+    session_high := high
+    session_low := low
+    session_start_bar := bar_index
+else if is_in_session
+    session_high := math.max(session_high, high)
+    session_low := math.min(session_low, low)
+
+// Relative Volume for Heatmap
+float rel_vol = historical_avg > 0 ? cum_vol / historical_avg : 1.0
+color heatmap_color = color.from_gradient(rel_vol, 0.5, 1.5, bear_color, bull_color)
+
 //------------------------------------------------------------------------------
+// Helper Functions
+//------------------------------------------------------------------------------
+get_month_name(m) =>
+    switch m
+        1 => "Jan"
+        2 => "Feb"
+        3 => "Mar"
+        4 => "Apr"
+        5 => "May"
+        6 => "Jun"
+        7 => "Jul"
+        8 => "Aug"
+        9 => "Sep"
+        10 => "Oct"
+        11 => "Nov"
+        12 => "Dec"
+        => ""
+
+//------------------------------------------------------------------------------
+// Drawings
+//------------------------------------------------------------------------------
+var box session_rect = na
+var label session_lbl = na
+var label date_lbl = na
+
+if is_new_session
+    if show_box
+        session_rect := box.new(bar_index, high, bar_index, low, border_style=line.style_dotted, border_color=color.new(color.gray, 50), bgcolor=color.new(color.gray, 95))
+
+    // Date Label (e.g. Dec: 5)
+    string date_str = str.format("{0}: {1}", get_month_name(month(time, timezone)), dayofmonth(time, timezone))
+    date_lbl := label.new(bar_index, high, date_str, style=label.style_label_down, color=color.new(color.black, 100), textcolor=color.gray, size=size.small, textalign=text.align_left)
+
+if is_in_session
+    // Update session box
+    if not na(session_rect)
+        box.set_right(session_rect, bar_index)
+        box.set_top(session_rect, session_high)
+        box.set_bottom(session_rect, session_low)
+
+    // Create new heatmap segment for current bar
+    float bar_top = session_high + syminfo.mintick * (bar_offset + bar_height)
+    float bar_btm = session_high + syminfo.mintick * bar_offset
+
+    box.new(bar_index - 1, bar_top, bar_index, bar_btm, border_color=color.na, bgcolor=heatmap_color)
+
+    // Session Name Label (e.g. New York)
+    if is_new_session
+        session_lbl := label.new(bar_index, bar_top, "New York", style=label.style_label_down, color=color.new(color.black, 100), textcolor=color.gray, size=size.small)
+
+    if not na(session_lbl)
+        label.set_xy(session_lbl, (session_start_bar + bar_index) / 2, bar_top)
+
+    if not na(date_lbl)
+        label.set_xy(date_lbl, session_start_bar, session_high)
+
 // Plots
-//------------------------------------------------------------------------------
-// Plot historical average as circles to simulate a dotted line (plot() does not support dotted styles directly)
-plot_avg = plot(historical_avg, "Average Session Volume", color=color.new(color.gray, 50), style=plot.style_circles)
-plot_cum = plot(cum_vol, "Current Session Volume", color=cum_vol > historical_avg ? bull_color : bear_color, style=plot.style_linebr, linewidth=2)
-
-fill(plot_cum, plot_avg, color = cum_vol > historical_avg ? color.new(bull_color, 80) : color.new(bear_color, 80), title = "Volume Difference Fill")
-
-//------------------------------------------------------------------------------
-// Dashboard
-//------------------------------------------------------------------------------
-var table dash = table.new(position.top_right, 2, 4, bgcolor=color.new(color.black, 10), border_width=1, border_color=color.new(color.gray, 50))
-
-if show_dash and barstate.islast
-    float rel_vol = historical_avg > 0 ? (cum_vol / historical_avg) * 100 : 0.0
-
-    table.cell(dash, 0, 0, "Session Status", text_color=color.white, text_halign=text.align_left)
-    table.cell(dash, 1, 0, is_in_session ? "ACTIVE" : "INACTIVE", text_color=is_in_session ? bull_color : color.gray, text_halign=text.align_right)
-
-    table.cell(dash, 0, 1, "Total Volume", text_color=color.white, text_halign=text.align_left)
-    table.cell(dash, 1, 1, str.format("{0,number,#}", cum_vol), text_color=color.white, text_halign=text.align_right)
-
-    table.cell(dash, 0, 2, "Avg Volume", text_color=color.white, text_halign=text.align_left)
-    table.cell(dash, 1, 2, str.format("{0,number,#}", historical_avg), text_color=color.white, text_halign=text.align_right)
-
-    table.cell(dash, 0, 3, "Rel. Volume", text_color=color.white, text_halign=text.align_left)
-    table.cell(dash, 1, 3, str.format("{0,number,0.0}%", rel_vol), text_color=rel_vol > 100 ? bull_color : color.white, text_halign=text.align_right)
+plot(show_vwap ? s_vwap : na, "Session VWAP", color=color.new(color.blue, 50), linewidth=2, style=plot.style_linebr)
