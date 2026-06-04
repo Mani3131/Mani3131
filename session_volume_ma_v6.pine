@@ -137,7 +137,7 @@ if is_in_session
     float bar_top = session_high + syminfo.mintick * (bar_offset + bar_height)
     float bar_btm = session_high + syminfo.mintick * bar_offset
 
-    box.new(bar_index - 1, bar_top, bar_index, bar_btm, border_color=color.na, bgcolor=heatmap_color)
+    box.new(bar_index - 1, bar_top, bar_index, bar_btm, border_color=na, bgcolor=heatmap_color)
 
     // Session Name Label
     if is_new_session
