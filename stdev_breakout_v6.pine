@@ -1,0 +1,23 @@
+// @version=6
+indicator("Standard Deviation Breakout", overlay=false)
+
+// --- Inputs ---
+stdev_len = input.int(20, "Stdev Length", minval=1)
+sma_len = input.int(20, "SMA Length", minval=1)
+
+// --- Calculations ---
+stdev_val = ta.stdev(close, stdev_len)
+stdev_sma = ta.sma(stdev_val, sma_len)
+
+// --- Logic ---
+is_expanding = stdev_val > stdev_sma
+
+// --- Plots ---
+plot_color = is_expanding ? color.aqua : color.gray
+plot(stdev_val, "Standard Deviation", color=plot_color, linewidth=2)
+plot(stdev_sma, "Stdev SMA", color=color.new(color.orange, 50), linewidth=1)
+
+// Fill for visual clarity
+p1 = plot(stdev_val, "Stdev Plot", color=color.new(color.white, 100))
+p2 = plot(stdev_sma, "SMA Plot", color=color.new(color.white, 100))
+fill(p1, p2, is_expanding ? color.new(color.aqua, 90) : color.new(color.gray, 90))
