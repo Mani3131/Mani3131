@@ -1,0 +1,87 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Esther Mofrey OPT Strategy", overlay=true, max_labels_count=500, max_boxes_count=500)
+
+// --- Inputs ---
+htf_tf = input.timeframe("240", "Higher Timeframe (HTF)")
+pivot_lookback = input.int(5, "Pivot Lookback", minval=1)
+double_tap_threshold = input.float(0.1, "Double Tap Price Threshold (%)", step=0.01) / 100
+show_wbb = input.bool(true, "Show WBB Confirmation")
+
+// --- Functions ---
+is_wick_rejection(is_bull) =>
+    body = math.abs(close - open)
+    total_range = high - low
+    result = false
+    if is_bull
+        low_wick = math.min(open, close) - low
+        result := low_wick > body * 1.2 and low_wick > total_range * 0.3
+    else
+        high_wick = high - math.max(open, close)
+        result := high_wick > body * 1.2 and high_wick > total_range * 0.3
+    result
+
+// --- HTF Data Fetch (Non-repainting) ---
+htf_high = request.security(syminfo.tickerid, htf_tf, high[1], lookahead=barmerge.lookahead_off)
+htf_low  = request.security(syminfo.tickerid, htf_tf, low[1], lookahead=barmerge.lookahead_off)
+
+// --- Pivot Logic (Using HTF context conceptually) ---
+var float last_ph = na
+var float last_pl = na
+var int last_ph_bar = na
+var int last_pl_bar = na
+
+ph = ta.pivothigh(high, pivot_lookback, pivot_lookback)
+pl = ta.pivotlow(low, pivot_lookback, pivot_lookback)
+
+if not na(ph)
+    last_ph := ph
+    last_ph_bar := bar_index - pivot_lookback
+if not na(pl)
+    last_pl := pl
+    last_pl_bar := bar_index - pivot_lookback
+
+// --- Pattern Detection ---
+// Double Top: Current high is near last pivot high
+is_double_top = not na(last_ph) and high > last_ph * (1 - double_tap_threshold) and high < last_ph * (1 + double_tap_threshold) and bar_index > last_ph_bar + pivot_lookback * 2
+
+// Double Bottom: Current low is near last pivot low
+is_double_bottom = not na(last_pl) and low > last_pl * (1 - double_tap_threshold) and low < last_pl * (1 + double_tap_threshold) and bar_index > last_pl_bar + pivot_lookback * 2
+
+// --- WBB Confirmation ---
+// Wick: Rejection check
+// Body: Momentum candle check (Engulfing or strong close)
+// Break: Close beyond previous candle's extreme
+wbb_bull = is_wick_rejection(true)[1] and close > open and close > high[1] and is_double_bottom
+wbb_bear = is_wick_rejection(false)[1] and close < open and close < low[1] and is_double_top
+
+// --- Visuals ---
+plotshape(wbb_bull, title="BUY Signal", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text="BUY (OPT)")
+plotshape(wbb_bear, title="SELL Signal", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text="SELL (OPT)")
+
+// Visualization of Pivot Levels
+var line ph_line = na
+var line pl_line = na
+
+if not na(ph)
+    ph_line := line.new(bar_index[pivot_lookback], ph, bar_index, ph, color=color.new(color.red, 50), style=line.style_dashed, width=1)
+    line.delete(ph_line[1])
+if not na(pl)
+    pl_line := line.new(bar_index[pivot_lookback], pl, bar_index, pl, color=color.new(color.green, 50), style=line.style_dashed, width=1)
+    line.delete(pl_line[1])
+
+// --- Dashboard ---
+var table status_table = table.new(position.top_right, 2, 3, border_width=1)
+if barstate.islast
+    table.cell(status_table, 0, 0, "OPT Strategy", text_color=color.white, bgcolor=color.gray)
+    table.cell(status_table, 1, 0, "Status", text_color=color.white, bgcolor=color.gray)
+
+    table.cell(status_table, 0, 1, "HTF Trend", text_color=color.white)
+    htf_trend_color = htf_high > htf_high[1] ? color.green : color.red
+    table.cell(status_table, 1, 1, htf_high > htf_high[1] ? "BULLISH" : "BEARISH", bgcolor=htf_trend_color)
+
+    table.cell(status_table, 0, 2, "Pattern", text_color=color.white)
+    pattern_status = is_double_top ? "Double Top" : is_double_bottom ? "Double Bottom" : "Searching..."
+    table.cell(status_table, 1, 2, pattern_status)
