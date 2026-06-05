@@ -2,7 +2,7 @@
 // © Mani3131
 
 //@version=6
-indicator("Big Boss Quarterly Volume [LuxAlgo] Clone", overlay = true, max_boxes_count = 5000, max_lines_count = 500, format = format.volume)
+indicator("Big Boss Quarterly Volume [LuxAlgo] Clone", overlay = true, max_boxes_count = 500, max_lines_count = 500, format = format.volume)
 
 // --- Inputs ---
 group_session = "Quarterly Settings"
@@ -124,35 +124,19 @@ if show_box
         label.set_xy(q_label, int(math.avg(box.get_left(q_box), bar_index)), box.get_top(q_box))
 
 // --- Visuals: Gradient Heatmap (Who is in Command) ---
-if show_gradient and is_in_session
-    // Gradient to show who is in command (Bulls vs Bears)
-    // Intensity based on relative volume
-    float relative_vol_ratio = svma > 0 ? math.min(1.0, cum_vol / (svma * 1.5)) : 0.5
-    color cmd_color = cum_delta > 0 ? color.green : color.red
-    color heatmap_color = color.new(cmd_color, 100 - int(relative_vol_ratio * 100))
+// Using plot instead of boxes for historical sustainability
+// We plot a series of lines/shapes at the top
+float heatmap_relative_vol = svma > 0 ? math.min(1.0, cum_vol / (svma * 1.5)) : 0.5
+color heatmap_cmd_color = cum_delta > 0 ? color.green : color.red
+color heatmap_color = color.new(heatmap_cmd_color, 100 - int(heatmap_relative_vol * 100))
 
-    // Fixed vertical position at the top of the chart (using a large offset or constant)
-    // To make it look like a bar at the very top, we can use chart.top if available in v6?
-    // Not directly for boxes. We'll use a very high price offset.
-    float top_pos = ta.highest(high, 500) + (atr_val * 10)
-
-    // Create a new box for each bar to show history of who is in command
-    box.new(bar_index, top_pos, bar_index, top_pos - (atr_val * 1.5),
-             border_color = na,
-             bgcolor = heatmap_color)
+// Position at the very top using a high offset
+float heatmap_top_pos = ta.highest(high, 500) + (atr_val * 15)
+plot(show_gradient and is_in_session ? heatmap_top_pos : na, "Gradient Bar Top", color = heatmap_color, style = plot.style_linebr, linewidth = 10)
 
 // --- Visuals: Quarterly Volume Delta Histogram ---
-// Drawing histogram inside the quarterly box at the bottom
-if is_in_session
-    float hist_height = atr_val * 3
-    float hist_base = q_box.get_bottom()
-    // Using a more stable scaling: 50-bar SMA of volume to define "large" delta
-    float vol_avg = ta.sma(volume, 50)
-    float scaled_delta = vol_avg > 0 ? (bar_delta / vol_avg) * (hist_height / 2) : 0
-
-    box.new(bar_index, hist_base + scaled_delta, bar_index, hist_base,
-             border_color = na,
-             bgcolor = bar_delta > 0 ? color.new(color.green, 50) : color.new(color.red, 50))
+// Using plot instead of boxes for better performance and visibility
+plot(is_in_session ? bar_delta : na, "Volume Delta Histogram", color = bar_delta > 0 ? color.new(color.green, 50) : color.new(color.red, 50), style = plot.style_columns, histbase = 0)
 
 // --- Anchored VWAP ---
 var float vwap_sum_pv = 0.0
@@ -167,48 +151,69 @@ else if is_in_session
 plot_vwap = vwap_sum_v > 0 ? vwap_sum_pv / vwap_sum_v : na
 plot(is_in_session ? plot_vwap : na, "Session VWAP", color = color.yellow, linewidth = 2)
 
-// --- Visuals: Session Volume Profile ---
-// We'll use a higher resolution: 40 bins for the current session.
+// --- Plot SVMA ---
+// Since SVMA is volume-based cumulative average, we plot it relative to current cumulative volume
+// or normalized. The user asked for "moving average that has volume inside".
+// We will plot the SVMA line.
+plot(is_in_session ? svma : na, "Session Volume MA", color = color.new(color.aqua, 50), style = plot.style_linebr, linewidth = 1)
+
+// --- Visuals: Quarterly Volume Profile ---
+// We'll use 40 bins and store bar data to recalculate accurately
 int num_bins = 40
-var float[] bin_volumes = array.new_float(num_bins, 0.0)
-var box[] bin_boxes = array.new_box(num_bins, na)
-var float session_high = 0.0
-var float session_low = 0.0
+var float[] quarter_highs = array.new_float(0)
+var float[] quarter_lows = array.new_float(0)
+var float[] quarter_vols = array.new_float(0)
+var box[] bin_boxes = array.new_box(0)
 
 if show_profile and is_in_session
     if new_quarter
-        array.fill(bin_volumes, 0.0)
-        session_high := high
-        session_low := low
+        array.clear(quarter_highs)
+        array.clear(quarter_lows)
+        array.clear(quarter_vols)
+        // We keep previous boxes until they hit max count naturally
+        array.clear(bin_boxes)
         for i = 0 to num_bins - 1
-            if not na(bin_boxes.get(i))
-                box.delete(bin_boxes.get(i))
-            bin_boxes.set(i, box.new(bar_index, high, bar_index, low, border_color = na, bgcolor = color.new(color.aqua, 70)))
-    else if is_in_session
-        session_high := math.max(session_high, high)
-        session_low := math.min(session_low, low)
-        float bin_size = (session_high - session_low) / num_bins
+            array.push(bin_boxes, box.new(bar_index, high, bar_index, low, border_color = na, bgcolor = color.new(color.aqua, 50)))
 
-        if bin_size > 0
-            // Distribute volume to bins
-            int bin_idx = math.min(num_bins - 1, math.max(0, int((close - session_low) / bin_size)))
-            bin_volumes.set(bin_idx, bin_volumes.get(bin_idx) + volume)
+    // Store bar data
+    array.push(quarter_highs, high)
+    array.push(quarter_lows, low)
+    array.push(quarter_vols, volume)
 
-            float max_bin_vol = array.max(bin_volumes)
-            int session_start_bar = bar_index - session_bar_index
+    float q_high = array.max(quarter_highs)
+    float q_low = array.min(quarter_lows)
+    float bin_size = (q_high - q_low) / num_bins
 
-            for i = 0 to num_bins - 1
-                float bin_vol = bin_volumes.get(i)
-                float bin_top = session_low + (i + 1) * bin_size
-                float bin_bottom = session_low + i * bin_size
-                float vol_ratio = max_bin_vol > 0 ? bin_vol / max_bin_vol : 0
+    if bin_size > 0
+        float[] current_bins = array.new_float(num_bins, 0.0)
+        for i = 0 to array.size(quarter_vols) - 1
+            float b_high = array.get(quarter_highs, i)
+            float b_low = array.get(quarter_lows, i)
+            float b_vol = array.get(quarter_vols, i)
+            // Distribute volume across bins hit by the bar
+            int start_bin = int((b_low - q_low) / bin_size)
+            int end_bin = int((b_high - q_low) / bin_size)
+            start_bin := math.max(0, math.min(num_bins - 1, start_bin))
+            end_bin := math.max(0, math.min(num_bins - 1, end_bin))
+            int span = end_bin - start_bin + 1
+            float vol_per_bin = b_vol / span
+            for j = start_bin to end_bin
+                array.set(current_bins, j, array.get(current_bins, j) + vol_per_bin)
 
-                // Draw profile on the right side of the session
-                int box_right = bar_index
-                int box_left = int(math.max(box.get_left(q_box), bar_index - (session_bar_index * vol_ratio * 0.5))) // Width up to 50% of session width
+        float max_bin_vol = array.max(current_bins)
+        int q_start_bar = bar_index - session_bar_index
 
-                box.set_lefttop(bin_boxes.get(i), box_left, bin_top)
-                box.set_rightbottom(bin_boxes.get(i), box_right, bin_bottom)
+        for i = 0 to num_bins - 1
+            float bin_vol = array.get(current_bins, i)
+            float bin_top = q_low + (i + 1) * bin_size
+            float bin_bottom = q_low + i * bin_size
+            float vol_ratio = max_bin_vol > 0 ? bin_vol / max_bin_vol : 0
+
+            int box_right = bar_index
+            int box_left = int(math.max(q_start_bar, bar_index - (session_bar_index * vol_ratio * 0.7)))
+
+            box.set_lefttop(array.get(bin_boxes, i), box_left, bin_top)
+            box.set_rightbottom(array.get(bin_boxes, i), box_right, bin_bottom)
 
 // --- Visuals: 'Who is in Command' Table ---
 var table command_table = table.new(position.top_right, 2, 3, border_width = 1)
