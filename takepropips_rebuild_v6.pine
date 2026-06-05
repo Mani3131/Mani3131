@@ -47,15 +47,15 @@ type Trade
     bool  active
     int   start_bar
 
-var active_trade = Trade(na, na, na, na, na, na, false, na)
+var active_trade = Trade.new(na, na, na, na, na, na, false, na)
 
 if long_signal and not active_trade.active
     sl_dist = atr * atr_mult
-    active_trade := Trade(close, close - sl_dist, close + sl_dist * tp1_rr, close + sl_dist * tp2_rr, close + sl_dist * tp3_rr, 1, true, bar_index)
+    active_trade := Trade.new(close, close - sl_dist, close + sl_dist * tp1_rr, close + sl_dist * tp2_rr, close + sl_dist * tp3_rr, 1, true, bar_index)
 
 if short_signal and not active_trade.active
     sl_dist = atr * atr_mult
-    active_trade := Trade(close, close + sl_dist, close - sl_dist * tp1_rr, close - sl_dist * tp2_rr, close - sl_dist * tp3_rr, -1, true, bar_index)
+    active_trade := Trade.new(close, close + sl_dist, close - sl_dist * tp1_rr, close - sl_dist * tp2_rr, close - sl_dist * tp3_rr, -1, true, bar_index)
 
 // --- STATISTICS TRACKING ---
 var int total_signals = 0
@@ -124,10 +124,15 @@ if show_dashboard and barstate.islast
     table.cell(main_table, 0, 2, sig_text + ": " + str.tostring(active_trade.active ? active_trade.entry : close, "#.#####"), text_color = sig_color, text_size = size.small, text_halign = text.align_left)
 
     // TP/SL Levels
-    table.cell(main_table, 0, 3, "TP1:  " + str.tostring(active_trade.tp1, "#.#####") + (tp1_hit ? " ✅" : " ⚪"), text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(main_table, 0, 4, "TP2:  " + str.tostring(active_trade.tp2, "#.#####") + (tp2_hit ? " ✅" : " ⚪"), text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(main_table, 0, 5, "TP3:  " + str.tostring(active_trade.tp3, "#.#####") + (tp3_hit ? " ✅" : " ⚪"), text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(main_table, 0, 6, "SL:   " + str.tostring(active_trade.sl, "#.#####"), text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    tp1_str = not na(active_trade.tp1) ? str.tostring(active_trade.tp1, "#.#####") : "---"
+    tp2_str = not na(active_trade.tp2) ? str.tostring(active_trade.tp2, "#.#####") : "---"
+    tp3_str = not na(active_trade.tp3) ? str.tostring(active_trade.tp3, "#.#####") : "---"
+    sl_str  = not na(active_trade.sl)  ? str.tostring(active_trade.sl, "#.#####")  : "---"
+
+    table.cell(main_table, 0, 3, "TP1:  " + tp1_str + (tp1_hit ? " ✅" : " ⚪"), text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(main_table, 0, 4, "TP2:  " + tp2_str + (tp2_hit ? " ✅" : " ⚪"), text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(main_table, 0, 5, "TP3:  " + tp3_str + (tp3_hit ? " ✅" : " ⚪"), text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(main_table, 0, 6, "SL:   " + sl_str, text_color = color.white, text_size = size.small, text_halign = text.align_left)
 
     // Stats
     success_rate = total_signals > 0 ? (float(wins) / total_signals) * 100 : 0
@@ -160,9 +165,10 @@ if (long_signal or short_signal) and barstate.isconfirmed
     l_sl  := line.new(bar_index, active_trade.sl,  bar_index + 10, active_trade.sl,  color = color.new(color.red, 30),  style = line.style_dotted)
 
 // Dynamic labels for TP hits (simulating the +105, +211 in image)
-if tp1_hit and not tp1_hit[1]
-    label.new(bar_index, active_trade.tp1, "+TP1", color = color.green, textcolor = color.white, style = label.style_label_down, size = size.tiny)
-if tp2_hit and not tp2_hit[1]
-    label.new(bar_index, active_trade.tp2, "+TP2", color = color.green, textcolor = color.white, style = label.style_label_down, size = size.tiny)
-if tp3_hit and not tp3_hit[1]
-    label.new(bar_index, active_trade.tp3, "+TP3", color = color.green, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+if barstate.isconfirmed
+    if tp1_hit and not tp1_hit[1]
+        label.new(bar_index, active_trade.tp1, "+TP1", color = color.green, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+    if tp2_hit and not tp2_hit[1]
+        label.new(bar_index, active_trade.tp2, "+TP2", color = color.green, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+    if tp3_hit and not tp3_hit[1]
+        label.new(bar_index, active_trade.tp3, "+TP3", color = color.green, textcolor = color.white, style = label.style_label_down, size = size.tiny)
