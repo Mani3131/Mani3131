@@ -150,7 +150,7 @@ if barstate.isconfirmed and leg_out_valid
 // --- Zone Management and Drawing ---
 process_zones(Zone[] zones) =>
     if zones.size() > 0
-        for i = zones.size() - 1 to 0 by -1
+        for i = 0 to zones.size() - 1
             Zone z = zones.get(i)
             if not z.is_mitigated
                 // Update box end
