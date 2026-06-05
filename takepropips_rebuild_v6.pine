@@ -115,13 +115,13 @@ var main_table = table.new(table_pos, 10, 15, bgcolor = color.rgb(13, 17, 23), b
 
 if show_dashboard and barstate.islast
     // Header
-    table.cell(main_table, 0, 0, "Trade Signals", text_color = color.white, text_size = size.medium, text_halign = text.align_left)
-    table.cell(main_table, 0, 1, str.format("{0} {1}", syminfo.ticker, timeframe.period), text_color = color.aqua, text_size = size.small, text_halign = text.align_left)
+    table.cell(main_table, 0, 0, "Trade Signals", text_color = color.white, text_size = size.large, text_halign = text.align_left)
+    table.cell(main_table, 0, 1, str.format("{0} {1}", syminfo.ticker, timeframe.period), text_color = color.aqua, text_size = size.normal, text_halign = text.align_left)
 
     // Signal Status
     sig_text = long_signal ? "BUY" : short_signal ? "SELL" : active_trade.active ? (active_trade.direction == 1 ? "BUY" : "SELL") : "WAIT"
     sig_color = (sig_text == "BUY") ? color.green : (sig_text == "SELL") ? color.red : color.gray
-    table.cell(main_table, 0, 2, sig_text + ": " + str.tostring(active_trade.active ? active_trade.entry : close, "#.#####"), text_color = sig_color, text_size = size.small, text_halign = text.align_left)
+    table.cell(main_table, 0, 2, sig_text + ": " + str.tostring(active_trade.active ? active_trade.entry : close, "#.#####"), text_color = sig_color, text_size = size.normal, text_halign = text.align_left)
 
     // TP/SL Levels
     tp1_str = not na(active_trade.tp1) ? str.tostring(active_trade.tp1, "#.#####") : "---"
@@ -129,17 +129,17 @@ if show_dashboard and barstate.islast
     tp3_str = not na(active_trade.tp3) ? str.tostring(active_trade.tp3, "#.#####") : "---"
     sl_str  = not na(active_trade.sl)  ? str.tostring(active_trade.sl, "#.#####")  : "---"
 
-    table.cell(main_table, 0, 3, "TP1:  " + tp1_str + (tp1_hit ? " ✅" : " ⚪"), text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(main_table, 0, 4, "TP2:  " + tp2_str + (tp2_hit ? " ✅" : " ⚪"), text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(main_table, 0, 5, "TP3:  " + tp3_str + (tp3_hit ? " ✅" : " ⚪"), text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(main_table, 0, 6, "SL:   " + sl_str, text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(main_table, 0, 3, "TP1:  " + tp1_str + (tp1_hit ? " ✅" : " ⚪"), text_color = color.white, text_size = size.normal, text_halign = text.align_left)
+    table.cell(main_table, 0, 4, "TP2:  " + tp2_str + (tp2_hit ? " ✅" : " ⚪"), text_color = color.white, text_size = size.normal, text_halign = text.align_left)
+    table.cell(main_table, 0, 5, "TP3:  " + tp3_str + (tp3_hit ? " ✅" : " ⚪"), text_color = color.white, text_size = size.normal, text_halign = text.align_left)
+    table.cell(main_table, 0, 6, "SL:   " + sl_str, text_color = color.white, text_size = size.normal, text_halign = text.align_left)
 
     // Stats
     success_rate = total_signals > 0 ? (float(wins) / total_signals) * 100 : 0
-    table.cell(main_table, 0, 8, "Total Signals:  " + str.tostring(total_signals), text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(main_table, 0, 9, "Win / Loss:  " + str.tostring(wins) + " / " + str.tostring(losses), text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(main_table, 0, 10, "Profit:  " + str.tostring(total_points, "#") + " Points", text_color = total_points >= 0 ? color.green : color.red, text_size = size.small, text_halign = text.align_left)
-    table.cell(main_table, 0, 11, "Success Rate:  " + str.tostring(success_rate, "#") + "%", text_color = success_rate >= 70 ? color.green : color.orange, text_size = size.small, text_halign = text.align_left)
+    table.cell(main_table, 0, 8, "Total Signals:  " + str.tostring(total_signals), text_color = color.white, text_size = size.normal, text_halign = text.align_left)
+    table.cell(main_table, 0, 9, "Win / Loss:  " + str.tostring(wins) + " / " + str.tostring(losses), text_color = color.white, text_size = size.normal, text_halign = text.align_left)
+    table.cell(main_table, 0, 10, "Profit:  " + str.tostring(total_points, "#") + " Points", text_color = total_points >= 0 ? color.green : color.red, text_size = size.normal, text_halign = text.align_left)
+    table.cell(main_table, 0, 11, "Success Rate:  " + str.tostring(success_rate, "#") + "%", text_color = success_rate >= 70 ? color.green : color.orange, text_size = size.normal, text_halign = text.align_left)
 
     table.cell(main_table, 0, 13, "© 2021-2024, TakePropips", text_color = color.gray, text_size = size.tiny, text_halign = text.align_left)
 
