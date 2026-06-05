@@ -51,9 +51,9 @@ var Zone[] supply_zones = array.new<Zone>()
 float ph = ta.pivothigh(high, pivot_len, pivot_len)
 float pl = ta.pivotlow(low, pivot_len, pivot_len)
 
-var float last_ph = na
-var float last_pl = na
-var bool is_uptrend = na
+var last_ph = float(na)
+var last_pl = float(na)
+var is_uptrend = bool(na)
 
 if not na(ph)
     is_uptrend := ph > last_ph ? true : (ph < last_ph ? false : is_uptrend)
