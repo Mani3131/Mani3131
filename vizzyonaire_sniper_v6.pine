@@ -7,6 +7,7 @@ indicator("Vizzyonaire Sniper Indicator", "Viz Sniper", overlay = true, max_labe
 // --- Inputs ---
 group_signals = "Signal Settings"
 sensitivity = input.int(2, "Signal Sensitivity", minval = 1, maxval = 5, group = group_signals)
+cleanup_on_tp = input.bool(true, "Cleanup Signals After TP", group = group_signals)
 
 group_visuals = "Visual Settings"
 show_watermark = input.bool(true, "Show Watermark", group = group_visuals)
@@ -83,14 +84,63 @@ if is_leg_out_bear and barstate.isconfirmed
 bool signal_long  = is_dbr
 bool signal_short = is_rbd
 
+// --- Active Trade Tracking ---
+var float active_sl  = na
+var float active_tp1 = na
+var float active_tp2 = na
+var float active_tp3 = na
+var int   active_dir = 0 // 1 for Long, -1 for Short
+
+var label[] active_labels = array.new_label()
+var line[]  active_lines  = array.new_line()
+
+// Helper to clear active drawings
+clear_drawings() =>
+    if array.size(active_labels) > 0
+        for i = 0 to array.size(active_labels) - 1
+            label.delete(array.get(active_labels, i))
+        array.clear(active_labels)
+    if array.size(active_lines) > 0
+        for i = 0 to array.size(active_lines) - 1
+            line.delete(array.get(active_lines, i))
+        array.clear(active_lines)
+
+// Monitor active trade
+if cleanup_on_tp and active_dir != 0
+    tp_hit = (active_dir == 1 and high >= active_tp1) or (active_dir == -1 and low <= active_tp1)
+    sl_hit = (active_dir == 1 and low <= active_sl) or (active_dir == -1 and high >= active_sl)
+
+    if tp_hit or sl_hit
+        clear_drawings()
+        active_dir := 0
+        active_sl  := na
+        active_tp1 := na
+        active_tp2 := na
+        active_tp3 := na
+
 // --- Signal Labels ---
 if signal_long and barstate.isconfirmed
-    label.new(bar_index, low, "SNIPER LONG", color = long_col, textcolor = color.white, style = label.style_label_up, yloc = yloc.belowbar)
-    line.new(bar_index, low, bar_index, high, color = color.new(color.yellow, 50), style = line.style_dashed, extend = extend.both)
+    // Reset previous if needed (optional, here we only allow one active signal for cleanup)
+    if cleanup_on_tp
+        clear_drawings()
+
+    lbl = label.new(bar_index, low, "SNIPER LONG", color = long_col, textcolor = color.white, style = label.style_label_up, yloc = yloc.belowbar)
+    vln = line.new(bar_index, low, bar_index, high, color = color.new(color.yellow, 50), style = line.style_dashed, extend = extend.both)
+
+    if cleanup_on_tp
+        array.push(active_labels, lbl)
+        array.push(active_lines, vln)
 
 if signal_short and barstate.isconfirmed
-    label.new(bar_index, high, "SNIPER SHORT", color = short_col, textcolor = color.white, style = label.style_label_down, yloc = yloc.abovebar)
-    line.new(bar_index, high, bar_index, low, color = color.new(color.yellow, 50), style = line.style_dashed, extend = extend.both)
+    if cleanup_on_tp
+        clear_drawings()
+
+    lbl = label.new(bar_index, high, "SNIPER SHORT", color = short_col, textcolor = color.white, style = label.style_label_down, yloc = yloc.abovebar)
+    vln = line.new(bar_index, high, bar_index, low, color = color.new(color.yellow, 50), style = line.style_dashed, extend = extend.both)
+
+    if cleanup_on_tp
+        array.push(active_labels, lbl)
+        array.push(active_lines, vln)
 
 // --- TP / SL Logic & Visuals ---
 if signal_long and barstate.isconfirmed
@@ -101,23 +151,42 @@ if signal_long and barstate.isconfirmed
         tp2 = close + risk * 2.0
         tp3 = close + risk * 4.0
 
-        line.new(bar_index, tp1, bar_index + 10, tp1, color = tp_col, width = 2)
-        label.new(bar_index + 10, tp1, "TP1", style = label.style_none, textcolor = tp_col, size = size.small)
+        l1 = line.new(bar_index, tp1, bar_index + 10, tp1, color = tp_col, width = 2)
+        lb1 = label.new(bar_index + 10, tp1, "TP1", style = label.style_none, textcolor = tp_col, size = size.small)
 
-        line.new(bar_index, tp2, bar_index + 10, tp2, color = tp_col, width = 2)
-        label.new(bar_index + 10, tp2, "TP2", style = label.style_none, textcolor = tp_col, size = size.small)
+        l2 = line.new(bar_index, tp2, bar_index + 10, tp2, color = tp_col, width = 2)
+        lb2 = label.new(bar_index + 10, tp2, "TP2", style = label.style_none, textcolor = tp_col, size = size.small)
 
-        line.new(bar_index, tp3, bar_index + 10, tp3, color = tp_col, width = 2)
-        label.new(bar_index + 10, tp3, "TP3", style = label.style_none, textcolor = tp_col, size = size.small)
+        l3 = line.new(bar_index, tp3, bar_index + 10, tp3, color = tp_col, width = 2)
+        lb3 = label.new(bar_index + 10, tp3, "TP3", style = label.style_none, textcolor = tp_col, size = size.small)
+
+        if cleanup_on_tp
+            active_dir := 1
+            active_sl  := sl
+            active_tp1 := tp1
+            active_tp2 := tp2
+            active_tp3 := tp3
+            array.push(active_lines, l1)
+            array.push(active_lines, l2)
+            array.push(active_lines, l3)
+            array.push(active_labels, lb1)
+            array.push(active_labels, lb2)
+            array.push(active_labels, lb3)
 
 // --- Zone Visuals ---
 if is_dbr and barstate.isconfirmed
-    line.new(bar_index - 5, demand_proximal, bar_index, demand_proximal, color = long_col, width = 2)
-    line.new(bar_index - 5, demand_distal,   bar_index, demand_distal,   color = long_col, width = 2)
+    z1 = line.new(bar_index - 5, demand_proximal, bar_index, demand_proximal, color = long_col, width = 2)
+    z2 = line.new(bar_index - 5, demand_distal,   bar_index, demand_distal,   color = long_col, width = 2)
+    if cleanup_on_tp
+        array.push(active_lines, z1)
+        array.push(active_lines, z2)
 
 if is_rbd and barstate.isconfirmed
-    line.new(bar_index - 5, supply_proximal, bar_index, supply_proximal, color = short_col, width = 2)
-    line.new(bar_index - 5, supply_distal,   bar_index, supply_distal,   color = short_col, width = 2)
+    z1 = line.new(bar_index - 5, supply_proximal, bar_index, supply_proximal, color = short_col, width = 2)
+    z2 = line.new(bar_index - 5, supply_distal,   bar_index, supply_distal,   color = short_col, width = 2)
+    if cleanup_on_tp
+        array.push(active_lines, z1)
+        array.push(active_lines, z2)
 
 if signal_short and barstate.isconfirmed
     sl = supply_distal
@@ -127,11 +196,24 @@ if signal_short and barstate.isconfirmed
         tp2 = close - risk * 2.0
         tp3 = close - risk * 4.0
 
-        line.new(bar_index, tp1, bar_index + 10, tp1, color = tp_col, width = 2)
-        label.new(bar_index + 10, tp1, "TP1", style = label.style_none, textcolor = tp_col, size = size.small)
+        l1 = line.new(bar_index, tp1, bar_index + 10, tp1, color = tp_col, width = 2)
+        lb1 = label.new(bar_index + 10, tp1, "TP1", style = label.style_none, textcolor = tp_col, size = size.small)
 
-        line.new(bar_index, tp2, bar_index + 10, tp2, color = tp_col, width = 2)
-        label.new(bar_index + 10, tp2, "TP2", style = label.style_none, textcolor = tp_col, size = size.small)
+        l2 = line.new(bar_index, tp2, bar_index + 10, tp2, color = tp_col, width = 2)
+        lb2 = label.new(bar_index + 10, tp2, "TP2", style = label.style_none, textcolor = tp_col, size = size.small)
 
-        line.new(bar_index, tp3, bar_index + 10, tp3, color = tp_col, width = 2)
-        label.new(bar_index + 10, tp3, "TP3", style = label.style_none, textcolor = tp_col, size = size.small)
+        l3 = line.new(bar_index, tp3, bar_index + 10, tp3, color = tp_col, width = 2)
+        lb3 = label.new(bar_index + 10, tp3, "TP3", style = label.style_none, textcolor = tp_col, size = size.small)
+
+        if cleanup_on_tp
+            active_dir := -1
+            active_sl  := sl
+            active_tp1 := tp1
+            active_tp2 := tp2
+            active_tp3 := tp3
+            array.push(active_lines, l1)
+            array.push(active_lines, l2)
+            array.push(active_lines, l3)
+            array.push(active_labels, lb1)
+            array.push(active_labels, lb2)
+            array.push(active_labels, lb3)
