@@ -1,0 +1,166 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Session Volume Moving Average [LuxAlgo] Clone", overlay = true, max_boxes_count = 5000, max_lines_count = 500)
+
+// --- Inputs ---
+group_session = "Session Settings"
+session_input = input.session("0800-1700", "Session", group = group_session)
+timezone_input = input.string("UTC+3", "Timezone", group = group_session)
+
+group_svma = "SVMA Settings"
+svma_lookback = input.int(20, "SVMA Lookback (Sessions)", minval = 1, maxval = 60, group = group_svma)
+
+group_visuals = "Visuals"
+show_gradient = input.bool(true, "Show Gradient Heatmap", group = group_visuals)
+show_profile  = input.bool(true, "Show Session Volume Profile", group = group_visuals)
+show_box      = input.bool(true, "Show Session Box", group = group_visuals)
+show_table    = input.bool(true, "Show 'Who is in Command' Table", group = group_visuals)
+
+// --- Constants & Variables ---
+var float cum_vol = 0.0
+var float cum_delta = 0.0
+var int session_bar_index = 0
+
+// SVMA Logic: Matrix to store [session_bar_index][session_lookback]
+// We use a matrix where rows are bar indices and columns are previous sessions.
+// Max rows (bars per session) depends on timeframe, let's assume 1440 for 1m.
+// Max columns is svma_lookback.
+var matrix<float> history_vol = matrix.new<float>(1440, svma_lookback, 0.0)
+var int current_session_idx = 0
+
+// --- Logic ---
+atr_val = ta.atr(14)
+t = time(timeframe.period, session_input, timezone_input)
+is_in_session = not na(t)
+new_session = is_in_session and (na(t[1]) or (t != t[1] and timeframe.isintraday))
+
+// Volume Delta Calculation
+float bar_delta = (close >= open ? volume : -volume)
+
+if new_session
+    cum_vol := volume
+    cum_delta := bar_delta
+    session_bar_index := 0
+else if is_in_session
+    cum_vol += volume
+    cum_delta += bar_delta
+    session_bar_index += 1
+
+// SVMA Calculation
+float svma = 0.0
+if is_in_session and session_bar_index < 1440
+    // Calculate average from history
+    float sum_hist = 0.0
+    int count_hist = 0
+    for i = 0 to svma_lookback - 1
+        // Skip current session slot to only average past sessions
+        if i == current_session_idx % svma_lookback
+            continue
+        float val = history_vol.get(session_bar_index, i)
+        if val > 0
+            sum_hist += val
+            count_hist += 1
+
+    svma := count_hist > 0 ? sum_hist / count_hist : cum_vol
+
+// Update history at the end of session bar (or on each bar to have it live for future)
+// We'll update the history for the *previous* session when a new one starts to be clean,
+// or update current and use it next time.
+// Actually, the requirement usually means comparing *current* cumulative vs *average* of previous sessions at the same bar index.
+
+if is_in_session and session_bar_index < 1440
+    // Store current cumulative volume in the matrix for the current session column
+    history_vol.set(session_bar_index, current_session_idx % svma_lookback, cum_vol)
+
+if new_session
+    current_session_idx += 1
+
+// --- Visuals: Session Box ---
+var box session_box = na
+if show_box
+    if new_session
+        session_box := box.new(bar_index, high, bar_index, low, border_color = color.gray, border_style = line.style_dashed, bgcolor = color.new(color.gray, 90))
+    else if is_in_session
+        box.set_right(session_box, bar_index)
+        box.set_top(session_box, math.max(box.get_top(session_box), high))
+        box.set_bottom(session_box, math.min(box.get_bottom(session_box), low))
+
+// --- Visuals: Gradient Heatmap ---
+if show_gradient and is_in_session
+    float relative_vol = svma > 0 ? (cum_vol / svma) * 100 : 100
+    // Heatmap color: Blue (low) -> Cyan -> Green -> Yellow -> Orange -> Red (high)
+    color heatmap_color = color.from_gradient(relative_vol, 0, 200, color.blue, color.red)
+
+    // Create a new box for each bar to show history of relative volume
+    box.new(bar_index, high + (atr_val * 2.5), bar_index, high + (atr_val * 2.0),
+             border_color = na,
+             bgcolor = heatmap_color)
+
+// --- Anchored VWAP ---
+var float vwap_sum_pv = 0.0
+var float vwap_sum_v = 0.0
+if new_session
+    vwap_sum_pv := volume * hlc3
+    vwap_sum_v := volume
+else if is_in_session
+    vwap_sum_pv += volume * hlc3
+    vwap_sum_v += volume
+
+plot_vwap = vwap_sum_v > 0 ? vwap_sum_pv / vwap_sum_v : na
+plot(is_in_session ? plot_vwap : na, "Session VWAP", color = color.yellow, linewidth = 2)
+
+// --- Visuals: Session Volume Profile ---
+// We'll use a simplified version: 20 bins for the current session.
+int num_bins = 20
+var float[] bin_volumes = array.new_float(num_bins, 0.0)
+var box[] bin_boxes = array.new_box(num_bins, na)
+var float session_high = 0.0
+var float session_low = 0.0
+
+if show_profile and is_in_session
+    if new_session
+        array.fill(bin_volumes, 0.0)
+        session_high := high
+        session_low := low
+        for i = 0 to num_bins - 1
+            if not na(bin_boxes.get(i))
+                box.delete(bin_boxes.get(i))
+            bin_boxes.set(i, box.new(bar_index, high, bar_index, low, border_color = na, bgcolor = color.new(color.aqua, 70)))
+    else if is_in_session
+        session_high := math.max(session_high, high)
+        session_low := math.min(session_low, low)
+        float bin_size = (session_high - session_low) / num_bins
+
+        if bin_size > 0
+            // Distribute volume to bins
+            int bin_idx = math.min(num_bins - 1, math.max(0, int((close - session_low) / bin_size)))
+            bin_volumes.set(bin_idx, bin_volumes.get(bin_idx) + volume)
+
+            float max_bin_vol = array.max(bin_volumes)
+            int session_start_bar = bar_index - session_bar_index
+
+            for i = 0 to num_bins - 1
+                float bin_vol = bin_volumes.get(i)
+                float bin_top = session_low + (i + 1) * bin_size
+                float bin_bottom = session_low + i * bin_size
+                float vol_ratio = max_bin_vol > 0 ? bin_vol / max_bin_vol : 0
+
+                // Draw profile on the right side of the session
+                int box_right = bar_index
+                int box_left = int(math.max(bar_index - session_bar_index, bar_index - (session_bar_index * vol_ratio * 0.3))) // Width up to 30% of session width
+
+                box.set_lefttop(bin_boxes.get(i), box_left, bin_top)
+                box.set_rightbottom(bin_boxes.get(i), box_right, bin_bottom)
+
+// --- Visuals: 'Who is in Command' Table ---
+var table command_table = table.new(position.top_right, 2, 2, border_width = 1)
+if show_table and barstate.islast
+    string command = cum_delta > 0 ? "Bulls" : "Bears"
+    color command_color = cum_delta > 0 ? color.green : color.red
+
+    table.cell(command_table, 0, 0, "In Command", bgcolor = color.gray, text_color = color.white)
+    table.cell(command_table, 1, 0, command, bgcolor = command_color, text_color = color.white)
+    table.cell(command_table, 0, 1, "Session Delta", bgcolor = color.gray, text_color = color.white)
+    table.cell(command_table, 1, 1, str.tostring(cum_delta, format.volume), bgcolor = command_color, text_color = color.white)
