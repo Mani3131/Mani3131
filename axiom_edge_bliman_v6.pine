@@ -1,0 +1,188 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Axiom Edge - B-Liman Strategy Implementation
+
+//@version=6
+indicator("Axiom Edge - B-Liman Strategy [V6]", overlay = true, max_boxes_count = 500, max_labels_count = 500, max_lines_count = 500)
+
+// --- Inputs ---
+grp_swing = "Swing Points"
+swing_len = input.int(5, "Swing Lookback", minval = 2, group = grp_swing)
+
+// --- Swing Points (Pivots) ---
+ph = ta.pivothigh(high, swing_len, swing_len)
+pl = ta.pivotlow(low, swing_len, swing_len)
+
+// Variables to store last swing points - Explicit casting for v6
+var float last_ph_price = float(na)
+var float last_pl_price = float(na)
+
+// Trend State
+var int trend = 0 // 1 for up, -1 for down
+
+// --- BOS & CHoCH Logic ---
+var float upper_bound = float(na)
+var float lower_bound = float(na)
+
+if not na(ph)
+    last_ph_price := ph
+    upper_bound := ph
+
+if not na(pl)
+    last_pl_price := pl
+    lower_bound := pl
+
+// Detection
+bool bos_up = false
+bool bos_down = false
+bool choch_up = false
+bool choch_down = false
+
+if close > upper_bound and not na(upper_bound)
+    if trend == 1
+        bos_up := true
+    else
+        choch_up := true
+        trend := 1
+    upper_bound := float(na) // Pivot consumed, wait for next one
+
+if close < lower_bound and not na(lower_bound)
+    if trend == -1
+        bos_down := true
+    else
+        choch_down := true
+        trend := -1
+    lower_bound := float(na) // Pivot consumed, wait for next one
+
+// Visualization - Wrapped in isconfirmed to prevent repainting/duplicates on real-time
+if barstate.isconfirmed
+    if bos_up
+        line.new(bar_index[1], last_ph_price, bar_index, last_ph_price, color = color.green, style = line.style_dashed)
+        label.new(bar_index, high, "BOS", style = label.style_none, textcolor = color.green, size = size.small)
+    if bos_down
+        line.new(bar_index[1], last_pl_price, bar_index, last_pl_price, color = color.red, style = line.style_dashed)
+        label.new(bar_index, low, "BOS", style = label.style_none, textcolor = color.red, size = size.small)
+    if choch_up
+        line.new(bar_index[1], last_ph_price, bar_index, last_ph_price, color = color.green, width = 2)
+        label.new(bar_index, high, "CHoCH", style = label.style_none, textcolor = color.green, size = size.small)
+    if choch_down
+        line.new(bar_index[1], last_pl_price, bar_index, last_pl_price, color = color.red, width = 2)
+        label.new(bar_index, low, "CHoCH", style = label.style_none, textcolor = color.red, size = size.small)
+
+// --- Fair Value Gap (FVG) Detection ---
+var fvg_boxes = array.new<box>()
+
+if barstate.isconfirmed
+    // Bullish FVG
+    if low > high[2] and close[1] > high[2]
+        fvg_box = box.new(bar_index[2], low, bar_index, high[2], bgcolor = color.new(color.green, 90), border_color = na)
+        array.push(fvg_boxes, fvg_box)
+
+    // Bearish FVG
+    if high < low[2] and close[1] < low[2]
+        fvg_box = box.new(bar_index[2], low[2], bar_index, high, bgcolor = color.new(color.red, 90), border_color = na)
+        array.push(fvg_boxes, fvg_box)
+
+    // Limit FVG boxes
+    if array.size(fvg_boxes) > 50
+        box.delete(array.shift(fvg_boxes))
+
+// --- Order Block (OB) Detection ---
+var ob_boxes = array.new<box>()
+
+if barstate.isconfirmed
+    // Bullish OB: Last bearish candle before a bullish move that breaks structure
+    if (bos_up or choch_up)
+        // Look back for the last bearish candle
+        int lookback = 1
+        while lookback < 10 and close[lookback] > open[lookback]
+            lookback += 1
+
+        ob_box = box.new(bar_index[lookback], high[lookback], bar_index, low[lookback], bgcolor = color.new(color.blue, 80), border_color = color.blue)
+        array.push(ob_boxes, ob_box)
+
+    // Bearish OB: Last bullish candle before a bearish move that breaks structure
+    if (bos_down or choch_down)
+        // Look back for the last bullish candle
+        int lookback = 1
+        while lookback < 10 and close[lookback] < open[lookback]
+            lookback += 1
+
+        ob_box = box.new(bar_index[lookback], high[lookback], bar_index, low[lookback], bgcolor = color.new(color.orange, 80), border_color = color.orange)
+        array.push(ob_boxes, ob_box)
+
+    // Limit OB boxes
+    if array.size(ob_boxes) > 50
+        box.delete(array.shift(ob_boxes))
+
+// --- Liquidity Sweep Detection ---
+bool sweep_up = high > last_ph_price and close < last_ph_price
+bool sweep_down = low < last_pl_price and close > last_pl_price
+
+if barstate.isconfirmed
+    if sweep_up
+        label.new(bar_index, high, "❌ Sweep", style = label.style_none, textcolor = color.red, size = size.small)
+    if sweep_down
+        label.new(bar_index, low, "❌ Sweep", style = label.style_none, textcolor = color.green, size = size.small)
+
+// --- Entry Signal Logic ---
+// Rule: Sweep + Confirmation Candle (Engulfing or strong close)
+bool buy_signal = sweep_down and close > open and close > high[1] and trend == 1
+bool sell_signal = sweep_up and close < open and close < low[1] and trend == -1
+
+if barstate.isconfirmed
+    if buy_signal
+        label.new(bar_index, low, "SNIPER BUY", style = label.style_label_up, color = color.green, textcolor = color.white, size = size.normal)
+    if sell_signal
+        label.new(bar_index, high, "SNIPER SELL", style = label.style_label_down, color = color.red, textcolor = color.white, size = size.normal)
+
+// --- Risk Management & TP/SL ---
+grp_risk = "Risk Management"
+risk_perc = input.float(1.0, "Account Risk %", minval = 0.1, step = 0.1, group = grp_risk)
+rr_ratio = input.float(3.0, "Risk:Reward Ratio", minval = 1.0, step = 0.5, group = grp_risk)
+account_size = input.float(10000, "Account Size", minval = 100, group = grp_risk)
+
+var float sl_price = float(na)
+var float tp_price = float(na)
+var float entry_price = float(na)
+
+if barstate.isconfirmed
+    if buy_signal
+        entry_price := close
+        sl_price := last_pl_price
+        tp_price := entry_price + (entry_price - sl_price) * rr_ratio
+        line.new(bar_index, sl_price, bar_index + 10, sl_price, color = color.red, style = line.style_dashed)
+        line.new(bar_index, tp_price, bar_index + 10, tp_price, color = color.green, style = line.style_dashed)
+
+    if sell_signal
+        entry_price := close
+        sl_price := last_ph_price
+        tp_price := entry_price - (sl_price - entry_price) * rr_ratio
+        line.new(bar_index, sl_price, bar_index + 10, sl_price, color = color.red, style = line.style_dashed)
+        line.new(bar_index, tp_price, bar_index + 10, tp_price, color = color.green, style = line.style_dashed)
+
+// --- Dashboard Table ---
+var table risk_table = table.new(position.top_right, 2, 5, bgcolor = color.new(color.black, 50), border_width = 1)
+if barstate.islast
+    table.cell(risk_table, 0, 0, "Metric", text_color = color.white)
+    table.cell(risk_table, 1, 0, "Value", text_color = color.white)
+
+    table.cell(risk_table, 0, 1, "Trend", text_color = color.white)
+    table.cell(risk_table, 1, 1, trend == 1 ? "BULLISH" : trend == -1 ? "BEARISH" : "NEUTRAL", text_color = trend == 1 ? color.green : trend == -1 ? color.red : color.gray)
+
+    float risk_amount = account_size * (risk_perc / 100)
+    table.cell(risk_table, 0, 2, "Risk Amt", text_color = color.white)
+    table.cell(risk_table, 1, 2, str.tostring(risk_amount, "#.##"), text_color = color.orange)
+
+    table.cell(risk_table, 0, 3, "R:R", text_color = color.white)
+    table.cell(risk_table, 1, 3, str.tostring(rr_ratio, "#.#"), text_color = color.aqua)
+
+    // Position Size Calculation (Rough estimate based on price difference)
+    float price_diff = math.abs(entry_price - sl_price)
+    float pos_size = price_diff > 0 ? risk_amount / price_diff : 0
+    table.cell(risk_table, 0, 4, "Lot Size*", text_color = color.white)
+    table.cell(risk_table, 1, 4, str.tostring(pos_size, "#.##"), text_color = color.yellow)
+
+// --- Watermark ---
+var table watermark = table.new(position.middle_center, 1, 1)
+if barstate.islast
+    table.cell(watermark, 0, 0, "AXIOM EDGE", text_size = size.huge, text_color = color.new(color.gray, 90))
