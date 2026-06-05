@@ -101,7 +101,7 @@ if active_trade.active
             total_signals += 1
 
 // Reset hits when a new trade starts
-if (long_signal or short_signal) and not active_trade.active[1]
+if (long_signal or short_signal) and not (active_trade[1]).active
     tp1_hit := false
     tp2_hit := false
     tp3_hit := false
