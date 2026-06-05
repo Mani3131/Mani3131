@@ -1,0 +1,123 @@
+//@version=6
+indicator("Wolftrade CRT Indicator [v6]", overlay=true, max_labels_count=500, max_boxes_count=500, max_lines_count=500)
+
+// --- Inputs ---
+grp_general = "General Settings"
+anchor_tf = input.timeframe("60", "Anchor Timeframe", group=grp_general)
+session_val = input.session("1500-2345:1234567", "Session Time", group=grp_general)
+timezone_val = input.string("UTC+3", "Timezone", group=grp_general)
+
+grp_patterns = "Patterns & Labels"
+show_tbs = input.bool(true, "Show Turtle Body Soup (TBS)", group=grp_patterns)
+show_ibcrt = input.bool(true, "Show Inside Bar CRT (IBCRT)", group=grp_patterns)
+show_ohp_olp = input.bool(true, "Show OHP / OLP", group=grp_patterns)
+show_fvg = input.bool(true, "Show Fair Value Gaps (FVG)", group=grp_patterns)
+show_ob = input.bool(true, "Show Orderblocks (OB)", group=grp_patterns)
+show_rb = input.bool(true, "Show Rejection Blocks (RB)", group=grp_patterns)
+
+grp_visuals = "Visuals"
+bull_color = input.color(color.new(color.green, 80), "Bullish Color", group=grp_visuals)
+bear_color = input.color(color.new(color.red, 80), "Bearish Color", group=grp_visuals)
+text_color = input.color(color.white, "Text Color", group=grp_visuals)
+
+// --- Helper Functions ---
+is_in_session(sess, tz) =>
+    not na(time(timeframe.period, sess, tz))
+
+// --- Anchor Logic ---
+// Fetch the high and low of the PREVIOUS anchor timeframe candle to define the range
+[prev_anchor_high, prev_anchor_low, anchor_time] = request.security(syminfo.tickerid, anchor_tf, [high[1], low[1], time])
+
+var float crth = na
+var float crtl = na
+
+new_anchor = anchor_time != anchor_time[1]
+
+if new_anchor
+    crth := prev_anchor_high
+    crtl := prev_anchor_low
+
+// --- Visual Range ---
+var box crt_box = na
+
+if new_anchor and barstate.isconfirmed
+    crt_box := box.new(bar_index, crth, bar_index, crtl, border_color=color.gray, bgcolor=color.new(color.gray, 90))
+else if not na(crt_box)
+    box.set_right(crt_box, bar_index)
+
+// --- Pattern Detection ---
+// IBCRT: Inside Bar CRT
+is_ibcrt = high <= crth and low >= crtl and not new_anchor
+
+// TBS: Turtle Body Soup (Sweep of CRTH/CRTL with close inside)
+is_tbs_bull = low < crtl and close > crtl and not new_anchor
+is_tbs_bear = high > crth and close < crth and not new_anchor
+
+// OHP/OLP: Old High/Low Purged (Session sweeps)
+in_sess = is_in_session(session_val, timezone_val)
+var float sess_high = na
+var float sess_low = na
+
+if in_sess and not in_sess[1]
+    sess_high := high
+    sess_low := low
+else if in_sess
+    sess_high := math.max(sess_high, high)
+    sess_low := math.min(sess_low, low)
+
+is_ohp = not in_sess and high > sess_high[1] and close < sess_high[1]
+is_olp = not in_sess and low < sess_low[1] and close > sess_low[1]
+
+// FVG Detection
+is_fvg_bull = low > high[2] and close > high[2]
+is_fvg_bear = high < low[2] and close < low[2]
+
+// OB Detection (Simplified Bullish/Bearish Engulfing)
+is_ob_bull = close > high[1] and open[1] > close[1]
+is_ob_bear = close < low[1] and open[1] < close[1]
+
+// RB Detection (Rejection Block: Sweep of recent swing and rejection)
+is_rb_bull = low < ta.lowest(low[1], 5) and close > open and (close - low) > (high - close) * 2
+is_rb_bear = high > ta.highest(high[1], 5) and close < open and (high - close) > (close - low) * 2
+
+// Labels & Drawings
+if barstate.isconfirmed
+    if show_ibcrt and is_ibcrt
+        label.new(bar_index, high, "IBCRT", color=color.blue, textcolor=text_color, style=label.style_label_down, size=size.small)
+
+    if show_tbs
+        if is_tbs_bull
+            label.new(bar_index, low, "TBS", color=color.green, textcolor=text_color, style=label.style_label_up, size=size.small)
+        if is_tbs_bear
+            label.new(bar_index, high, "TBS", color=color.red, textcolor=text_color, style=label.style_label_down, size=size.small)
+
+    if show_ohp_olp
+        if is_ohp
+            label.new(bar_index, high, "OHP", color=color.orange, textcolor=text_color, style=label.style_label_down, size=size.small)
+        if is_olp
+            label.new(bar_index, low, "OLP", color=color.orange, textcolor=text_color, style=label.style_label_up, size=size.small)
+
+    if show_fvg
+        if is_fvg_bull
+            box.new(bar_index[1], low, bar_index, high[2], border_color=na, bgcolor=color.new(color.green, 90))
+            label.new(bar_index, low, "FVG", color=color.green, textcolor=text_color, style=label.style_label_up, size=size.tiny)
+        if is_fvg_bear
+            box.new(bar_index[1], high, bar_index, low[2], border_color=na, bgcolor=color.new(color.red, 90))
+            label.new(bar_index, high, "FVG", color=color.red, textcolor=text_color, style=label.style_label_down, size=size.tiny)
+
+    if show_ob
+        if is_ob_bull
+            label.new(bar_index, low, "OB", color=color.green, textcolor=text_color, style=label.style_label_up, size=size.small)
+        if is_ob_bear
+            label.new(bar_index, high, "OB", color=color.red, textcolor=text_color, style=label.style_label_down, size=size.small)
+
+    if show_rb
+        if is_rb_bull
+            label.new(bar_index, low, "RB", color=color.teal, textcolor=text_color, style=label.style_label_up, size=size.small)
+        if is_rb_bear
+            label.new(bar_index, high, "RB", color=color.maroon, textcolor=text_color, style=label.style_label_down, size=size.small)
+
+// Watermark
+var table wm = table.new(position.middle_center, 1, 1)
+if barstate.islast
+    table.cell(wm, 0, 0, "Wolftrade CRT", text_color=color.new(color.gray, 90), text_size=size.huge)
