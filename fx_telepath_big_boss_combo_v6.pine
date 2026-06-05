@@ -1,0 +1,253 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("FX Telepath x Big Boss Combo [V6]", overlay = true, max_boxes_count = 500)
+
+// --- INPUTS ---
+group_sd = "Supply & Demand Settings"
+sd_show_zones = input.bool(true, "Show S&D Zones", group = group_sd)
+sd_min_boring = input.int(1, "Min Boring Candles", 1, 10, group = group_sd)
+sd_max_boring = input.int(6, "Max Boring Candles", 1, 10, group = group_sd)
+
+group_qt = "Quarterly Theory Settings"
+qt_enabled = input.bool(true, "Enable Quarterly Theory", group = group_qt)
+qt_start_time = input.string("2000", "Start Time (HHMM)", group = group_qt) // 20:00 NY
+qt_tz = input.string("America/New_York", "Timezone", group = group_qt)
+
+group_conf = "Confirmation Settings"
+conf_mss = input.bool(true, "Show Market Structure Shift (MSS)", group = group_conf)
+conf_zr = input.bool(true, "Show Zone Removal (ZR)", group = group_conf)
+
+group_vol = "Volume & SVMA Settings"
+vol_enabled = input.bool(true, "Enable Volume Heatmap", group = group_vol)
+vol_ma_len = input.int(20, "SVMA Length", minval = 1, group = group_vol)
+
+// --- TYPES ---
+type Zone
+    float proximal
+    float distal
+    int   start_bar
+    int   end_bar
+    color z_color
+    box   z_box
+    string z_type // "Supply" or "Demand"
+
+// --- ARRAYS ---
+var Zone[] supply_zones = array.new<Zone>()
+var Zone[] demand_zones = array.new<Zone>()
+
+// --- FUNCTIONS ---
+is_erc(float o, float h, float l, float c) =>
+    float candle_range = h - l
+    float candle_body  = math.abs(c - o)
+    candle_body >= candle_range * 0.5 and candle_range > 0
+
+is_boring(float o, float h, float l, float c) =>
+    not is_erc(o, h, l, c)
+
+// --- QUARTERLY THEORY LOGIC ---
+// 90-minute quarters within 6-hour sessions
+// Q1: Accumulation, Q2: Manipulation, Q3: Distribution, Q4: Reversal/Continuation
+var int quarter_num = na
+var color qt_color = na
+var string qt_name = ""
+
+if qt_enabled
+    int t = time(timeframe.period, "0000-2359", qt_tz)
+    if not na(t)
+        // Calculate minutes since 20:00 NY
+        int hr = hour(t, qt_tz)
+        int mn = minute(t, qt_tz)
+        int total_mn = hr * 60 + mn
+
+        // Offset by 20:00 (1200 minutes)
+        int offset_mn = (total_mn - 1200 + 1440) % 1440
+
+        // 90-minute quarters
+        quarter_num := (offset_mn / 90) % 4 + 1
+
+        qt_name := switch quarter_num
+            1 => "ACCUMULATION"
+            2 => "MANIPULATION"
+            3 => "DISTRIBUTION"
+            4 => "REVERSAL"
+
+        qt_color := switch quarter_num
+            1 => color.new(color.blue, 90)
+            2 => color.new(color.red, 90)
+            3 => color.new(color.green, 90)
+            4 => color.new(color.orange, 90)
+
+bgcolor(qt_enabled ? qt_color : na, title = "Quarter Background")
+
+// --- VOLUME & SVMA LOGIC ---
+float svma = ta.sma(volume, vol_ma_len)
+float rvol = svma > 0 ? volume / svma : 1.0
+
+// "Who is in Command" logic
+// Bullish command: Green, intensity by RVol
+// Bearish command: Red, intensity by RVol
+color command_color = na
+if vol_enabled
+    float intensity = math.min(rvol / 2.0, 1.0) // Scale RVol for color intensity
+    if close > open
+        command_color := color.new(color.green, int(100 - (intensity * 100)))
+    else
+        command_color := color.new(color.red, int(100 - (intensity * 100)))
+
+// Ribbon plotting (using plot with thick linewidth at offset)
+float atr = ta.atr(14)
+plot(vol_enabled ? high + (atr * 2) : na, "Volume Ribbon", color = command_color, linewidth = 5, style = plot.style_linebr)
+
+// --- MARKET STRUCTURE SHIFT (MSS) ---
+var float last_high = na
+var float last_low = na
+var bool mss_bullish = false
+var bool mss_bearish = false
+
+if conf_mss
+    float ph = ta.pivothigh(high, 3, 3)
+    float pl = ta.pivotlow(low, 3, 3)
+
+    if not na(ph)
+        last_high := ph
+    if not na(pl)
+        last_low := pl
+
+    mss_bullish := ta.crossover(close, last_high)
+    mss_bearish := ta.crossunder(close, last_low)
+
+    if barstate.isconfirmed
+        if mss_bullish
+            label.new(bar_index, high, "MSS BULL", color = color.teal, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+        if mss_bearish
+            label.new(bar_index, low, "MSS BEAR", color = color.maroon, textcolor = color.white, style = label.style_label_up, size = size.tiny)
+
+// --- ZONE DETECTION LOGIC ---
+// We look for patterns:
+// Demand: Drop-Base-Rally (DBR) or Rally-Base-Rally (RBR)
+// Supply: Rally-Base-Drop (RBD) or Drop-Base-Drop (DBD)
+
+// State variables for tracking base
+var int base_start = na
+var int boring_count = 0
+
+// Current candle properties
+bool current_is_erc = is_erc(open, high, low, close)
+bool current_is_boring = is_boring(open, high, low, close)
+
+// Reset or increment base
+if current_is_boring
+    if na(base_start)
+        base_start := bar_index
+    boring_count += 1
+else
+    // It's an ERC (Leg-out)
+    if barstate.isconfirmed and not na(base_start) and boring_count >= sd_min_boring and boring_count <= sd_max_boring
+        // Check leg-in (candle before base)
+        float leg_in_o = open[boring_count + 1]
+        float leg_in_c = close[boring_count + 1]
+        bool leg_in_is_erc = is_erc(open[boring_count + 1], high[boring_count + 1], low[boring_count + 1], close[boring_count + 1])
+
+        // Base candles extremes
+        float base_body_max = high[1]
+        float base_body_min = low[1]
+        float base_wick_max = high[1]
+        float base_wick_min = low[1]
+
+        if boring_count > 0
+            base_body_max := math.max(open[1], close[1])
+            base_body_min := math.min(open[1], close[1])
+            base_wick_max := high[1]
+            base_wick_min := low[1]
+            if boring_count > 1
+                for i = 2 to boring_count
+                    base_body_max := math.max(base_body_max, math.max(open[i], close[i]))
+                    base_body_min := math.min(base_body_min, math.min(open[i], close[i]))
+                    base_wick_max := math.max(base_wick_max, high[i])
+                    base_wick_min := math.min(base_wick_min, low[i])
+
+        // LEG-OUT DIRECTION
+        bool is_bullish_legout = close > open
+        bool is_bearish_legout = close < open
+
+        if is_bullish_legout // Possible Demand (DBR or RBR)
+            // Proximal = Base Body Max, Distal = Base Wick Min
+            Zone new_zone = Zone.new(base_body_max, base_wick_min, base_start, bar_index, color.new(color.teal, 80), na, "Demand")
+            if sd_show_zones
+                new_zone.z_box := box.new(base_start, new_zone.proximal, bar_index, new_zone.distal, border_color = na, bgcolor = new_zone.z_color)
+            demand_zones.push(new_zone)
+
+        else if is_bearish_legout // Possible Supply (RBD or DBD)
+            // Proximal = Base Body Min, Distal = Base Wick Max
+            Zone new_zone = Zone.new(base_body_min, base_wick_max, base_start, bar_index, color.new(color.maroon, 80), na, "Supply")
+            if sd_show_zones
+                new_zone.z_box := box.new(base_start, new_zone.proximal, bar_index, new_zone.distal, border_color = na, bgcolor = new_zone.z_color)
+            supply_zones.push(new_zone)
+
+    // Reset after leg-out
+    base_start := na
+    boring_count := 0
+
+// --- UPDATE ZONES ---
+// Extend boxes and check for mitigation
+bool zr_supply = false
+bool zr_demand = false
+
+if barstate.isconfirmed
+    // Supply
+    if supply_zones.size() > 0
+        for i = supply_zones.size() - 1 to 0
+            Zone z = supply_zones.get(i)
+            box.set_right(z.z_box, bar_index)
+            // Mitigation: Price close above distal
+            if close > z.distal
+                if conf_zr
+                    zr_supply := true
+                box.delete(z.z_box)
+                supply_zones.remove(i)
+
+    // Demand
+    if demand_zones.size() > 0
+        for i = demand_zones.size() - 1 to 0
+            Zone z = demand_zones.get(i)
+            box.set_right(z.z_box, bar_index)
+            // Mitigation: Price close below distal
+            if close < z.distal
+                if conf_zr
+                    zr_demand := true
+                box.delete(z.z_box)
+                demand_zones.remove(i)
+
+if barstate.isconfirmed
+    if zr_supply
+        label.new(bar_index, high, "ZR SUPPLY", color = color.orange, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+    if zr_demand
+        label.new(bar_index, low, "ZR DEMAND", color = color.orange, textcolor = color.white, style = label.style_label_up, size = size.tiny)
+
+// --- SUPER SIGNAL CONFLUENCE ---
+// Trigger: (MSS or ZR) + (Inside Manipulation or Distribution Quarter) + (RVol > 1.0)
+bool bull_confluence = (mss_bullish or zr_supply) and (quarter_num == 2 or quarter_num == 3) and rvol > 1.0
+bool bear_confluence = (mss_bearish or zr_demand) and (quarter_num == 2 or quarter_num == 3) and rvol > 1.0
+
+if barstate.isconfirmed
+    if bull_confluence
+        label.new(bar_index, low - (atr * 1.5), "🚀 SUPER BUY", color = color.green, textcolor = color.white, style = label.style_label_up, size = size.normal)
+    if bear_confluence
+        label.new(bar_index, high + (atr * 1.5), "💀 SUPER SELL", color = color.red, textcolor = color.white, style = label.style_label_down, size = size.normal)
+
+// --- DASHBOARD TABLE ---
+var table dash = table.new(position.top_right, 2, 4, bgcolor = color.new(color.black, 50), border_width = 1, border_color = color.gray)
+if barstate.islast
+    table.cell(dash, 0, 0, "Quarter", text_color = color.white)
+    table.cell(dash, 1, 0, qt_name, text_color = qt_color)
+    table.cell(dash, 0, 1, "Who's In Command", text_color = color.white)
+    table.cell(dash, 1, 1, close > open ? "BULLS" : "BEARS", text_color = command_color)
+    table.cell(dash, 0, 2, "Relative Vol", text_color = color.white)
+    table.cell(dash, 1, 2, str.format("{0,number,#.##}", rvol), text_color = rvol > 1 ? color.green : color.red)
+    table.cell(dash, 0, 3, "S&D Status", text_color = color.white)
+    table.cell(dash, 1, 3, "Zones Active: " + str.tostring(supply_zones.size() + demand_zones.size()), text_color = color.white)
+
+// --- PLOTS ---
+plotcandle(open, high, low, close, "Candles", color = current_is_erc ? (close > open ? color.green : color.red) : color.gray)
