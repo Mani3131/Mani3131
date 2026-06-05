@@ -19,8 +19,8 @@ explosive_legout = input.bool(true, "Require Explosive Leg-out (2x Body)", group
 pivot_len = input.int(5, "Market Structure Pivot Length", minval = 1, group = group_odds)
 
 group_visuals = "Visuals"
-up_zone_col = input.color(color.new(color.emerald, 80), "Demand Zone Color", group = group_visuals)
-dn_zone_col = input.color(color.new(color.rose, 80), "Supply Zone Color", group = group_visuals)
+up_zone_col = input.color(color.new(color.green, 80), "Demand Zone Color", group = group_visuals)
+dn_zone_col = input.color(color.new(color.red, 80), "Supply Zone Color", group = group_visuals)
 show_high_odds_only = input.bool(false, "Show High Odds Only", group = group_visuals)
 show_rr = input.bool(true, "Show SL/TP Labels (Set & Forget)", group = group_visuals)
 rr_ratio = input.float(3.0, "Risk:Reward Ratio", minval = 0.1, group = group_visuals)
