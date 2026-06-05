@@ -1,0 +1,161 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("FX Telepath Set & Forget [v6]", overlay = true, max_boxes_count = 500)
+
+// --- Inputs ---
+group_candle = "Candle Classification"
+perc_body_min = input.float(50.0, "ERC Body % Threshold", minval = 0.0, maxval = 100.0, group = group_candle)
+
+group_zones = "Zone Detection"
+max_base_candles = input.int(6, "Max Base Candles", minval = 1, maxval = 10, group = group_zones)
+min_legout_erc = input.bool(true, "Require ERC Leg-out", group = group_zones)
+
+group_odds = "High Odds Criteria"
+high_odds_base_max = input.int(3, "High Odds Max Base Candles", group = group_odds)
+use_trend_filter = input.bool(true, "Trend Alignment Filter", group = group_odds)
+explosive_legout = input.bool(true, "Require Explosive Leg-out (2x Body)", group = group_odds)
+pivot_len = input.int(5, "Market Structure Pivot Length", minval = 1, group = group_odds)
+
+group_visuals = "Visuals"
+up_zone_col = input.color(color.new(color.emerald, 80), "Demand Zone Color", group = group_visuals)
+dn_zone_col = input.color(color.new(color.rose, 80), "Supply Zone Color", group = group_visuals)
+show_high_odds_only = input.bool(false, "Show High Odds Only", group = group_visuals)
+show_rr = input.bool(true, "Show SL/TP Labels (Set & Forget)", group = group_visuals)
+rr_ratio = input.float(3.0, "Risk:Reward Ratio", minval = 0.1, group = group_visuals)
+
+// --- Candle Classification ---
+candle_span = high - low
+candle_body = math.abs(close - open)
+is_boring = candle_span > 0 ? (candle_body / candle_span) * 100 < perc_body_min : true
+is_erc = not is_boring
+
+avg_body_20 = ta.sma(candle_body, 20)
+
+// --- UDTs ---
+type Zone
+    float proximal
+    float distal
+    int   base_start_bar
+    int   base_end_bar
+    bool  is_demand
+    bool  is_mitigated = false
+    bool  is_high_odds = false
+    box   box_id = na
+
+var Zone[] demand_zones = array.new<Zone>()
+var Zone[] supply_zones = array.new<Zone>()
+
+// --- Trend Identification (Market Structure) ---
+float ph = ta.pivothigh(high, pivot_len, pivot_len)
+float pl = ta.pivotlow(low, pivot_len, pivot_len)
+
+var float last_ph = na
+var float last_pl = na
+var bool is_uptrend = na
+
+if not na(ph)
+    is_uptrend := ph > last_ph ? true : (ph < last_ph ? false : is_uptrend)
+    last_ph := ph
+
+if not na(pl)
+    is_uptrend := pl > last_pl ? true : (pl < last_pl ? false : is_uptrend)
+    last_pl := pl
+
+// --- Pattern Detection ---
+bool leg_out_valid = not min_legout_erc or is_erc
+if barstate.isconfirmed and leg_out_valid
+    int base_count = 0
+    for i = 1 to max_base_candles
+        if is_boring[i]
+            base_count += 1
+        else
+            break
+
+    if base_count >= 1 and base_count <= max_base_candles
+        bool leg_out_up = close > open
+        bool leg_in_up = close[base_count + 1] > open[base_count + 1]
+        bool leg_in_dn = close[base_count + 1] < open[base_count + 1]
+
+        float base_max_h = -1.0
+        float base_min_l = 1000000000.0
+        float base_max_body_h = -1.0
+        float base_min_body_l = 1000000000.0
+
+        for i = 1 to base_count
+            base_max_h := math.max(base_max_h, high[i])
+            base_min_l := math.min(base_min_l, low[i])
+            base_max_body_h := math.max(base_max_body_h, math.max(open[i], close[i]))
+            base_min_body_l := math.min(base_min_body_l, math.min(open[i], close[i]))
+
+        // High Odds checks
+        float avg_body = avg_body_20[1]
+        bool is_explosive = candle_body >= 2 * avg_body
+        bool legout_ok = not explosive_legout or is_explosive
+
+        // Helper to create zone and its visual
+        create_zone(float prox, float dist, int start, int end, bool is_dem, bool high_odds, Zone[] zone_arr, color col) =>
+            bool trend_ok = not use_trend_filter or (is_dem ? nz(is_uptrend, true) : not nz(is_uptrend, false))
+            bool final_high_odds = high_odds and trend_ok and legout_ok
+            if not show_high_odds_only or final_high_odds
+                Zone new_zone = Zone.new(prox, dist, start, end, is_dem)
+                new_zone.is_high_odds := final_high_odds
+                new_zone.box_id := box.new(start, math.max(prox, dist), bar_index, math.min(prox, dist),
+                     bgcolor = col, border_color = na,
+                     extend = extend.none)
+                if final_high_odds
+                    label.new(start, is_dem ? math.min(prox, dist) : math.max(prox, dist), "HIGH ODDS",
+                         color = color.new(color.yellow, 20),
+                         style = is_dem ? label.style_label_up : label.style_label_down,
+                         textcolor = color.black, size = size.small)
+
+                    if show_rr
+                        float risk = math.abs(prox - dist)
+                        float tp_price = is_dem ? prox + risk * rr_ratio : prox - risk * rr_ratio
+                        label.new(bar_index, tp_price, "TP: " + str.tostring(tp_price, format.mintick),
+                             color = color.new(color.lime, 20), style = is_dem ? label.style_label_down : label.style_label_up,
+                             textcolor = color.black, size = size.small)
+                        label.new(bar_index, dist, "SL: " + str.tostring(dist, format.mintick),
+                             color = color.new(color.red, 20), style = is_dem ? label.style_label_up : label.style_label_down,
+                             textcolor = color.white, size = size.small)
+
+                zone_arr.push(new_zone)
+
+        // Reversal Patterns
+        if leg_out_up and leg_in_dn // DBR
+            create_zone(base_max_body_h, base_min_l, bar_index - base_count, bar_index - 1, true, base_count <= high_odds_base_max, demand_zones, up_zone_col)
+        else if not leg_out_up and leg_in_up // RBD
+            create_zone(base_min_body_l, base_max_h, bar_index - base_count, bar_index - 1, false, base_count <= high_odds_base_max, supply_zones, dn_zone_col)
+        // Continuation Patterns
+        else if leg_out_up and leg_in_up // RBR
+            create_zone(base_max_body_h, base_min_l, bar_index - base_count, bar_index - 1, true, base_count <= high_odds_base_max, demand_zones, up_zone_col)
+        else if not leg_out_up and leg_in_dn // DBD
+            create_zone(base_min_body_l, base_max_h, bar_index - base_count, bar_index - 1, false, base_count <= high_odds_base_max, supply_zones, dn_zone_col)
+
+// --- Zone Management and Drawing ---
+process_zones(Zone[] zones) =>
+    if zones.size() > 0
+        for i = zones.size() - 1 to 0
+            Zone z = zones.get(i)
+            if not z.is_mitigated
+                // Update box end
+                if not na(z.box_id)
+                    box.set_right(z.box_id, bar_index)
+
+                // Check for mitigation
+                if z.is_demand
+                    if close < z.distal
+                        z.is_mitigated := true
+                        box.set_right(z.box_id, bar_index)
+                else
+                    if close > z.distal
+                        z.is_mitigated := true
+                        box.set_right(z.box_id, bar_index)
+
+process_zones(demand_zones)
+process_zones(supply_zones)
+
+// --- Plotting for verification ---
+plotshape(is_boring, "Boring Candle", shape.circle, location.abovebar, color.gray, size = size.tiny, display = display.none)
+plotshape(is_erc, "ERC Candle", shape.diamond, location.belowbar, color.blue, size = size.tiny, display = display.none)
