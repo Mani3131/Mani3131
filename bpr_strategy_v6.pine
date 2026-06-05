@@ -11,7 +11,7 @@ fvg_color_bear = input.color(color.new(color.red, 85), "Bearish FVG Color", grou
 
 group_bpr = "Balanced Price Range (BPR) Settings"
 bpr_color_bull = input.color(color.new(color.aqua, 70), "Bullish BPR Color", group = group_bpr)
-bpr_color_bear = input.color(color.new(color.rgb(255, 128, 128, 70)), "Bearish BPR Color", group = group_bpr)
+bpr_color_bear = input.color(color.new(color.rgb(255, 128, 128), 70), "Bearish BPR Color", group = group_bpr)
 
 // --- Types ---
 type FVG
