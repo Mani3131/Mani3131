@@ -39,18 +39,17 @@ var bool is_bearish_mss = false
 detect_structure() =>
     float sh = ta.pivothigh(high, 3, 3)
     float sl = ta.pivotlow(low, 3, 3)
+    [sh, sl]
 
-    if not na(sh)
-        swing_high := sh
-    if not na(sl)
-        swing_low := sl
+[sh_val, sl_val] = detect_structure()
 
-    bool mss_bull = ta.crossover(close, swing_high)
-    bool mss_bear = ta.crossunder(close, swing_low)
+if not na(sh_val)
+    swing_high := sh_val
+if not na(sl_val)
+    swing_low := sl_val
 
-    [mss_bull, mss_bear]
-
-[mss_bull, mss_bear] = detect_structure()
+bool mss_bull = ta.crossover(close, swing_high)
+bool mss_bear = ta.crossunder(close, swing_low)
 
 // Track MSS state
 var bool bull_mss_active = false
