@@ -2,12 +2,14 @@
 // © Mani3131
 
 //@version=6
-indicator("Session Volume Moving Average [LuxAlgo] Clone", overlay = true, max_boxes_count = 5000, max_lines_count = 500)
+indicator("Quarterly Session Volume [LuxAlgo] Clone", overlay = true, max_boxes_count = 5000, max_lines_count = 500, format = format.volume)
 
 // --- Inputs ---
-group_session = "Session Settings"
-session_input = input.session("0800-1700", "Session", group = group_session)
-timezone_input = input.string("UTC+3", "Timezone", group = group_session)
+group_session = "Quarterly Settings"
+// Quarterly theory often starts at 00:00 (or 20:00 NY previous day).
+// The user asked for UTC+3. 20:00 NY is 03:00 UTC+3.
+anchor_hour = input.int(3, "Anchor Hour (UTC+3)", minval = 0, maxval = 23, group = group_session)
+quarter_mins = 90
 
 group_svma = "SVMA Settings"
 svma_lookback = input.int(20, "SVMA Lookback (Sessions)", minval = 1, maxval = 60, group = group_svma)
@@ -32,14 +34,25 @@ var int current_session_idx = 0
 
 // --- Logic ---
 atr_val = ta.atr(14)
-t = time(timeframe.period, session_input, timezone_input)
-is_in_session = not na(t)
-new_session = is_in_session and (na(t[1]) or (t != t[1] and timeframe.isintraday))
+
+// Quarterly Detection
+// We use UTC+3 as requested
+h = hour(time, "UTC+3")
+m = minute(time, "UTC+3")
+
+// Minutes since midnight UTC+3
+mins_since_midnight = (h * 60 + m)
+// Minutes since anchor
+mins_since_anchor = (mins_since_midnight - (anchor_hour * 60) + 1440) % 1440
+quarter_idx = int(mins_since_anchor / quarter_mins)
+new_quarter = quarter_idx != quarter_idx[1] or barstate.isfirst
+
+is_in_session = true // Quarterly Theory usually covers the whole 24h cycle
 
 // Volume Delta Calculation
 float bar_delta = (close >= open ? volume : -volume)
 
-if new_session
+if new_quarter
     cum_vol := volume
     cum_delta := bar_delta
     session_bar_index := 0
@@ -48,7 +61,9 @@ else if is_in_session
     cum_delta += bar_delta
     session_bar_index += 1
 
-// SVMA Calculation
+// SVMA Calculation: Average of previous days same quarter bar index?
+// For Quarterly Theory, we might just want to compare to average of previous bars or a fixed lookback.
+// However, sticking to the user's "SVMA" request:
 float svma = 0.0
 if is_in_session and session_bar_index < 1440
     // Calculate average from history
@@ -74,34 +89,48 @@ if is_in_session and session_bar_index < 1440
     // Store current cumulative volume in the matrix for the current session column
     history_vol.set(session_bar_index, current_session_idx % svma_lookback, cum_vol)
 
-if new_session
+if new_quarter
     current_session_idx += 1
 
-// --- Visuals: Session Box ---
-var box session_box = na
+// --- Visuals: Quarterly Box ---
+var box q_box = na
 if show_box
-    if new_session
-        session_box := box.new(bar_index, high, bar_index, low, border_color = color.gray, border_style = line.style_dashed, bgcolor = color.new(color.gray, 90))
+    if new_quarter
+        q_box := box.new(bar_index, high, bar_index, low, border_color = color.gray, border_style = line.style_dashed, bgcolor = color.new(color.gray, 90))
     else if is_in_session
-        box.set_right(session_box, bar_index)
-        box.set_top(session_box, math.max(box.get_top(session_box), high))
-        box.set_bottom(session_box, math.min(box.get_bottom(session_box), low))
+        box.set_right(q_box, bar_index)
+        box.set_top(q_box, math.max(box.get_top(q_box), high))
+        box.set_bottom(q_box, math.min(box.get_bottom(q_box), low))
 
-// --- Visuals: Gradient Heatmap ---
+// --- Visuals: Gradient Heatmap (Who is in Command) ---
 if show_gradient and is_in_session
-    float relative_vol = svma > 0 ? (cum_vol / svma) * 100 : 100
-    // Heatmap color: Blue (low) -> Cyan -> Green -> Yellow -> Orange -> Red (high)
-    color heatmap_color = color.from_gradient(relative_vol, 0, 200, color.blue, color.red)
+    // Gradient to show who is in command (Bulls vs Bears)
+    // We can use the alpha for intensity (relative volume)
+    float relative_vol_ratio = svma > 0 ? math.min(1.0, cum_vol / (svma * 1.5)) : 0.5
+    color cmd_color = cum_delta > 0 ? color.green : color.red
+    color heatmap_color = color.new(cmd_color, 100 - int(relative_vol_ratio * 100))
 
-    // Create a new box for each bar to show history of relative volume
-    box.new(bar_index, high + (atr_val * 2.5), bar_index, high + (atr_val * 2.0),
+    // Create a new box for each bar to show history of who is in command
+    box.new(bar_index, high + (atr_val * 3.0), bar_index, high + (atr_val * 2.5),
              border_color = na,
              bgcolor = heatmap_color)
+
+// --- Visuals: Quarterly Volume Delta Histogram ---
+// Drawing histogram inside the quarterly box at the bottom
+if is_in_session
+    float hist_height = atr_val * 2
+    float hist_base = q_box.get_bottom()
+    float max_delta = ta.highest(math.abs(bar_delta), 100) // Local max for scaling
+    float scaled_delta = max_delta > 0 ? (bar_delta / max_delta) * hist_height : 0
+
+    box.new(bar_index, hist_base + scaled_delta, bar_index, hist_base,
+             border_color = na,
+             bgcolor = bar_delta > 0 ? color.new(color.green, 50) : color.new(color.red, 50))
 
 // --- Anchored VWAP ---
 var float vwap_sum_pv = 0.0
 var float vwap_sum_v = 0.0
-if new_session
+if new_quarter
     vwap_sum_pv := volume * hlc3
     vwap_sum_v := volume
 else if is_in_session
@@ -120,7 +149,7 @@ var float session_high = 0.0
 var float session_low = 0.0
 
 if show_profile and is_in_session
-    if new_session
+    if new_quarter
         array.fill(bin_volumes, 0.0)
         session_high := high
         session_low := low
@@ -155,12 +184,14 @@ if show_profile and is_in_session
                 box.set_rightbottom(bin_boxes.get(i), box_right, bin_bottom)
 
 // --- Visuals: 'Who is in Command' Table ---
-var table command_table = table.new(position.top_right, 2, 2, border_width = 1)
+var table command_table = table.new(position.top_right, 2, 3, border_width = 1)
 if show_table and barstate.islast
     string command = cum_delta > 0 ? "Bulls" : "Bears"
     color command_color = cum_delta > 0 ? color.green : color.red
 
-    table.cell(command_table, 0, 0, "In Command", bgcolor = color.gray, text_color = color.white)
-    table.cell(command_table, 1, 0, command, bgcolor = command_color, text_color = color.white)
-    table.cell(command_table, 0, 1, "Session Delta", bgcolor = color.gray, text_color = color.white)
-    table.cell(command_table, 1, 1, str.tostring(cum_delta, format.volume), bgcolor = command_color, text_color = color.white)
+    table.cell(command_table, 0, 0, "Quarter", bgcolor = color.gray, text_color = color.white)
+    table.cell(command_table, 1, 0, str.tostring(quarter_idx + 1), bgcolor = color.black, text_color = color.white)
+    table.cell(command_table, 0, 1, "In Command", bgcolor = color.gray, text_color = color.white)
+    table.cell(command_table, 1, 1, command, bgcolor = command_color, text_color = color.white)
+    table.cell(command_table, 0, 2, "Quarter Delta", bgcolor = color.gray, text_color = color.white)
+    table.cell(command_table, 1, 2, str.tostring(cum_delta, format.volume), bgcolor = command_color, text_color = color.white)
