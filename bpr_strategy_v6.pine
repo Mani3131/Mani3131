@@ -25,6 +25,7 @@ type BPR
     float bottom
     int start_index
     bool is_bullish // true = Bullish BPR (Buy), false = Bearish BPR (Sell)
+    box box_id
 
 // --- Arrays ---
 var fvg_list = array.new<FVG>()
@@ -80,7 +81,12 @@ detect_bpr(FVG current_fvg) =>
                 if overlap_top > overlap_bottom
                     // BPR Found!
                     // If current is Bullish, it's a Bullish BPR (Buy setup)
-                    array.push(bpr_list, BPR.new(overlap_top, overlap_bottom, bar_index, current_fvg.is_bullish))
+                    box b = box.new(bar_index, overlap_top, bar_index + 10, overlap_bottom,
+                      bgcolor = current_fvg.is_bullish ? bpr_color_bull : bpr_color_bear,
+                      border_color = na,
+                      text = "BPR", text_color = color.white, text_size = size.small,
+                      extend = extend.right)
+                    array.push(bpr_list, BPR.new(overlap_top, overlap_bottom, bar_index, current_fvg.is_bullish, b))
                     break // Usually only the most recent overlap matters
 
 // --- FVG Detection ---
@@ -110,6 +116,16 @@ detect_fvg() =>
 
 if barstate.isconfirmed
     detect_fvg()
+
+// --- BPR Violation Logic ---
+if array.size(bpr_list) > 0
+    for i = array.size(bpr_list) - 1 to 0
+        BPR b = array.get(bpr_list, i)
+        bool violated = b.is_bullish ? close < b.bottom : close > b.top
+
+        if violated
+            box.delete(b.box_id)
+            array.remove(bpr_list, i)
 
 // --- Signal Logic ---
 var BPR active_bull_bpr = na
@@ -149,14 +165,7 @@ if short_condition
 
 // --- Visualizations ---
 // 1. Draw BPR Zones
-if array.size(bpr_list) > 0
-    BPR latest = array.get(bpr_list, array.size(bpr_list) - 1)
-    if latest.start_index == bar_index
-        box.new(bar_index, latest.top, bar_index + 10, latest.bottom,
-          bgcolor = latest.is_bullish ? bpr_color_bull : bpr_color_bear,
-          border_color = na,
-          text = "BPR", text_color = color.white, text_size = size.small,
-          extend = extend.right)
+// (Already handled in detect_bpr and bpr_list management)
 
 // 2. Plot Signals
 plotshape(long_condition, "Long Entry", shape.triangleup, location.belowbar, color.lime, size = size.normal, text = "LONG")
