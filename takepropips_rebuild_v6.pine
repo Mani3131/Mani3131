@@ -108,8 +108,8 @@ if (long_signal or short_signal) and not active_trade.active[1]
 
 // --- UI DASHBOARDS ---
 var table_pos = dashboard_pos == "Top Right" ? position.top_right :
-                dashboard_pos == "Top Left" ? position.top_left :
-                dashboard_pos == "Bottom Right" ? position.bottom_right : position.bottom_left
+  dashboard_pos == "Top Left" ? position.top_left :
+  dashboard_pos == "Bottom Right" ? position.bottom_right : position.bottom_left
 
 var main_table = table.new(table_pos, 10, 15, bgcolor = color.rgb(13, 17, 23), border_width = 1, border_color = color.gray)
 
