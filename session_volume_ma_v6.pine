@@ -2,12 +2,12 @@
 // © Mani3131
 
 //@version=6
-indicator("Quarterly Session Volume [LuxAlgo] Clone", overlay = true, max_boxes_count = 5000, max_lines_count = 500, format = format.volume)
+indicator("Big Boss Quarterly Volume [LuxAlgo] Clone", overlay = true, max_boxes_count = 5000, max_lines_count = 500, format = format.volume)
 
 // --- Inputs ---
 group_session = "Quarterly Settings"
-// Quarterly theory often starts at 00:00 (or 20:00 NY previous day).
-// The user asked for UTC+3. 20:00 NY is 03:00 UTC+3.
+// Big Boss/ICT Quarterly starts at 20:00 NY.
+// 20:00 NY is 03:00 UTC+3 (typically, depends on DST but user asked for UTC+3).
 anchor_hour = input.int(3, "Anchor Hour (UTC+3)", minval = 0, maxval = 23, group = group_session)
 quarter_mins = 90
 
@@ -44,8 +44,14 @@ m = minute(time, "UTC+3")
 mins_since_midnight = (h * 60 + m)
 // Minutes since anchor
 mins_since_anchor = (mins_since_midnight - (anchor_hour * 60) + 1440) % 1440
-quarter_idx = int(mins_since_anchor / quarter_mins)
+
+// Big Boss Quarterly: 4 sessions of 6 hours, each with 4 quarters of 90 mins
+session_idx = int(mins_since_anchor / 360) // 0: Asia, 1: London, 2: NY, 3: PM
+quarter_in_session_idx = int((mins_since_anchor % 360) / quarter_mins) // 0-3
+quarter_idx = int(mins_since_anchor / quarter_mins) // 0-15 total in a day
+
 new_quarter = quarter_idx != quarter_idx[1] or barstate.isfirst
+new_session_bb = session_idx != session_idx[1] or barstate.isfirst
 
 is_in_session = true // Quarterly Theory usually covers the whole 24h cycle
 
@@ -94,34 +100,55 @@ if new_quarter
 
 // --- Visuals: Quarterly Box ---
 var box q_box = na
+var label q_label = na
+string q_name = switch quarter_in_session_idx
+    0 => "Q1: Accumulation"
+    1 => "Q2: Manipulation"
+    2 => "Q3: Distribution"
+    3 => "Q4: Reversal/Cont"
+
+color q_color = switch session_idx
+    0 => color.new(color.blue, 90)
+    1 => color.new(color.orange, 90)
+    2 => color.new(color.green, 90)
+    3 => color.new(color.purple, 90)
+
 if show_box
     if new_quarter
-        q_box := box.new(bar_index, high, bar_index, low, border_color = color.gray, border_style = line.style_dashed, bgcolor = color.new(color.gray, 90))
+        q_box := box.new(bar_index, high, bar_index, low, border_color = color.gray, border_style = line.style_solid, bgcolor = q_color)
+        q_label := label.new(bar_index, high, q_name, color = color.new(color.black, 100), textcolor = color.white, style = label.style_label_down, size = size.small)
     else if is_in_session
         box.set_right(q_box, bar_index)
         box.set_top(q_box, math.max(box.get_top(q_box), high))
         box.set_bottom(q_box, math.min(box.get_bottom(q_box), low))
+        label.set_xy(q_label, int(math.avg(box.get_left(q_box), bar_index)), box.get_top(q_box))
 
 // --- Visuals: Gradient Heatmap (Who is in Command) ---
 if show_gradient and is_in_session
     // Gradient to show who is in command (Bulls vs Bears)
-    // We can use the alpha for intensity (relative volume)
+    // Intensity based on relative volume
     float relative_vol_ratio = svma > 0 ? math.min(1.0, cum_vol / (svma * 1.5)) : 0.5
     color cmd_color = cum_delta > 0 ? color.green : color.red
     color heatmap_color = color.new(cmd_color, 100 - int(relative_vol_ratio * 100))
 
+    // Fixed vertical position at the top of the chart (using a large offset or constant)
+    // To make it look like a bar at the very top, we can use chart.top if available in v6?
+    // Not directly for boxes. We'll use a very high price offset.
+    float top_pos = ta.highest(high, 500) + (atr_val * 10)
+
     // Create a new box for each bar to show history of who is in command
-    box.new(bar_index, high + (atr_val * 3.0), bar_index, high + (atr_val * 2.5),
+    box.new(bar_index, top_pos, bar_index, top_pos - (atr_val * 1.5),
              border_color = na,
              bgcolor = heatmap_color)
 
 // --- Visuals: Quarterly Volume Delta Histogram ---
 // Drawing histogram inside the quarterly box at the bottom
 if is_in_session
-    float hist_height = atr_val * 2
+    float hist_height = atr_val * 3
     float hist_base = q_box.get_bottom()
-    float max_delta = ta.highest(math.abs(bar_delta), 100) // Local max for scaling
-    float scaled_delta = max_delta > 0 ? (bar_delta / max_delta) * hist_height : 0
+    // Using a more stable scaling: 50-bar SMA of volume to define "large" delta
+    float vol_avg = ta.sma(volume, 50)
+    float scaled_delta = vol_avg > 0 ? (bar_delta / vol_avg) * (hist_height / 2) : 0
 
     box.new(bar_index, hist_base + scaled_delta, bar_index, hist_base,
              border_color = na,
@@ -141,8 +168,8 @@ plot_vwap = vwap_sum_v > 0 ? vwap_sum_pv / vwap_sum_v : na
 plot(is_in_session ? plot_vwap : na, "Session VWAP", color = color.yellow, linewidth = 2)
 
 // --- Visuals: Session Volume Profile ---
-// We'll use a simplified version: 20 bins for the current session.
-int num_bins = 20
+// We'll use a higher resolution: 40 bins for the current session.
+int num_bins = 40
 var float[] bin_volumes = array.new_float(num_bins, 0.0)
 var box[] bin_boxes = array.new_box(num_bins, na)
 var float session_high = 0.0
@@ -178,7 +205,7 @@ if show_profile and is_in_session
 
                 // Draw profile on the right side of the session
                 int box_right = bar_index
-                int box_left = int(math.max(bar_index - session_bar_index, bar_index - (session_bar_index * vol_ratio * 0.3))) // Width up to 30% of session width
+                int box_left = int(math.max(box.get_left(q_box), bar_index - (session_bar_index * vol_ratio * 0.5))) // Width up to 50% of session width
 
                 box.set_lefttop(bin_boxes.get(i), box_left, bin_top)
                 box.set_rightbottom(bin_boxes.get(i), box_right, bin_bottom)
