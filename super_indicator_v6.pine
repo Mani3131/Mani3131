@@ -1,0 +1,82 @@
+//@version=6
+indicator("Super Indicator [Atsa301]", overlay = true, max_labels_count = 500)
+
+// Inputs
+group_ema = "Exponential Moving Averages"
+show_ema9 = input.bool(true, "Show 9 EMA (Short Term)", group = group_ema)
+show_ema21 = input.bool(true, "Show 21 EMA (Entry/Exit)", group = group_ema)
+show_ema50 = input.bool(true, "Show 50 EMA (Stop Loss)", group = group_ema)
+show_ema200 = input.bool(true, "Show 200 EMA (Long Term)", group = group_ema)
+
+group_bb = "Bollinger Bands"
+show_bb = input.bool(true, "Show Bollinger Bands", group = group_bb)
+bb_length = input.int(20, "BB Length", minval = 1, group = group_bb)
+bb_mult = input.float(2.0, "BB StdDev", minval = 0.001, group = group_bb)
+
+group_macd = "MACD"
+macd_fast = input.int(12, "Fast Length", minval = 1, group = group_macd)
+macd_slow = input.int(26, "Slow Length", minval = 1, group = group_macd)
+macd_signal = input.int(9, "Signal Smoothing", minval = 1, group = group_macd)
+
+group_rsi = "RSI"
+rsi_length = input.int(14, "RSI Length", minval = 1, group = group_rsi)
+rsi_overbought = input.int(70, "Overbought Level", group = group_rsi)
+rsi_oversold = input.int(30, "Oversold Level", group = group_rsi)
+
+group_signals = "Signals"
+show_signals = input.bool(true, "Show Buy/Sell Labels", group = group_signals)
+
+// Calculations
+// EMAs
+ema9 = ta.ema(close, 9)
+ema21 = ta.ema(close, 21)
+ema50 = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+
+// Bollinger Bands
+[bb_basis, bb_upper, bb_lower] = ta.bb(close, bb_length, bb_mult)
+
+// MACD
+[macd_line, signal_line, macd_hist] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+
+// RSI
+rsi = ta.rsi(close, rsi_length)
+
+// Signal Logic
+buy_confluence = close > ema200 and ta.crossover(ema9, ema21) and macd_line > signal_line and rsi < rsi_overbought
+sell_confluence = close < ema200 and ta.crossunder(ema9, ema21) and macd_line < signal_line and rsi > rsi_oversold
+
+// Plotting
+// EMAs
+plot(show_ema9 ? ema9 : na, "9 EMA", color = color.blue, linewidth = 1)
+plot(show_ema21 ? ema21 : na, "21 EMA", color = color.green, linewidth = 1)
+plot(show_ema50 ? ema50 : na, "50 EMA", color = color.orange, linewidth = 2)
+plot(show_ema200 ? ema200 : na, "200 EMA", color = color.purple, linewidth = 2)
+
+// Bollinger Bands
+plot(show_bb ? bb_basis : na, "BB Basis", color = color.gray)
+bb_u_plot = plot(show_bb ? bb_upper : na, "BB Upper", color = color.blue)
+bb_l_plot = plot(show_bb ? bb_lower : na, "BB Lower", color = color.blue)
+fill(bb_u_plot, bb_l_plot, color = color.new(color.blue, 90), title = "BB Fill")
+
+// Signal Labels
+if show_signals and buy_confluence
+    label.new(bar_index, low, "BUY", color = color.green, textcolor = color.white, style = label.style_label_up, yloc = yloc.belowbar)
+
+if show_signals and sell_confluence
+    label.new(bar_index, high, "SELL", color = color.red, textcolor = color.white, style = label.style_label_down, yloc = yloc.abovebar)
+
+// Dashboard
+var table dashboard = table.new(position.top_right, 2, 3, border_width = 1)
+if barstate.islast
+    table.cell(dashboard, 0, 0, "Indicator", bgcolor = color.gray, text_color = color.white)
+    table.cell(dashboard, 1, 0, "Status", bgcolor = color.gray, text_color = color.white)
+
+    table.cell(dashboard, 0, 1, "RSI (" + str.tostring(rsi_length) + ")", bgcolor = color.black, text_color = color.white)
+    rsi_color = rsi > rsi_overbought ? color.red : rsi < rsi_oversold ? color.green : color.white
+    table.cell(dashboard, 1, 1, str.tostring(rsi, "#.##"), bgcolor = color.black, text_color = rsi_color)
+
+    table.cell(dashboard, 0, 2, "MACD", bgcolor = color.black, text_color = color.white)
+    macd_status = macd_line > signal_line ? "Bullish" : "Bearish"
+    macd_color = macd_line > signal_line ? color.green : color.red
+    table.cell(dashboard, 1, 2, macd_status, bgcolor = color.black, text_color = macd_color)
