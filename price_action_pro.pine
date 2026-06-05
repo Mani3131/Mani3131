@@ -1,0 +1,217 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © user
+
+//@version=6
+indicator("Price Action Pro [Jules]", overlay = true, max_boxes_count = 500, max_labels_count = 500)
+
+// --- Inputs ---
+grp_ms = "Market Structure"
+lb_left = input.int(5, "Pivot Left Bars", minval = 1, group = grp_ms)
+lb_right = input.int(2, "Pivot Right Bars", minval = 1, group = grp_ms)
+show_ms = input.bool(true, "Show Market Structure", group = grp_ms)
+
+grp_zones = "Zones"
+show_zones = input.bool(true, "Show Support/Resistance/S&D", group = grp_zones)
+zone_width = input.int(20, "Zone Lookback/Width", minval = 1, group = grp_zones)
+atr_mult = input.float(0.5, "Zone Height (ATR Multiplier)", minval = 0.1, group = grp_zones)
+
+grp_signals = "Signals"
+trend_filter = input.bool(true, "Trend Filter (HH/HL for Buy, LL/LH for Sell)", group = grp_signals)
+
+// --- Market Structure Logic ---
+var float last_ph_price = na
+var float last_pl_price = na
+var int last_ph_index = na
+var int last_pl_index = na
+
+ph = ta.pivothigh(high, lb_left, lb_right)
+pl = ta.pivotlow(low, lb_left, lb_right)
+
+if not na(ph)
+    string label_text = ""
+    color label_color = color.gray
+
+    if na(last_ph_price) or ph > last_ph_price
+        label_text := "HH"
+        label_color := color.green
+    else
+        label_text := "LH"
+        label_color := color.red
+
+    if show_ms
+        label.new(bar_index[lb_right], ph, label_text, color = color.new(label_color, 100), textcolor = label_color, style = label.style_label_down, size = size.small)
+
+    last_ph_price := ph
+    last_ph_index := bar_index[lb_right]
+
+if not na(pl)
+    string label_text = ""
+    color label_color = color.gray
+
+    if na(last_pl_price) or pl < last_pl_price
+        label_text := "LL"
+        label_color := color.red
+    else
+        label_text := "HL"
+        label_color := color.green
+
+    if show_ms
+        label.new(bar_index[lb_right], pl, label_text, color = color.new(label_color, 100), textcolor = label_color, style = label.style_label_up, size = size.small)
+
+    last_pl_price := pl
+    last_pl_index := bar_index[lb_right]
+
+// Trend detection
+var int trend = 0 // 1 for up, -1 for down
+if not na(ph)
+    if ph > last_ph_price[1]
+        trend := 1 // Higher High
+    else if ph < last_ph_price[1]
+        trend := -1 // Lower High
+
+if not na(pl)
+    if pl > last_pl_price[1]
+        trend := 1 // Higher Low
+    else if pl < last_pl_price[1]
+        trend := -1 // Lower Low
+
+// --- Zone Detection Logic ---
+var box[] sup_boxes = array.new<box>()
+var box[] res_boxes = array.new<box>()
+var box[] dem_boxes = array.new<box>()
+var box[] sup_val_boxes = array.new<box>() // Supply zones
+
+atr = ta.atr(14)
+
+// Helper to manage box arrays
+manage_boxes(box_array, max_count) =>
+    if array.size(box_array) > max_count
+        box.delete(array.shift(box_array))
+
+// S&D Detection (based on momentum/imbalance)
+is_momentum_up = close > open and (close - open) > 2 * math.abs(close[1] - open[1])
+is_momentum_down = close < open and (open - close) > 2 * math.abs(close[1] - open[1])
+
+if show_zones
+    // Demand Zone
+    if is_momentum_up[1]
+        box b = box.new(bar_index[1], high[1], bar_index + zone_width, low[1], bgcolor = color.new(color.blue, 80), border_color = na)
+        array.push(dem_boxes, b)
+        manage_boxes(dem_boxes, 10)
+
+    // Supply Zone
+    if is_momentum_down[1]
+        box b = box.new(bar_index[1], high[1], bar_index + zone_width, low[1], bgcolor = color.new(color.maroon, 80), border_color = na)
+        array.push(sup_val_boxes, b)
+        manage_boxes(sup_val_boxes, 10)
+
+    // Support/Resistance (based on pivots)
+    if not na(pl)
+        box b = box.new(bar_index[lb_right], pl + (atr * atr_mult), bar_index + zone_width, pl - (atr * atr_mult), bgcolor = color.new(color.green, 85), border_color = na)
+        array.push(sup_boxes, b)
+        manage_boxes(sup_boxes, 10)
+
+    if not na(ph)
+        box b = box.new(bar_index[lb_right], ph + (atr * atr_mult), bar_index + zone_width, ph - (atr * atr_mult), bgcolor = color.new(color.red, 85), border_color = na)
+        array.push(res_boxes, b)
+        manage_boxes(res_boxes, 10)
+
+// --- Candlestick Confirmations Logic ---
+is_bull_engulf = close > open and close[1] < open[1] and close >= open[1] and open <= close[1]
+is_bear_engulf = close < open and close[1] > open[1] and close <= open[1] and open >= close[1]
+
+body_size = math.abs(close - open)
+upper_wick = high - math.max(open, close)
+lower_wick = math.min(open, close) - low
+is_pin_bar_bull = lower_wick > body_size * 2 and upper_wick < body_size
+is_pin_bar_bear = upper_wick > body_size * 2 and lower_wick < body_size
+
+is_inside_bar = high < high[1] and low > low[1]
+is_inside_break_bull = high[1] < high and is_inside_bar[1]
+is_inside_break_bear = low[1] > low and is_inside_bar[1]
+
+is_doji = body_size <= (high - low) * 0.1
+
+is_morning_star = close[2] < open[2] and math.abs(close[1] - open[1]) < body_size[2] * 0.5 and close > open and close > (open[2] + close[2]) / 2
+is_evening_star = close[2] > open[2] and math.abs(close[1] - open[1]) < body_size[2] * 0.5 and close < open and close < (open[2] + close[2]) / 2
+
+is_strong_break_bull = is_momentum_up and (not na(ph) or high > last_ph_price)
+is_strong_break_bear = is_momentum_down and (not na(pl) or low < last_pl_price)
+
+// --- Liquidity Sweep Logic ---
+is_liq_sweep_bull = low < last_pl_price and close > last_pl_price // Swept low and closed back above
+is_liq_sweep_bear = high > last_ph_price and close < last_ph_price // Swept high and closed back below
+
+// --- Signal Engine ---
+is_bullish_conf = is_bull_engulf or is_pin_bar_bull or is_inside_break_bull or is_morning_star or is_strong_break_bull or is_liq_sweep_bull
+is_bearish_conf = is_bear_engulf or is_pin_bar_bear or is_inside_break_bear or is_evening_star or is_strong_break_bear or is_liq_sweep_bear
+
+// Check if price is near a zone
+in_demand = false
+for b in dem_boxes
+    if low <= box.get_top(b) and high >= box.get_bottom(b)
+        in_demand := true
+        break
+
+in_support = false
+for b in sup_boxes
+    if low <= box.get_top(b) and high >= box.get_bottom(b)
+        in_support := true
+        break
+
+in_supply = false
+for b in sup_val_boxes
+    if high >= box.get_bottom(b) and low <= box.get_top(b)
+        in_supply := true
+        break
+
+in_resistance = false
+for b in res_boxes
+    if high >= box.get_bottom(b) and low <= box.get_top(b)
+        in_resistance := true
+        break
+
+buy_signal = (in_demand or in_support or is_liq_sweep_bull) and is_bullish_conf and (not trend_filter or trend >= 0)
+sell_signal = (in_supply or in_resistance or is_liq_sweep_bear) and is_bearish_conf and (not trend_filter or trend <= 0)
+
+plotshape(buy_signal, "Buy Signal", shape.triangleup, location.belowbar, color.green, size = size.small, text = "BUY", display = display.all - display.status_line)
+plotshape(sell_signal, "Sell Signal", shape.triangledown, location.abovebar, color.red, size = size.small, text = "SELL", display = display.all - display.status_line)
+
+// Labels for confirmation types
+if buy_signal
+    string conf_type = ""
+    if is_bull_engulf
+        conf_type += "Engulfing "
+    if is_pin_bar_bull
+        conf_type += "Pin Bar "
+    if is_inside_break_bull
+        conf_type += "Inside Break "
+    if is_morning_star
+        conf_type += "Morning Star "
+    if is_strong_break_bull
+        conf_type += "Strong Break "
+    if is_liq_sweep_bull
+        conf_type += "Liq Sweep "
+    label.new(bar_index, low, conf_type, style = label.style_none, textcolor = color.green, size = size.tiny)
+
+if sell_signal
+    string conf_type = ""
+    if is_bear_engulf
+        conf_type += "Engulfing "
+    if is_pin_bar_bear
+        conf_type += "Pin Bar "
+    if is_inside_break_bear
+        conf_type += "Inside Break "
+    if is_evening_star
+        conf_type += "Evening Star "
+    if is_strong_break_bear
+        conf_type += "Strong Break "
+    if is_liq_sweep_bear
+        conf_type += "Liq Sweep "
+    label.new(bar_index, high, conf_type, style = label.style_none, textcolor = color.red, size = size.tiny)
+
+// Alerting
+alertcondition(buy_signal, "Buy Signal", "Price Action Buy Signal at {{close}}")
+alertcondition(sell_signal, "Sell Signal", "Price Action Sell Signal at {{close}}")
+
+plot(na, "Structure Base")
