@@ -2,7 +2,7 @@
 // © Mani3131
 
 //@version=6
-indicator("FX Telepath Set & Forget [v6]", overlay = true, max_boxes_count = 500)
+indicator("FX Telepath Set & Forget [v6]", overlay = true, max_boxes_count = 500, max_labels_count = 500)
 
 // --- Inputs ---
 group_candle = "Candle Classification"
@@ -63,6 +63,38 @@ if not na(pl)
     is_uptrend := pl > last_pl ? true : (pl < last_pl ? false : is_uptrend)
     last_pl := pl
 
+// --- Helper Functions ---
+create_zone(float p_prox, float p_dist, int p_start, int p_end, bool p_is_dem, bool p_high_odds, Zone[] p_zones, color p_col, bool p_legout_ok) =>
+    bool trend_ok = not use_trend_filter or (p_is_dem ? nz(is_uptrend, true) : not nz(is_uptrend, false))
+    bool final_high_odds = p_high_odds and trend_ok and p_legout_ok
+    if not show_high_odds_only or final_high_odds
+        Zone new_zone = Zone.new(p_prox, p_dist, p_start, p_end, p_is_dem)
+        new_zone.is_high_odds := final_high_odds
+        new_zone.box_id := box.new(p_start, math.max(p_prox, p_dist), bar_index, math.min(p_prox, p_dist),
+          bgcolor = p_col, border_color = na,
+          extend = extend.none)
+        if final_high_odds
+            float lbl_y = p_is_dem ? math.min(p_prox, p_dist) : math.max(p_prox, p_dist)
+            label.new(p_start, lbl_y, "HIGH ODDS",
+              color = color.new(color.yellow, 20),
+              style = p_is_dem ? label.style_label_up : label.style_label_down,
+              textcolor = color.black, size = size.small)
+
+            if show_rr
+                float risk = math.abs(p_prox - p_dist)
+                float tp_price = p_is_dem ? p_prox + risk * rr_ratio : p_prox - risk * rr_ratio
+                string tp_text = "TP: " + str.tostring(tp_price, format.mintick)
+                label.new(bar_index, tp_price, tp_text,
+                  color = color.new(color.lime, 20),
+                  style = p_is_dem ? label.style_label_down : label.style_label_up,
+                  textcolor = color.black, size = size.small)
+                string sl_text = "SL: " + str.tostring(p_dist, format.mintick)
+                label.new(bar_index, p_dist, sl_text,
+                  color = color.new(color.red, 20),
+                  style = p_is_dem ? label.style_label_up : label.style_label_down,
+                  textcolor = color.white, size = size.small)
+        p_zones.push(new_zone)
+
 // --- Pattern Detection ---
 bool leg_out_valid = not min_legout_erc or is_erc
 if barstate.isconfirmed and leg_out_valid
@@ -94,44 +126,16 @@ if barstate.isconfirmed and leg_out_valid
         bool is_explosive = candle_body >= 2 * avg_body
         bool legout_ok = not explosive_legout or is_explosive
 
-        // Helper to create zone and its visual
-        create_zone(float prox, float dist, int start, int end, bool is_dem, bool high_odds, Zone[] zone_arr, color col) =>
-            bool trend_ok = not use_trend_filter or (is_dem ? nz(is_uptrend, true) : not nz(is_uptrend, false))
-            bool final_high_odds = high_odds and trend_ok and legout_ok
-            if not show_high_odds_only or final_high_odds
-                Zone new_zone = Zone.new(prox, dist, start, end, is_dem)
-                new_zone.is_high_odds := final_high_odds
-                new_zone.box_id := box.new(start, math.max(prox, dist), bar_index, math.min(prox, dist),
-                     bgcolor = col, border_color = na,
-                     extend = extend.none)
-                if final_high_odds
-                    label.new(start, is_dem ? math.min(prox, dist) : math.max(prox, dist), "HIGH ODDS",
-                         color = color.new(color.yellow, 20),
-                         style = is_dem ? label.style_label_up : label.style_label_down,
-                         textcolor = color.black, size = size.small)
-
-                    if show_rr
-                        float risk = math.abs(prox - dist)
-                        float tp_price = is_dem ? prox + risk * rr_ratio : prox - risk * rr_ratio
-                        label.new(bar_index, tp_price, "TP: " + str.tostring(tp_price, format.mintick),
-                             color = color.new(color.lime, 20), style = is_dem ? label.style_label_down : label.style_label_up,
-                             textcolor = color.black, size = size.small)
-                        label.new(bar_index, dist, "SL: " + str.tostring(dist, format.mintick),
-                             color = color.new(color.red, 20), style = is_dem ? label.style_label_up : label.style_label_down,
-                             textcolor = color.white, size = size.small)
-
-                zone_arr.push(new_zone)
-
         // Reversal Patterns
         if leg_out_up and leg_in_dn // DBR
-            create_zone(base_max_body_h, base_min_l, bar_index - base_count, bar_index - 1, true, base_count <= high_odds_base_max, demand_zones, up_zone_col)
+            create_zone(base_max_body_h, base_min_l, bar_index - base_count, bar_index - 1, true, base_count <= high_odds_base_max, demand_zones, up_zone_col, legout_ok)
         else if not leg_out_up and leg_in_up // RBD
-            create_zone(base_min_body_l, base_max_h, bar_index - base_count, bar_index - 1, false, base_count <= high_odds_base_max, supply_zones, dn_zone_col)
+            create_zone(base_min_body_l, base_max_h, bar_index - base_count, bar_index - 1, false, base_count <= high_odds_base_max, supply_zones, dn_zone_col, legout_ok)
         // Continuation Patterns
         else if leg_out_up and leg_in_up // RBR
-            create_zone(base_max_body_h, base_min_l, bar_index - base_count, bar_index - 1, true, base_count <= high_odds_base_max, demand_zones, up_zone_col)
+            create_zone(base_max_body_h, base_min_l, bar_index - base_count, bar_index - 1, true, base_count <= high_odds_base_max, demand_zones, up_zone_col, legout_ok)
         else if not leg_out_up and leg_in_dn // DBD
-            create_zone(base_min_body_l, base_max_h, bar_index - base_count, bar_index - 1, false, base_count <= high_odds_base_max, supply_zones, dn_zone_col)
+            create_zone(base_min_body_l, base_max_h, bar_index - base_count, bar_index - 1, false, base_count <= high_odds_base_max, supply_zones, dn_zone_col, legout_ok)
 
 // --- Zone Management and Drawing ---
 process_zones(Zone[] zones) =>
