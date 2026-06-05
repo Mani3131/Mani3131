@@ -5,20 +5,20 @@
 indicator("Mulham Trading 2 Lines & 3 Steps", overlay = true, max_boxes_count = 500, max_labels_count = 500)
 
 // --- INPUTS ---
-grp_range   = "Anchor Candle Range (The 2 Lines)"
-session_inp = input.session("0930-0945", "Anchor Session (NY Open)", group = grp_range)
-session_tz  = input.string("UTC-5", "Timezone", tooltip = "Use the timezone of the market open (e.g., UTC-5 for EST)", group = grp_range)
-range_col   = input.color(color.new(color.gray, 80), "Range Color", group = grp_range)
+grp_range    = "Anchor Candle Range (The 2 Lines)"
+session_inp  = input.session("0930-0945", "Anchor Session (NY Open)", group = grp_range)
+session_tz   = input.string("UTC-5", "Timezone", tooltip = "Use the timezone of the market open (e.g., UTC-5 for EST)", group = grp_range)
+range_col    = input.color(color.new(color.gray, 80), "Range Color", group = grp_range)
 
-grp_steps   = "The 3 Steps Logic"
+grp_steps    = "The 3 Steps Logic"
 fast_ema_len = input.int(9, "Fast EMA (Step 1)", minval = 1, group = grp_steps)
 slow_ema_len = input.int(21, "Slow EMA (Step 1)", minval = 1, group = grp_steps)
 rr_ratio     = input.float(2.0, "Risk:Reward Ratio", minval = 0.1, group = grp_steps)
 
 // --- GLOBALS & STATE ---
-var float range_high = na
-var float range_low  = na
-var box[] range_boxes = array.new<box>()
+var float range_high   = na
+var float range_low    = na
+var box[] range_boxes  = array.new<box>()
 var line[] tp_sl_lines = array.new<line>()
 
 // --- SESSION LOGIC ---
@@ -29,24 +29,24 @@ new_session   = is_in_session and na(t[1])
 
 // Update range on new session start
 if new_session
-  range_high := high
-  range_low  := low
-  // Create a new box for the session range
-  if barstate.isconfirmed
-    new_box = box.new(bar_index, range_high, bar_index, range_low,
-      border_color = color.gray,
-      bgcolor = range_col,
-      extend = extend.right)
-    array.push(range_boxes, new_box)
-    if array.size(range_boxes) > 100
-      box.delete(array.shift(range_boxes))
+    range_high := high
+    range_low  := low
+    // Create a new box for the session range
+    if barstate.isconfirmed
+        new_box = box.new(bar_index, range_high, bar_index, range_low,
+          border_color = color.gray,
+          bgcolor = range_col,
+          extend = extend.right)
+        array.push(range_boxes, new_box)
+        if array.size(range_boxes) > 100
+            box.delete(array.shift(range_boxes))
 else if is_in_session
-  range_high := math.max(range_high, high)
-  range_low  := math.min(range_low, low)
-  if array.size(range_boxes) > 0
-    current_box = array.get(range_boxes, array.size(range_boxes) - 1)
-    box.set_top(current_box, range_high)
-    box.set_bottom(current_box, range_low)
+    range_high := math.max(range_high, high)
+    range_low  := math.min(range_low, low)
+    if array.size(range_boxes) > 0
+        current_box = array.get(range_boxes, array.size(range_boxes) - 1)
+        box.set_top(current_box, range_high)
+        box.set_bottom(current_box, range_low)
 
 // Plot the 2 lines for visual clarity if preferred over the box
 plot(range_high, "Range High", color.new(color.gray, 50), 1, plot.style_linebr)
@@ -99,60 +99,60 @@ var bool step2_ok = false
 var bool step3_ok = false
 
 if is_sweeping_high or is_sweeping_low
-  step2_ok := true
+    step2_ok := true
 if long_signal or short_signal
-  step3_ok := true
+    step3_ok := true
 
 if new_session
-  step2_ok := false
-  step3_ok := false
+    step2_ok := false
+    step3_ok := false
 
 if barstate.islast
-  // Headers
-  table.cell(board, 0, 0, "Step",   text_color = color.white)
-  table.cell(board, 1, 0, "Name",   text_color = color.white)
-  table.cell(board, 2, 0, "Status", text_color = color.white)
+    // Headers
+    table.cell(board, 0, 0, "Step",   text_color = color.white)
+    table.cell(board, 1, 0, "Name",   text_color = color.white)
+    table.cell(board, 2, 0, "Status", text_color = color.white)
 
-  // Step 1: Bias
-  table.cell(board, 0, 1, "1",    text_color = color.white)
-  table.cell(board, 1, 1, "Bias", text_color = color.white)
-  table.cell(board, 2, 1, is_bullish_bias ? "BULLISH" : is_bearish_bias ? "BEARISH" : "NEUTRAL",
-    bgcolor = is_bullish_bias ? color.new(color.green, 50) : is_bearish_bias ? color.new(color.red, 50) : color.gray)
+    // Step 1: Bias
+    table.cell(board, 0, 1, "1",    text_color = color.white)
+    table.cell(board, 1, 1, "Bias", text_color = color.white)
+    table.cell(board, 2, 1, is_bullish_bias ? "BULLISH" : is_bearish_bias ? "BEARISH" : "NEUTRAL",
+      bgcolor = is_bullish_bias ? color.new(color.green, 50) : is_bearish_bias ? color.new(color.red, 50) : color.gray)
 
-  // Step 2: Level
-  table.cell(board, 0, 2, "2",     text_color = color.white)
-  table.cell(board, 1, 2, "Level", text_color = color.white)
-  table.cell(board, 2, 2, step2_ok ? "SWEPT" : "WAITING",
-    bgcolor = step2_ok ? color.new(color.orange, 50) : color.gray)
+    // Step 2: Level
+    table.cell(board, 0, 2, "2",     text_color = color.white)
+    table.cell(board, 1, 2, "Level", text_color = color.white)
+    table.cell(board, 2, 2, step2_ok ? "SWEPT" : "WAITING",
+      bgcolor = step2_ok ? color.new(color.orange, 50) : color.gray)
 
-  // Step 3: Entry
-  table.cell(board, 0, 3, "3",     text_color = color.white)
-  table.cell(board, 1, 3, "Entry", text_color = color.white)
-  table.cell(board, 2, 3, step3_ok ? "SIGNAL" : "WAITING",
-    bgcolor = step3_ok ? color.new(color.aqua, 50) : color.gray)
+    // Step 3: Entry
+    table.cell(board, 0, 3, "3",     text_color = color.white)
+    table.cell(board, 1, 3, "Entry", text_color = color.white)
+    table.cell(board, 2, 3, step3_ok ? "SIGNAL" : "WAITING",
+      bgcolor = step3_ok ? color.new(color.aqua, 50) : color.gray)
 
 // --- RISK MANAGEMENT (TP/SL) ---
 if (long_signal or short_signal) and barstate.isconfirmed
-  sl_price = long_signal ? low[1] : high[1]
-  tp_dist  = math.abs(close - sl_price) * rr_ratio
-  tp_price = long_signal ? close + tp_dist : close - tp_dist
+    sl_price = long_signal ? low[1] : high[1]
+    tp_dist  = math.abs(close - sl_price) * rr_ratio
+    tp_price = long_signal ? close + tp_dist : close - tp_dist
 
-  sl_l = line.new(bar_index, sl_price, bar_index + 10, sl_price, color = color.red, style = line.style_dashed, extend = extend.right)
-  tp_l = line.new(bar_index, tp_price, bar_index + 10, tp_price, color = color.green, style = line.style_dashed, extend = extend.right)
+    sl_l = line.new(bar_index, sl_price, bar_index + 10, sl_price, color = color.red, style = line.style_dashed, extend = extend.right)
+    tp_l = line.new(bar_index, tp_price, bar_index + 10, tp_price, color = color.green, style = line.style_dashed, extend = extend.right)
 
-  array.push(tp_sl_lines, sl_l)
-  array.push(tp_sl_lines, tp_l)
+    array.push(tp_sl_lines, sl_l)
+    array.push(tp_sl_lines, tp_l)
 
-  if array.size(tp_sl_lines) > 20
-    line.delete(array.shift(tp_sl_lines))
-    line.delete(array.shift(tp_sl_lines))
+    if array.size(tp_sl_lines) > 20
+        line.delete(array.shift(tp_sl_lines))
+        line.delete(array.shift(tp_sl_lines))
 
 // Cleanup logic for active TP/SL
 if array.size(tp_sl_lines) >= 2
-  last_sl = array.get(tp_sl_lines, array.size(tp_sl_lines) - 2)
-  last_tp = array.get(tp_sl_lines, array.size(tp_sl_lines) - 1)
-  if ta.cross(close, line.get_y1(last_sl)) or ta.cross(close, line.get_y1(last_tp))
-    line.set_extend(last_sl, extend.none)
-    line.set_extend(last_tp, extend.none)
-    line.set_x2(last_sl, bar_index)
-    line.set_x2(last_tp, bar_index)
+    last_sl = array.get(tp_sl_lines, array.size(tp_sl_lines) - 2)
+    last_tp = array.get(tp_sl_lines, array.size(tp_sl_lines) - 1)
+    if ta.cross(close, line.get_y1(last_sl)) or ta.cross(close, line.get_y1(last_tp))
+        line.set_extend(last_sl, extend.none)
+        line.set_extend(last_tp, extend.none)
+        line.set_x2(last_sl, bar_index)
+        line.set_x2(last_tp, bar_index)
