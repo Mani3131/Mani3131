@@ -51,21 +51,29 @@ var Zone[] supply_zones = array.new<Zone>()
 float ph = ta.pivothigh(high, pivot_len, pivot_len)
 float pl = ta.pivotlow(low, pivot_len, pivot_len)
 
-var last_ph = float(na)
-var last_pl = float(na)
-var is_uptrend = bool(na)
+var float last_ph = na
+var float last_pl = na
+var int trend_direction = 0 // 0: unknown, 1: up, 2: down
 
 if not na(ph)
-    is_uptrend := ph > last_ph ? true : (ph < last_ph ? false : is_uptrend)
+    if not na(last_ph)
+        if ph > last_ph
+            trend_direction := 1
+        else if ph < last_ph
+            trend_direction := -1
     last_ph := ph
 
 if not na(pl)
-    is_uptrend := pl > last_pl ? true : (pl < last_pl ? false : is_uptrend)
+    if not na(last_pl)
+        if pl > last_pl
+            trend_direction := 1
+        else if pl < last_pl
+            trend_direction := -1
     last_pl := pl
 
 // --- Helper Functions ---
 create_zone(float p_prox, float p_dist, int p_start, int p_end, bool p_is_dem, bool p_high_odds, Zone[] p_zones, color p_col, bool p_legout_ok) =>
-    bool trend_ok = not use_trend_filter or (p_is_dem ? nz(is_uptrend, true) : not nz(is_uptrend, false))
+    bool trend_ok = not use_trend_filter or trend_direction == 0 or (p_is_dem ? trend_direction == 1 : trend_direction == -1)
     bool final_high_odds = p_high_odds and trend_ok and p_legout_ok
     if not show_high_odds_only or final_high_odds
         Zone new_zone = Zone.new(p_prox, p_dist, p_start, p_end, p_is_dem)
@@ -94,6 +102,8 @@ create_zone(float p_prox, float p_dist, int p_start, int p_end, bool p_is_dem, b
                   style = p_is_dem ? label.style_label_up : label.style_label_down,
                   textcolor = color.white, size = size.small)
         p_zones.push(new_zone)
+        if p_zones.size() > 100
+            p_zones.shift()
 
 // --- Pattern Detection ---
 bool leg_out_valid = not min_legout_erc or is_erc
@@ -140,7 +150,7 @@ if barstate.isconfirmed and leg_out_valid
 // --- Zone Management and Drawing ---
 process_zones(Zone[] zones) =>
     if zones.size() > 0
-        for i = zones.size() - 1 to 0
+        for i = zones.size() - 1 to 0 by -1
             Zone z = zones.get(i)
             if not z.is_mitigated
                 // Update box end
