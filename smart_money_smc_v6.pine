@@ -202,7 +202,7 @@ if show_fib
         for ratio in fib_ratios
             float level_price = swing_high - (diff * ratio)
             l = line.new(bar_index - 50, level_price, bar_index + 10, level_price, color=color.new(color.gray, 60), style=line.style_dotted)
-            lb = label.new(bar_index + 10, level_price, str.tostring(ratio * 100, "#.#") + "% (" + str.tostring(level_price, format.mintick) + ")", textcolor=color.new(color.gray, 20), style=label.style_label_left, size=size.tiny, bgcolor=color.new(color.white, 100))
+            lb = label.new(bar_index + 10, level_price, str.tostring(ratio * 100, "#.#") + "% (" + str.tostring(level_price, format.mintick) + ")", textcolor=color.new(color.gray, 20), style=label.style_label_left, size=size.tiny, color=color.new(color.white, 100))
             array.push(fib_lines, l)
             array.push(fib_labels, lb)
 
