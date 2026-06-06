@@ -1,0 +1,136 @@
+//@version=6
+indicator("SMART FX V2.77", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
+
+// --- Inputs ---
+trendLength = input.int(20, "Trend Length")
+atrLength = input.int(14, "ATR Length for Targets")
+pivotLeft = input.int(10, "Pivot Left Strength")
+pivotRight = input.int(10, "Pivot Right Strength")
+
+// --- Trend & Candle Coloring ---
+hmaTrend = ta.hma(close, trendLength)
+isBullish = close > hmaTrend
+isBearish = close < hmaTrend
+
+candleColor = isBullish ? #00ffff : isBearish ? #ff00ff : #808080
+plotcandle(open, high, low, close, "Candle Colors", color=candleColor, wickcolor=candleColor, bordercolor=candleColor, editable=true)
+
+// --- Non-Repainting Level Tracking ---
+var float lastResLevel = na
+var float lastSupLevel = na
+
+ph = ta.pivothigh(high, pivotLeft, pivotRight)
+pl = ta.pivotlow(low, pivotLeft, pivotRight)
+
+if not na(ph)
+    lastResLevel := ph
+if not na(pl)
+    lastSupLevel := pl
+
+// --- Visual Objects ---
+var line resLine = na
+var label resLabel = na
+var line supLine = na
+var label supLabel = na
+var line demLine = na
+var label demLabel = na
+var line supportLine = na
+var label supportLabel = na
+
+// Draw/Update Levels
+if not na(ph)
+    if na(resLine)
+        resLine := line.new(bar_index - pivotRight, ph, bar_index, ph, color=#ff0000, width=2)
+        resLabel := label.new(bar_index, ph, "RESISTANCE", color=#ff0000, textcolor=#ffffff, style=label.style_label_left, size=size.small)
+    else
+        line.set_xy1(resLine, bar_index - pivotRight, ph)
+        line.set_xy2(resLine, bar_index + 10, ph)
+        label.set_xy(resLabel, bar_index + 10, ph)
+
+    // Supply logic (using ph as well)
+    if na(supLine)
+        supLine := line.new(bar_index - pivotRight, ph * 0.999, bar_index, ph * 0.999, color=#0000ff, width=2)
+        supLabel := label.new(bar_index, ph * 0.999, "SUPPLY", color=#0000ff, textcolor=#ffffff, style=label.style_label_left, size=size.small)
+    else
+        line.set_xy1(supLine, bar_index - pivotRight, ph * 0.999)
+        line.set_xy2(supLine, bar_index + 10, ph * 0.999)
+        label.set_xy(supLabel, bar_index + 10, ph * 0.999)
+
+if not na(pl)
+    if na(supportLine)
+        supportLine := line.new(bar_index - pivotRight, pl, bar_index, pl, color=#ffa500, width=2)
+        supportLabel := label.new(bar_index, pl, "SUPPORT", color=#ffa500, textcolor=#ffffff, style=label.style_label_left, size=size.small)
+    else
+        line.set_xy1(supportLine, bar_index - pivotRight, pl)
+        line.set_xy2(supportLine, bar_index + 10, pl)
+        label.set_xy(supportLabel, bar_index + 10, pl)
+
+    if na(demLine)
+        demLine := line.new(bar_index - pivotRight, pl * 1.001, bar_index, pl * 1.001, color=#008000, width=2)
+        demLabel := label.new(bar_index, pl * 1.001, "DEMAND", color=#008000, textcolor=#ffffff, style=label.style_label_left, size=size.small)
+    else
+        line.set_xy1(demLine, bar_index - pivotRight, pl * 1.001)
+        line.set_xy2(demLine, bar_index + 10, pl * 1.001)
+        label.set_xy(demLabel, bar_index + 10, pl * 1.001)
+
+// Real-time Extension
+if barstate.islast
+    line.set_x2(resLine, bar_index + 20)
+    label.set_x(resLabel, bar_index + 20)
+    line.set_x2(supLine, bar_index + 20)
+    label.set_x(supLabel, bar_index + 20)
+    line.set_x2(demLine, bar_index + 20)
+    label.set_x(demLabel, bar_index + 20)
+    line.set_x2(supportLine, bar_index + 20)
+    label.set_x(supportLabel, bar_index + 20)
+
+// --- BUY/SELL Signal Logic (Non-Repainting) ---
+// We use the series variables lastSupLevel and lastResLevel instead of line.get_y2()
+buySignal = isBullish and ta.crossover(close, lastSupLevel)
+sellSignal = isBearish and ta.crossunder(close, lastResLevel)
+
+atr = ta.atr(atrLength)
+
+if buySignal and barstate.isconfirmed
+    label.new(bar_index, low, "BUY", color=#0000ff, textcolor=#ffffff, style=label.style_label_up, size=size.small)
+
+    entryPrice = close
+    tp1 = entryPrice + atr * 1.5
+    tp2 = entryPrice + atr * 3.0
+    sl = entryPrice - atr * 2.0
+
+    txt = "🔥 BUY ENTRY\n" + str.tostring(entryPrice, format.mintick) + " - " + str.tostring(entryPrice * 1.0005, format.mintick) + "\n\n" +
+          "TP1 : " + str.tostring(tp1, format.mintick) + "\n" +
+          "TP2 : " + str.tostring(tp2, format.mintick) + "\n" +
+          "SL : " + str.tostring(sl, format.mintick)
+
+    box.new(bar_index, high + atr*2, bar_index + 10, low - atr, bgcolor=color.new(#0000ff, 80), border_color=#0000ff)
+    label.new(bar_index + 5, high + atr*3, txt, color=color.new(#0000ff, 20), textcolor=#ffffff, style=label.style_label_down, size=size.normal)
+
+if sellSignal and barstate.isconfirmed
+    label.new(bar_index, high, "SELL", color=#ff0000, textcolor=#ffffff, style=label.style_label_down, size=size.small)
+
+    entryPrice = close
+    tp1 = entryPrice - atr * 1.5
+    tp2 = entryPrice - atr * 3.0
+    sl = entryPrice + atr * 2.0
+
+    txt = "🔥 SELL ENTRY\n" + str.tostring(entryPrice, format.mintick) + " - " + str.tostring(entryPrice * 0.9995, format.mintick) + "\n\n" +
+          "TP1 : " + str.tostring(tp1, format.mintick) + "\n" +
+          "TP2 : " + str.tostring(tp2, format.mintick) + "\n" +
+          "SL : " + str.tostring(sl, format.mintick)
+
+    box.new(bar_index, high + atr, bar_index + 10, low - atr*2, bgcolor=color.new(#ff00ff, 80), border_color=#ff00ff)
+    label.new(bar_index + 5, high + atr*3, txt, color=color.new(#ff00ff, 20), textcolor=#ffffff, style=label.style_label_down, size=size.normal)
+
+// --- Dashboard & Header ---
+var table dash = table.new(position.bottom_right, 2, 4, bgcolor=color.new(#000000, 50), border_width=1, border_color=#808080)
+if barstate.islast
+    table.cell(dash, 0, 0, syminfo.ticker + " NEWS", text_color=#ffffff, text_size=size.small)
+    table.cell(dash, 0, 1, "MEDIUM IMPACT - CPI", text_color=#ffa500, text_size=size.tiny)
+    table.cell(dash, 0, 2, "⏱ 44 MIN", text_color=#ffffff, text_size=size.tiny)
+    table.cell(dash, 0, 3, "ACTUAL : NEGATIVE", text_color=#ff00ff, text_size=size.tiny)
+
+var table headerTable = table.new(position.top_center, 1, 1)
+if barstate.islast
+    table.cell(headerTable, 0, 0, "ACT ADMIN IN BIO   WELCOME TO SMARTFX", text_color=#00ffff, text_size=size.large)
