@@ -1,0 +1,252 @@
+//@version=6
+indicator("Smart Money SMC [Mani3131]", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=500)
+
+// --- Color Constants ---
+color COLOR_BULL = color.new(color.green, 0)
+color COLOR_BEAR = color.new(color.red, 0)
+color COLOR_BULL_ZONE = color.new(color.green, 85)
+color COLOR_BEAR_ZONE = color.new(color.red, 85)
+color COLOR_TEXT = color.new(color.white, 0)
+
+// --- User Defined Types ---
+type Pivot
+    int   index
+    float price
+    bool  is_high
+
+type Zone
+    int   start_bar
+    float top
+    float bottom
+    bool  is_bullish
+    box   box_id
+    bool  is_mitigated
+
+type Trade
+    float entry_price
+    float sl_price
+    float tp1_price
+    float tp2_price
+    float tp3_price
+    label entry_label
+    label sl_label
+    label tp1_label
+    label tp2_label
+    label tp3_label
+    line  entry_line
+    line  sl_line
+    line  tp1_line
+    line  tp2_line
+    line  tp3_line
+    bool  is_active
+    bool  tp1_hit
+    bool  tp2_hit
+
+// --- Persistent Variables ---
+var Pivot last_high = Pivot.new(na, na, true)
+var Pivot last_low  = Pivot.new(na, na, false)
+var Pivot prev_high = Pivot.new(na, na, true)
+var Pivot prev_low  = Pivot.new(na, na, false)
+
+var array<Zone> ob_zones  = array.new<Zone>()
+var array<Zone> fvg_zones = array.new<Zone>()
+var array<Trade> active_trades = array.new<Trade>()
+
+var float trend_state = 0 // 1 for Bullish, -1 for Bearish
+
+// --- Pivot Detection ---
+ph = ta.pivothigh(high, 5, 5)
+pl = ta.pivotlow(low, 5, 5)
+
+if not na(ph)
+    prev_high := Pivot.new(last_high.index, last_high.price, true)
+    last_high := Pivot.new(bar_index[5], ph, true)
+
+if not na(pl)
+    prev_low := Pivot.new(last_low.index, last_low.price, false)
+    last_low := Pivot.new(bar_index[5], pl, false)
+
+// --- Market Structure (BOS/CHoCH) ---
+float break_high = last_high.price
+float break_low  = last_low.price
+
+// Bullish Breakout
+if close > break_high and not na(break_high)
+    if trend_state == -1
+        label.new(bar_index, high, "CHoCH", color=COLOR_BULL, textcolor=COLOR_TEXT, style=label.style_label_down, size=size.small)
+        trend_state := 1
+    else if trend_state == 1
+        label.new(bar_index, high, "BOS", color=COLOR_BULL, textcolor=COLOR_TEXT, style=label.style_label_down, size=size.small)
+    else if trend_state == 0
+        trend_state := 1
+    last_high.price := na // Reset to avoid double triggers
+
+// Bearish Breakout
+if close < break_low and not na(break_low)
+    if trend_state == 1
+        label.new(bar_index, low, "CHoCH", color=COLOR_BEAR, textcolor=COLOR_TEXT, style=label.style_label_up, size=size.small)
+        trend_state := -1
+    else if trend_state == -1
+        label.new(bar_index, low, "BOS", color=COLOR_BEAR, textcolor=COLOR_TEXT, style=label.style_label_up, size=size.small)
+    else if trend_state == 0
+        trend_state := -1
+    last_low.price := na // Reset to avoid double triggers
+
+// --- Supply & Demand (OB/FVG) ---
+// FVG Detection
+if high[2] < low[0] // Bullish FVG
+    box_id = box.new(bar_index[2], low[0], bar_index, high[2], border_color=na, bgcolor=COLOR_BULL_ZONE)
+    array.push(fvg_zones, Zone.new(bar_index[2], low[0], high[2], true, box_id, false))
+else if low[2] > high[0] // Bearish FVG
+    box_id = box.new(bar_index[2], low[2], bar_index, high[0], border_color=na, bgcolor=COLOR_BEAR_ZONE)
+    array.push(fvg_zones, Zone.new(bar_index[2], low[2], high[0], false, box_id, false))
+
+// Order Block (OB) Detection - Simplified: last opposite candle before a move that creates a pivot
+if not na(ph) // Possible Bearish OB
+    if close[5] < open[5] // Bearish candle
+        box_id = box.new(bar_index[5], high[5], bar_index, low[5], border_color=na, bgcolor=COLOR_BEAR_ZONE)
+        array.push(ob_zones, Zone.new(bar_index[5], high[5], low[5], false, box_id, false))
+
+if not na(pl) // Possible Bullish OB
+    if close[5] > open[5] // Bullish candle
+        box_id = box.new(bar_index[5], high[5], bar_index, low[5], border_color=na, bgcolor=COLOR_BULL_ZONE)
+        array.push(ob_zones, Zone.new(bar_index[5], high[5], low[5], true, box_id, false))
+
+// --- Liquidity Sweep (Stop Hunt) ---
+bool sweep_low  = low < last_low.price and close > last_low.price
+bool sweep_high = high > last_high.price and close < last_high.price
+
+if sweep_low
+    label.new(bar_index, low, "LIQ SWEEP", color=COLOR_BULL, textcolor=COLOR_TEXT, style=label.style_label_up, size=size.small)
+if sweep_high
+    label.new(bar_index, high, "LIQ SWEEP", color=COLOR_BEAR, textcolor=COLOR_TEXT, style=label.style_label_down, size=size.small)
+
+// --- Multi-Timeframe (MTF) Trend ---
+htf1 = timeframe.period == "1" ? "5" : timeframe.period == "5" ? "15" : timeframe.period == "15" ? "60" : "D"
+htf2 = timeframe.period == "1" ? "15" : timeframe.period == "5" ? "60" : timeframe.period == "15" ? "240" : "W"
+
+[htf1_close, htf1_open] = request.security(syminfo.tickerid, htf1, [close[1], open[1]])
+[htf2_close, htf2_open] = request.security(syminfo.tickerid, htf2, [close[1], open[1]])
+
+float htf1_trend = htf1_close > htf1_open ? 1 : -1
+float htf2_trend = htf2_close > htf2_open ? 1 : -1
+
+// --- Signal Generation (Advanced Flow) ---
+// Trend (HTF) + Zone (OB/FVG) + Sweep + Confirmation
+bool bullish_conf = sweep_low and htf1_trend == 1 and htf2_trend == 1
+bool bearish_conf = sweep_high and htf1_trend == -1 and htf2_trend == -1
+
+if bullish_conf
+    float entry = close
+    float sl    = low[1] < low ? low[1] : low
+    float risk  = entry - sl
+    float tp1   = entry + risk
+    float tp2   = entry + risk * 2
+    float tp3   = entry + risk * 3
+
+    l_entry = label.new(bar_index, entry, "ENTRY", color=color.blue, textcolor=COLOR_TEXT, style=label.style_label_left)
+    l_sl    = label.new(bar_index, sl, "SL", color=color.red, textcolor=COLOR_TEXT, style=label.style_label_left)
+    l_tp1   = label.new(bar_index, tp1, "TP1", color=color.green, textcolor=COLOR_TEXT, style=label.style_label_left)
+    l_tp2   = label.new(bar_index, tp2, "TP2", color=color.green, textcolor=COLOR_TEXT, style=label.style_label_left)
+    l_tp3   = label.new(bar_index, tp3, "TP3", color=color.green, textcolor=COLOR_TEXT, style=label.style_label_left)
+
+    li_entry = line.new(bar_index, entry, bar_index + 10, entry, color=color.blue, style=line.style_dashed)
+    li_sl    = line.new(bar_index, sl, bar_index + 10, sl, color=color.red, style=line.style_dashed)
+    li_tp1   = line.new(bar_index, tp1, bar_index + 10, tp1, color=color.green, style=line.style_dashed)
+    li_tp2   = line.new(bar_index, tp2, bar_index + 10, tp2, color=color.green, style=line.style_dashed)
+    li_tp3   = line.new(bar_index, tp3, bar_index + 10, tp3, color=color.green, style=line.style_dashed)
+
+    array.push(active_trades, Trade.new(entry, sl, tp1, tp2, tp3, l_entry, l_sl, l_tp1, l_tp2, l_tp3, li_entry, li_sl, li_tp1, li_tp2, li_tp3, true, false, false))
+
+if bearish_conf
+    float entry = close
+    float sl    = high[1] > high ? high[1] : high
+    float risk  = sl - entry
+    float tp1   = entry - risk
+    float tp2   = entry - risk * 2
+    float tp3   = entry - risk * 3
+
+    l_entry = label.new(bar_index, entry, "ENTRY", color=color.blue, textcolor=COLOR_TEXT, style=label.style_label_left)
+    l_sl    = label.new(bar_index, sl, "SL", color=color.red, textcolor=COLOR_TEXT, style=label.style_label_left)
+    l_tp1   = label.new(bar_index, tp1, "TP1", color=color.green, textcolor=COLOR_TEXT, style=label.style_label_left)
+    l_tp2   = label.new(bar_index, tp2, "TP2", color=color.green, textcolor=COLOR_TEXT, style=label.style_label_left)
+    l_tp3   = label.new(bar_index, tp3, "TP3", color=color.green, textcolor=COLOR_TEXT, style=label.style_label_left)
+
+    li_entry = line.new(bar_index, entry, bar_index + 10, entry, color=color.blue, style=line.style_dashed)
+    li_sl    = line.new(bar_index, sl, bar_index + 10, sl, color=color.red, style=line.style_dashed)
+    li_tp1   = line.new(bar_index, tp1, bar_index + 10, tp1, color=color.green, style=line.style_dashed)
+    li_tp2   = line.new(bar_index, tp2, bar_index + 10, tp2, color=color.green, style=line.style_dashed)
+    li_tp3   = line.new(bar_index, tp3, bar_index + 10, tp3, color=color.green, style=line.style_dashed)
+
+    array.push(active_trades, Trade.new(entry, sl, tp1, tp2, tp3, l_entry, l_sl, l_tp1, l_tp2, l_tp3, li_entry, li_sl, li_tp1, li_tp2, li_tp3, true, false, false))
+
+// --- Drawing Management & Cleanup ---
+if array.size(active_trades) > 0
+    for i = array.size(active_trades) - 1 to 0
+        Trade t = array.get(active_trades, i)
+        bool to_remove = false
+
+        // Update line endpoints
+        line.set_x2(t.entry_line, bar_index + 5)
+        line.set_x2(t.sl_line, bar_index + 5)
+        line.set_x2(t.tp1_line, bar_index + 5)
+        line.set_x2(t.tp2_line, bar_index + 5)
+        line.set_x2(t.tp3_line, bar_index + 5)
+
+        // Check for TP/SL hits
+        bool is_bull = t.tp1_price > t.entry_price
+
+        if is_bull
+            if low <= t.sl_price
+                to_remove := true
+            else if high >= t.tp1_price and not t.tp1_hit
+                t.tp1_hit := true
+                label.delete(t.tp1_label)
+                line.delete(t.tp1_line)
+            else if high >= t.tp2_price and not t.tp2_hit
+                t.tp2_hit := true
+                label.delete(t.tp2_label)
+                line.delete(t.tp2_line)
+            else if high >= t.tp3_price
+                to_remove := true
+        else
+            if high >= t.sl_price
+                to_remove := true
+            else if low <= t.tp1_price and not t.tp1_hit
+                t.tp1_hit := true
+                label.delete(t.tp1_label)
+                line.delete(t.tp1_line)
+            else if low <= t.tp2_price and not t.tp2_hit
+                t.tp2_hit := true
+                label.delete(t.tp2_label)
+                line.delete(t.tp2_line)
+            else if low <= t.tp3_price
+                to_remove := true
+
+        if to_remove
+            label.delete(t.entry_label)
+            label.delete(t.sl_label)
+            label.delete(t.tp1_label)
+            label.delete(t.tp2_label)
+            label.delete(t.tp3_label)
+            line.delete(t.entry_line)
+            line.delete(t.sl_line)
+            line.delete(t.tp1_line)
+            line.delete(t.tp2_line)
+            line.delete(t.tp3_line)
+            array.remove(active_trades, i)
+
+// --- Dashboard Table ---
+var table board = table.new(position.top_right, 2, 4, border_width=1)
+if barstate.islast
+    table.cell(board, 0, 0, "Timeframe", bgcolor=color.gray, text_color=color.white)
+    table.cell(board, 1, 0, "Trend", bgcolor=color.gray, text_color=color.white)
+
+    table.cell(board, 0, 1, "HTF (" + htf2 + ")", text_color=color.white)
+    table.cell(board, 1, 1, htf2_trend == 1 ? "BULLISH" : "BEARISH", bgcolor=htf2_trend == 1 ? color.green : color.red, text_color=color.white)
+
+    table.cell(board, 0, 2, "MTF (" + htf1 + ")", text_color=color.white)
+    table.cell(board, 1, 2, htf1_trend == 1 ? "BULLISH" : "BEARISH", bgcolor=htf1_trend == 1 ? color.green : color.red, text_color=color.white)
+
+    table.cell(board, 0, 3, "LTF (Current)", text_color=color.white)
+    table.cell(board, 1, 3, trend_state == 1 ? "BULLISH" : trend_state == -1 ? "BEARISH" : "NEUTRAL", bgcolor=trend_state == 1 ? color.green : trend_state == -1 ? color.red : color.gray, text_color=color.white)
