@@ -1,0 +1,168 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Linear Regression Dashboard v6", overlay=true, max_labels_count=500, max_boxes_count=500, max_lines_count=500)
+
+// --- Inputs ---
+lr_group = "Linear Regression Settings"
+lr_length = input.int(100, "LR Length", minval=1, group=lr_group)
+lr_mult   = input.float(2.0, "LR Deviation", minval=0.1, group=lr_group)
+
+trend_group = "Trend Settings"
+hma_length = input.int(20, "HMA Length", minval=1, group=trend_group)
+
+risk_group = "Risk Management"
+tp_mult = input.float(2.0, "Take Profit (ATR Mult)", minval=0.1, group=risk_group)
+sl_mult = input.float(1.5, "Stop Loss (ATR Mult)", minval=0.1, group=risk_group)
+atr_length = input.int(14, "ATR Length", group=risk_group)
+
+// --- Calculations ---
+// Linear Regression Channel
+lr_midline = ta.linreg(close, lr_length, 0)
+lr_stdev   = ta.stdev(close, lr_length)
+lr_upper   = lr_midline + lr_mult * lr_stdev
+lr_lower   = lr_midline - lr_mult * lr_stdev
+
+// Trend (HMA)
+hma = ta.hma(close, hma_length)
+trend_up = hma > hma[1]
+
+// --- Visuals ---
+// Channel Plots
+p_mid = plot(lr_midline, "LR Midline", color=color.new(color.gray, 50), style=plot.style_linebr)
+p_up  = plot(lr_upper, "LR Upper", color=color.new(color.lime, 50), style=plot.style_linebr, linewidth=1)
+p_low = plot(lr_lower, "LR Lower", color=color.new(color.red, 50), style=plot.style_linebr, linewidth=1)
+fill(p_up, p_low, color=color.new(color.gray, 90), title="Channel Fill")
+
+// HMA Plot (Thick line as seen in image)
+hma_color = trend_up ? color.lime : color.red
+plot(hma, "Trend HMA", color=color.new(hma_color, 0), linewidth=3)
+
+// Bar Coloring
+barcolor(trend_up ? color.lime : color.red)
+
+// --- Signals ---
+atr = ta.atr(atr_length)
+
+// Buy Signal: HMA turns up and price is above HMA
+long_signal = ta.crossover(hma, hma[1]) and close > hma
+// Sell Signal: HMA turns down and price is below HMA
+short_signal = ta.crossunder(hma, hma[1]) and close < hma
+
+plotshape(long_signal,  "Buy Label",  style=shape.triangleup,   location=location.belowbar, color=color.lime, size=size.small, text="BUY",  textcolor=color.white)
+plotshape(short_signal, "Sell Label", style=shape.triangledown, location=location.abovebar, color=color.red,  size=size.small, text="SELL", textcolor=color.white)
+
+// --- Trade Tracking ---
+var float entry_price = na
+var float sl_price = na
+var float tp_price = na
+var int   position_side = 0 // 0: None, 1: Long, -1: Short
+
+// History Arrays (last 10 trades)
+var trade_side_arr  = array.new<string>(0)
+var trade_entry_arr = array.new<float>(0)
+var trade_exit_arr  = array.new<float>(0)
+var trade_pl_arr    = array.new<float>(0)
+
+f_add_history(side, entry, exit, pl) =>
+    array.unshift(trade_side_arr, side)
+    array.unshift(trade_entry_arr, entry)
+    array.unshift(trade_exit_arr, exit)
+    array.unshift(trade_pl_arr, pl)
+    if array.size(trade_side_arr) > 10
+        array.pop(trade_side_arr)
+        array.pop(trade_entry_arr)
+        array.pop(trade_exit_arr)
+        array.pop(trade_pl_arr)
+
+if barstate.isconfirmed
+    // Entry Logic
+    if position_side == 0
+        if long_signal
+            position_side := 1
+            entry_price   := close
+            sl_price      := close - atr * sl_mult
+            tp_price      := close + atr * tp_mult
+        else if short_signal
+            position_side := -1
+            entry_price   := close
+            sl_price      := close + atr * sl_mult
+            tp_price      := close - atr * tp_mult
+
+    // Exit Logic
+    else if position_side == 1 // Long
+        if low <= sl_price or high >= tp_price
+            exit_price = low <= sl_price ? sl_price : tp_price
+            pl = (exit_price - entry_price) // Simple price difference for demo
+            f_add_history("LONG", entry_price, exit_price, pl)
+            position_side := 0
+    else if position_side == -1 // Short
+        if high >= sl_price or low <= tp_price
+            exit_price = high >= sl_price ? sl_price : tp_price
+            pl = (entry_price - exit_price)
+            f_add_history("SHORT", entry_price, exit_price, pl)
+            position_side := 0
+
+// --- Visual Targets ---
+var line target_line = na
+var line stop_line   = na
+var label target_lbl = na
+var label stop_lbl   = na
+
+if barstate.islast and position_side != 0
+    line.delete(target_line)
+    line.delete(stop_line)
+    label.delete(target_lbl)
+    label.delete(stop_lbl)
+
+    target_line := line.new(bar_index, tp_price, bar_index + 5, tp_price, color=color.new(color.aqua, 0), width=2, style=line.style_dashed)
+    stop_line   := line.new(bar_index, sl_price, bar_index + 5, sl_price, color=color.new(color.red, 0), width=2, style=line.style_dashed)
+    target_lbl  := label.new(bar_index + 5, tp_price, "TP: " + str.tostring(tp_price, "#.##"), color=color.aqua, textcolor=color.white, style=label.style_label_left)
+    stop_lbl    := label.new(bar_index + 5, sl_price, "SL: " + str.tostring(sl_price, "#.##"), color=color.red,  textcolor=color.white, style=label.style_label_left)
+
+// --- Dashboard Table ---
+var table main_table = table.new(position.bottom_right, 5, 13, border_width=1, frame_color=color.gray, frame_width=1, border_color=color.gray)
+
+if barstate.islast
+    // Header
+    table.cell(main_table, 0, 0, "TRADES " + str.tostring(array.size(trade_side_arr)), bgcolor=color.new(color.gray, 50), text_color=color.white)
+
+    // Stats calculation
+    float total_pl = 0.0
+    int wins = 0
+    for i = 0 to (array.size(trade_pl_arr) > 0 ? array.size(trade_pl_arr) - 1 : -1)
+        pl_val = array.get(trade_pl_arr, i)
+        total_pl += pl_val
+        if pl_val > 0
+            wins += 1
+
+    win_rate = array.size(trade_pl_arr) > 0 ? (wins / array.size(trade_pl_arr)) * 100 : 0
+
+    table.cell(main_table, 1, 0, "WIN%", bgcolor=color.new(color.gray, 50), text_color=color.white)
+    table.cell(main_table, 2, 0, str.tostring(win_rate, "##.#") + "%", bgcolor=color.new(color.gray, 50), text_color=color.lime)
+    table.cell(main_table, 3, 0, str.tostring(wins) + "/" + str.tostring(array.size(trade_pl_arr) - wins), bgcolor=color.new(color.gray, 50), text_color=color.white)
+
+    table.cell(main_table, 0, 1, "TOTAL P/L", bgcolor=color.new(color.gray, 70), text_color=color.white)
+    table.cell(main_table, 1, 1, (total_pl >= 0 ? "+" : "") + str.tostring(total_pl, "#.##"), bgcolor=color.new(color.gray, 70), text_color=total_pl >= 0 ? color.lime : color.red, text_size=size.large)
+
+    // Table Column Headers
+    table.cell(main_table, 0, 2, "#", bgcolor=color.new(color.gray, 80), text_color=color.white)
+    table.cell(main_table, 1, 2, "SIDE", bgcolor=color.new(color.gray, 80), text_color=color.white)
+    table.cell(main_table, 2, 2, "ENTRY", bgcolor=color.new(color.gray, 80), text_color=color.white)
+    table.cell(main_table, 3, 2, "EXIT", bgcolor=color.new(color.gray, 80), text_color=color.white)
+    table.cell(main_table, 4, 2, "P/L", bgcolor=color.new(color.gray, 80), text_color=color.white)
+
+    // Trade Rows
+    if array.size(trade_side_arr) > 0
+        for i = 0 to array.size(trade_side_arr) - 1
+            row = i + 3
+            s_color = array.get(trade_side_arr, i) == "LONG" ? color.lime : color.red
+            pl_val = array.get(trade_pl_arr, i)
+            pl_color = pl_val >= 0 ? color.lime : color.red
+
+            table.cell(main_table, 0, row, str.tostring(i + 1), text_color=color.white)
+            table.cell(main_table, 1, row, array.get(trade_side_arr, i), text_color=s_color)
+            table.cell(main_table, 2, row, str.tostring(array.get(trade_entry_arr, i), "#.##"), text_color=color.white)
+            table.cell(main_table, 3, row, str.tostring(array.get(trade_exit_arr, i), "#.##"), text_color=color.white)
+            table.cell(main_table, 4, row, (pl_val >= 0 ? "+" : "") + str.tostring(pl_val, "#.##"), text_color=pl_color)
