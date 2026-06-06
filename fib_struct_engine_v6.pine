@@ -3,7 +3,7 @@
 // FIBONACCI STRUCTURE ENGINE [WillyAlgoTrader]
 // ══════════════════════════════════════════════════════════
 // Author:  Willy | WillyAlgoTrader
-// Version: 1.5.2
+// Version: 1.6.0
 
 
 indicator(
@@ -224,8 +224,8 @@ renderVP(SessVP svp, color sessColor) =>
                     float binLow = svp.minLow + i * binSize
                     float binHigh = binLow + binSize
                     // Maximum width is 40% of session width or vpWidthInput, whichever is smaller
-                    int maxWidth = math.min(vpWidthInput, math.round(sessWidth * 0.4))
-                    int width = math.round((vol / maxVol) * maxWidth)
+                    int maxWidth = int(math.min(vpWidthInput, math.round(sessWidth * 0.4)))
+                    int width = int(math.round((vol / maxVol) * maxWidth))
                     int x2 = svp.lastIdx
                     int x1 = svp.lastIdx - width
                     svp.boxes.push(box.new(x1, binHigh, x2, binLow, border_color = color.new(sessColor, 70), bgcolor = color.new(sessColor, 40), border_width = 0))
@@ -481,7 +481,7 @@ if showStructInput and (isBOS or isCHoCH)
     color breakColor = isBullBreak ? bullColorInput : bearColorInput
     string breakText = isCHoCH ? "CHoCH" : "BOS"
     int startIdx = isBullBreak ? nz(swHigh1Idx, bar_index - 10) : nz(swLow1Idx, bar_index - 10)
-    int midIdx = math.round(math.avg(startIdx, bar_index))
+    int midIdx = int(math.round(math.avg(startIdx, bar_index)))
     line.new(startIdx, breakPrice, bar_index, breakPrice, color = breakColor, style = getLineStyle(structLineStyleInput), width = structLineWidthInput)
     label.new(midIdx, breakPrice, breakText, color = color.new(breakColor, 100), textcolor = breakColor, style = isBullBreak ? label.style_label_down : label.style_label_up, size = size.small, tooltip = breakText + " @ " + str.tostring(breakPrice, format.mintick))
 
@@ -1043,9 +1043,9 @@ if sweepLow
 // ══════════════════════════════════════
 // SESSION VOLUME PROFILE EXECUTION
 // ══════════════════════════════════════
-var asianVP  = SessVP.new(array.new<BarInfo>(), array.new<box>(), na, na, na, false, 0.0, 0.0)
-var londonVP = SessVP.new(array.new<BarInfo>(), array.new<box>(), na, na, na, false, 0.0, 0.0)
-var nyVP     = SessVP.new(array.new<BarInfo>(), array.new<box>(), na, na, na, false, 0.0, 0.0)
+var asianVP  = SessVP.new(bars = array.new<BarInfo>(), boxes = array.new<box>(), active = false, maxHigh = 0.0, minLow = 0.0)
+var londonVP = SessVP.new(bars = array.new<BarInfo>(), boxes = array.new<box>(), active = false, maxHigh = 0.0, minLow = 0.0)
+var nyVP     = SessVP.new(bars = array.new<BarInfo>(), boxes = array.new<box>(), active = false, maxHigh = 0.0, minLow = 0.0)
 
 if showVpInput
     processSessVP(asianSessionInput,  asianVP,  asianColorInput,  showAsianInput)
