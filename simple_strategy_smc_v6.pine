@@ -1,0 +1,201 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © user
+
+//@version=6
+indicator("Simple Strategy SMC [Jules]", overlay = true, max_boxes_count = 500, max_labels_count = 500)
+
+// --- Inputs ---
+htf_tf = input.timeframe("240", "High Timeframe (Trend)")
+ltf_tf = input.timeframe("15", "Lower Timeframe (Entry)")
+
+// --- 4H Trend Detection ---
+// We use request.security with [1] to avoid repainting.
+[htf_high, htf_low, htf_close] = request.security(syminfo.tickerid, htf_tf, [high[1], low[1], close[1]], lookahead = barmerge.lookahead_on)
+
+// Simple HH/HL LH/LL logic for HTF Trend
+var float last_htf_high = na
+var float last_htf_low = na
+var string htf_trend = "Neutral"
+
+// Higher High / Higher Low detection
+is_hh = htf_high > last_htf_high
+is_hl = htf_low > last_htf_low
+is_lh = htf_high < last_htf_high
+is_ll = htf_low < last_htf_low
+
+if not na(htf_high)
+    if htf_high > last_htf_high and htf_low >= last_htf_low
+        htf_trend := "Bullish"
+    else if htf_high <= last_htf_high and htf_low < last_htf_low
+        htf_trend := "Bearish"
+
+    last_htf_high := math.max(nz(last_htf_high), htf_high)
+    last_htf_low := math.min(nz(last_htf_low, 999999), htf_low)
+
+// Better HH/HL logic using pivots
+find_pivots(src_h, src_l, len) =>
+    p_h = ta.pivothigh(src_h, len, len)
+    p_l = ta.pivotlow(src_l, len, len)
+    [p_h, p_l]
+
+[htf_ph, htf_pl] = request.security(syminfo.tickerid, htf_tf, find_pivots(high, low, 3), lookahead = barmerge.lookahead_on)
+
+var float last_ph = na
+var float last_pl = na
+var string structure_trend = "Neutral"
+
+if not na(htf_ph)
+    if htf_ph > last_ph
+        structure_trend := "Bullish"
+    last_ph := htf_ph
+
+if not na(htf_pl)
+    if htf_pl < last_pl
+        structure_trend := "Bearish"
+    last_pl := htf_pl
+
+// --- 4H Key Levels ---
+// We fetch the latest confirmed pivots from 4H as key levels
+[htf_key_h, htf_key_l] = request.security(syminfo.tickerid, htf_tf, [ta.pivothigh(high, 10, 10), ta.pivotlow(low, 10, 10)], lookahead = barmerge.lookahead_on)
+
+var float top_level = na
+var float bot_level = na
+
+if not na(htf_key_h)
+    top_level := htf_key_h
+if not na(htf_key_l)
+    bot_level := htf_key_l
+
+plot(top_level, "HTF Resistance", color.new(color.red, 50), 2, plot.style_linebr)
+plot(bot_level, "HTF Support", color.new(color.green, 50), 2, plot.style_linebr)
+
+// --- 15m Confirmation (CHoCH/BOS) ---
+var float ltf_ph = na
+var float ltf_pl = na
+var float ltf_last_ph = na
+var float ltf_last_pl = na
+
+ph = ta.pivothigh(high, 3, 3)
+pl = ta.pivotlow(low, 3, 3)
+
+if not na(ph)
+    ltf_last_ph := ltf_ph
+    ltf_ph := ph
+if not na(pl)
+    ltf_last_pl := ltf_pl
+    ltf_pl := pl
+
+bool is_bos_bull = ta.crossover(close, ltf_ph)
+bool is_bos_bear = ta.crossunder(close, ltf_pl)
+bool is_choch_bull = structure_trend == "Bullish" and ta.crossover(close, ltf_ph) and low[1] < ltf_pl // Simplified CHoCH
+bool is_choch_bear = structure_trend == "Bearish" and ta.crossunder(close, ltf_pl) and high[1] > ltf_ph
+
+plotshape(is_bos_bull, "BOS Bullish", shape.triangleup, location.belowbar, color.blue, size = size.tiny, text = "BOS")
+plotshape(is_bos_bear, "BOS Bearish", shape.triangledown, location.abovebar, color.red, size = size.tiny, text = "BOS")
+
+// --- 15m Entry Zones (OB / FVG) ---
+// FVG Detection
+is_fvg_bull = low > high[2]
+is_fvg_bear = high < low[2]
+
+// Order Block Detection (Last opposite candle before a strong move)
+is_ob_bull = close[1] < open[1] and close > open and close > high[1] // Basic engulfing as OB trigger
+is_ob_bear = close[1] > open[1] and close < open and close < low[1]
+
+// Store zones in boxes
+type Zone
+    box b
+    float top
+    float bottom
+    string type // "OB" or "FVG"
+    bool is_bull
+
+var active_zones = array.new<Zone>()
+
+if is_fvg_bull
+    active_zones.push(Zone.new(box.new(bar_index-2, high[2], bar_index, low, bgcolor=color.new(color.green, 80), border_color=na), high[2], low, "FVG", true))
+if is_fvg_bear
+    active_zones.push(Zone.new(box.new(bar_index-2, high, bar_index, low[2], bgcolor=color.new(color.red, 80), border_color=na), high, low[2], "FVG", false))
+
+if is_ob_bull
+    active_zones.push(Zone.new(box.new(bar_index-1, high[1], bar_index, low[1], bgcolor=color.new(color.green, 80), border_color=na), high[1], low[1], "OB", true))
+if is_ob_bear
+    active_zones.push(Zone.new(box.new(bar_index-1, high[1], bar_index, low[1], bgcolor=color.new(color.red, 80), border_color=na), high[1], low[1], "OB", false))
+
+// Cleanup zones (limit to 50 for performance)
+if active_zones.size() > 50
+    Zone z = active_zones.shift()
+    z.b.delete()
+
+// --- Logic Integration ---
+// "Enter when price comes back to that zone"
+// We need to track if we had a confirmation near a HTF level
+var bool confirmation_received = false
+var string signal_type = ""
+
+near_htf_level = (math.abs(close - top_level) / close < 0.001) or (math.abs(close - bot_level) / close < 0.001)
+
+if near_htf_level and (is_choch_bull or is_choch_bear or is_bos_bull or is_bos_bear)
+    confirmation_received := true
+    signal_type := (is_choch_bull or is_bos_bull) ? "Long" : "Short"
+
+// --- Signal Execution ---
+var float entry_price = na
+var float sl_price = na
+var float tp_price = na
+var bool in_trade = false
+
+// Check for mitigation of an active zone after confirmation
+if confirmation_received and not in_trade
+    for i = active_zones.size() - 1 to 0
+        Zone z = active_zones.get(i)
+        if (signal_type == "Long" and z.is_bull) or (signal_type == "Short" and not z.is_bull)
+            // If price touches the zone
+            if low <= z.top and high >= z.bottom
+                entry_price := close
+                if signal_type == "Long"
+                    sl_price := z.bottom - (z.top - z.bottom) * 0.5 // SL below zone
+                    tp_price := entry_price + (entry_price - sl_price) * 3.0 // TP at 3:1 RR (or next liquidity)
+                else
+                    sl_price := z.top + (z.top - z.bottom) * 0.5 // SL above zone
+                    tp_price := entry_price - (sl_price - entry_price) * 3.0
+
+                in_trade := true
+                confirmation_received := false // Reset for next signal
+
+                label.new(bar_index, entry_price, "ENTRY " + signal_type, color=color.new(color.blue, 0), textcolor=color.white, style=label.style_label_down)
+                line.new(bar_index, entry_price, bar_index + 10, entry_price, xloc.bar_index, extend.right, color.blue, line.style_dashed)
+                line.new(bar_index, sl_price, bar_index + 10, sl_price, xloc.bar_index, extend.right, color.red, line.style_solid)
+                line.new(bar_index, tp_price, bar_index + 10, tp_price, xloc.bar_index, extend.right, color.green, line.style_solid)
+                break
+
+// Exit logic
+if in_trade
+    if (entry_price > sl_price and (low <= sl_price or high >= tp_price)) or (entry_price < sl_price and (high >= sl_price or low <= tp_price))
+        in_trade := false
+        entry_price := na
+        sl_price := na
+        tp_price := na
+
+// --- Risk Management Dashboard ---
+var table risk_table = table.new(position.top_right, 2, 5, bgcolor=color.new(color.black, 20), border_width=1, border_color=color.gray)
+
+if barstate.islast
+    table.cell(risk_table, 0, 0, "SIMPLE SMC STRATEGY", text_color=color.white, text_size=size.small)
+    table.cell(risk_table, 1, 0, "[V6]", text_color=color.yellow, text_size=size.small)
+
+    table.cell(risk_table, 0, 1, "HTF Trend:", text_color=color.white, text_size=size.small)
+    table.cell(risk_table, 1, 1, structure_trend, text_color=(structure_trend == "Bullish" ? color.green : structure_trend == "Bearish" ? color.red : color.gray), text_size=size.small)
+
+    table.cell(risk_table, 0, 2, "Confirmation:", text_color=color.white, text_size=size.small)
+    table.cell(risk_table, 1, 2, confirmation_received ? "YES (" + signal_type + ")" : "Waiting...", text_color=(confirmation_received ? color.yellow : color.gray), text_size=size.small)
+
+    table.cell(risk_table, 0, 3, "Status:", text_color=color.white, text_size=size.small)
+    table.cell(risk_table, 1, 3, in_trade ? "IN TRADE" : "Scanning", text_color=(in_trade ? color.blue : color.gray), text_size=size.small)
+
+    risk_per_trade = 0.01 // 1%
+    table.cell(risk_table, 0, 4, "Risk Per Trade:", text_color=color.white, text_size=size.small)
+    table.cell(risk_table, 1, 4, str.tostring(risk_per_trade * 100) + "%", text_color=color.white, text_size=size.small)
+
+// Visual confirmation of the logic
+bgcolor(confirmation_received ? color.new(color.yellow, 90) : na)
