@@ -42,7 +42,9 @@ type SessVP
     BarInfo[] bars
     box[]     boxes
     line      pocLine
+    box       sessBox
     int       startIdx
+    int       lastIdx
     bool      active
     float     maxHigh
     float     minLow
@@ -178,13 +180,18 @@ fibLevel(float swH, float swL, float ratio) =>
 
 renderVP(SessVP svp, color sessColor) =>
     if svp.bars.size() > 0 and svp.maxHigh > svp.minLow
-        // Cleanup old drawings
+        // Cleanup old drawings (only for the current session instance)
         if svp.boxes.size() > 0
             for i = 0 to svp.boxes.size() - 1
                 svp.boxes.get(i).delete()
             svp.boxes.clear()
         if not na(svp.pocLine)
             svp.pocLine.delete()
+        if not na(svp.sessBox)
+            svp.sessBox.delete()
+
+        // Session Range Box - High visibility
+        svp.sessBox := box.new(svp.startIdx, svp.maxHigh, svp.lastIdx, svp.minLow, border_color = color.new(sessColor, 30), bgcolor = color.new(sessColor, 85), border_width = 1)
 
         float binSize = (svp.maxHigh - svp.minLow) / vpRowsInput
         float[] volumes = array.new_float(vpRowsInput, 0.0)
@@ -194,7 +201,9 @@ renderVP(SessVP svp, color sessColor) =>
             BarInfo bar = svp.bars.get(i)
             int startBin = math.max(0, math.floor((bar.low - svp.minLow) / binSize))
             int endBin   = math.min(vpRowsInput - 1, math.floor((bar.high - svp.minLow) / binSize))
-            float volPerBin = bar.volume / math.max(1, endBin - startBin + 1)
+            // Use at least 1.0 for volume if missing
+            float barVol = bar.volume > 0 ? bar.volume : 1.0
+            float volPerBin = barVol / math.max(1, endBin - startBin + 1)
             for j = startBin to endBin
                 volumes.set(j, volumes.get(j) + volPerBin)
 
@@ -207,18 +216,22 @@ renderVP(SessVP svp, color sessColor) =>
                 pocIdx := i
 
         if maxVol > 0
+            int sessWidth = math.max(1, svp.lastIdx - svp.startIdx)
+            // VP Histogram - Right aligned within the session
             for i = 0 to vpRowsInput - 1
                 float vol = volumes.get(i)
                 if vol > 0
                     float binLow = svp.minLow + i * binSize
                     float binHigh = binLow + binSize
-                    int width = math.round((vol / maxVol) * vpWidthInput)
-                    int x1 = bar_index
-                    int x2 = bar_index + width
-                    svp.boxes.push(box.new(x1, binHigh, x2, binLow, border_color = color.new(sessColor, 80), bgcolor = sessColor, border_width = 0))
+                    // Maximum width is 40% of session width or vpWidthInput, whichever is smaller
+                    int maxWidth = math.min(vpWidthInput, math.round(sessWidth * 0.4))
+                    int width = math.round((vol / maxVol) * maxWidth)
+                    int x2 = svp.lastIdx
+                    int x1 = svp.lastIdx - width
+                    svp.boxes.push(box.new(x1, binHigh, x2, binLow, border_color = color.new(sessColor, 70), bgcolor = color.new(sessColor, 40), border_width = 0))
 
             float pocPrice = svp.minLow + pocIdx * binSize + (binSize / 2)
-            svp.pocLine := line.new(svp.startIdx, pocPrice, bar_index + vpWidthInput, pocPrice, color = color.new(sessColor, 20), width = 2, style = line.style_solid)
+            svp.pocLine := line.new(svp.startIdx, pocPrice, svp.lastIdx, pocPrice, color = color.new(sessColor, 0), width = 2, style = line.style_solid)
 
 processSessVP(string sessStr, SessVP svp, color sessColor, bool showSess) =>
     if showSess
@@ -226,8 +239,12 @@ processSessVP(string sessStr, SessVP svp, color sessColor, bool showSess) =>
 
         if inSess
             if not svp.active
-                // Reset session
+                // New session started
                 svp.bars.clear()
+                // Do NOT delete boxes/lines/sessBox here to let history persist
+                svp.boxes := array.new<box>()
+                svp.pocLine := na
+                svp.sessBox := na
                 svp.startIdx := bar_index
                 svp.active := true
                 svp.maxHigh := high
@@ -237,6 +254,7 @@ processSessVP(string sessStr, SessVP svp, color sessColor, bool showSess) =>
             svp.bars.push(BarInfo.new(high, low, volume))
             svp.maxHigh := math.max(svp.maxHigh, high)
             svp.minLow  := math.min(svp.minLow, low)
+            svp.lastIdx := bar_index
 
             // Live update
             if barstate.islast
@@ -1025,9 +1043,9 @@ if sweepLow
 // ══════════════════════════════════════
 // SESSION VOLUME PROFILE EXECUTION
 // ══════════════════════════════════════
-var asianVP  = SessVP.new(array.new<BarInfo>(), array.new<box>(), na, na, false, 0.0, 0.0)
-var londonVP = SessVP.new(array.new<BarInfo>(), array.new<box>(), na, na, false, 0.0, 0.0)
-var nyVP     = SessVP.new(array.new<BarInfo>(), array.new<box>(), na, na, false, 0.0, 0.0)
+var asianVP  = SessVP.new(array.new<BarInfo>(), array.new<box>(), na, na, na, false, 0.0, 0.0)
+var londonVP = SessVP.new(array.new<BarInfo>(), array.new<box>(), na, na, na, false, 0.0, 0.0)
+var nyVP     = SessVP.new(array.new<BarInfo>(), array.new<box>(), na, na, na, false, 0.0, 0.0)
 
 if showVpInput
     processSessVP(asianSessionInput,  asianVP,  asianColorInput,  showAsianInput)
