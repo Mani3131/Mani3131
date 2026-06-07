@@ -258,8 +258,8 @@ if show_signals
 
     // Fibo Retest 0.618 (Simplified: check if price is near 0.618 of last major leg)
     if not na(last_ph) and not na(last_pl)
-        float range = last_ph.price - last_pl.price
-        float fib_618 = is_bullish ? last_ph.price - (range * 0.618) : last_pl.price + (range * 0.618)
+        float price_range = last_ph.price - last_pl.price
+        float fib_618 = is_bullish ? last_ph.price - (price_range * 0.618) : last_pl.price + (price_range * 0.618)
         if math.abs(close - fib_618) < (ta.atr(14) * 0.05)
             label.new(bar_index, is_bullish ? low : high, "Fib 0.618", color = color.new(GOLD, 80), textcolor = GOLD, style = is_bullish ? label.style_label_up : label.style_label_down, size = size.tiny)
 
