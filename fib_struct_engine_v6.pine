@@ -42,6 +42,8 @@ type SessVP
     BarInfo[] bars
     box[]     boxes
     line      pocLine
+    line      vahLine
+    line      valLine
     box       sessBox
     int       startIdx
     int       lastIdx
@@ -111,6 +113,7 @@ dashPosStr = input.string("Top Right", "Position", options = ["Top Left", "Top R
 showVpInput       = input.bool(true, "Show Session Volume Profile", group = GRP_VP)
 vpRowsInput       = input.int(40, "VP Rows", minval = 10, maxval = 100, group = GRP_VP, tooltip = "Number of horizontal bars in the volume profile.")
 vpWidthInput      = input.int(30, "VP Width (Bars)", minval = 5, maxval = 100, group = GRP_VP, tooltip = "Maximum width of the VP bars in chart units.")
+vpVaPercentInput  = input.int(70, "Value Area (%)", minval = 10, maxval = 100, group = GRP_VP, tooltip = "Percentage of total volume used to calculate Value Area (VAH/VAL).")
 vpTzInput         = input.string("GMT+3", "Timezone", group = GRP_VP, tooltip = "Timezone for session hours.")
 
 showAsianInput    = input.bool(true, "Asian Session", inline = "asian", group = GRP_VP)
@@ -187,6 +190,10 @@ renderVP(SessVP svp, color sessColor) =>
             svp.boxes.clear()
         if not na(svp.pocLine)
             svp.pocLine.delete()
+        if not na(svp.vahLine)
+            svp.vahLine.delete()
+        if not na(svp.valLine)
+            svp.valLine.delete()
         if not na(svp.sessBox)
             svp.sessBox.delete()
 
@@ -233,6 +240,32 @@ renderVP(SessVP svp, color sessColor) =>
             float pocPrice = svp.minLow + pocIdx * binSize + (binSize / 2)
             svp.pocLine := line.new(svp.startIdx, pocPrice, svp.lastIdx, pocPrice, color = color.new(sessColor, 0), width = 2, style = line.style_solid)
 
+            // Value Area Calculation (VAH / VAL)
+            float totalVol = volumes.sum()
+            float vaTarget = totalVol * (vpVaPercentInput / 100.0)
+            float vaVol    = volumes.get(pocIdx)
+            int   vaUpper  = pocIdx
+            int   vaLower  = pocIdx
+
+            while vaVol < vaTarget and (vaUpper < vpRowsInput - 1 or vaLower > 0)
+                float upVol = vaUpper < vpRowsInput - 1 ? volumes.get(vaUpper + 1) : 0.0
+                float dnVol = vaLower > 0 ? volumes.get(vaLower - 1) : 0.0
+
+                if upVol >= dnVol and vaUpper < vpRowsInput - 1
+                    vaUpper += 1
+                    vaVol += upVol
+                else if vaLower > 0
+                    vaLower -= 1
+                    vaVol += dnVol
+                else
+                    break
+
+            float vahPrice = svp.minLow + (vaUpper + 1) * binSize
+            float valPrice = svp.minLow + vaLower * binSize
+
+            svp.vahLine := line.new(svp.startIdx, vahPrice, svp.lastIdx, vahPrice, color = color.new(sessColor, 30), width = 1, style = line.style_dashed)
+            svp.valLine := line.new(svp.startIdx, valPrice, svp.lastIdx, valPrice, color = color.new(sessColor, 30), width = 1, style = line.style_dashed)
+
 processSessVP(string sessStr, SessVP svp, color sessColor, bool showSess) =>
     if showSess
         bool inSess = not na(time(timeframe.period, sessStr, vpTzInput))
@@ -244,6 +277,8 @@ processSessVP(string sessStr, SessVP svp, color sessColor, bool showSess) =>
                 // Do NOT delete boxes/lines/sessBox here to let history persist
                 svp.boxes := array.new<box>()
                 svp.pocLine := na
+                svp.vahLine := na
+                svp.valLine := na
                 svp.sessBox := na
                 svp.startIdx := bar_index
                 svp.active := true
