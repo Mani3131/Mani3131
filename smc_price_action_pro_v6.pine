@@ -206,11 +206,10 @@ is_london = in_session(london_sess)
 is_ny_am  = in_session(ny_am_sess)
 is_ny_pm  = in_session(ny_pm_sess)
 
-if show_sess
-    bgcolor(is_asian  ? color.new(GOLD, 90)    : na, title = "Asian Session")
-    bgcolor(is_london ? color.new(EMERALD, 90) : na, title = "London Session")
-    bgcolor(is_ny_am  ? color.new(ROSE, 90)    : na, title = "NY AM Session")
-    bgcolor(is_ny_pm  ? color.new(SLATE, 90)   : na, title = "NY PM Session")
+bgcolor(show_sess and is_asian  ? color.new(GOLD, 90)    : na, title = "Asian Session")
+bgcolor(show_sess and is_london ? color.new(EMERALD, 90) : na, title = "London Session")
+bgcolor(show_sess and is_ny_am  ? color.new(ROSE, 90)    : na, title = "NY AM Session")
+bgcolor(show_sess and is_ny_pm  ? color.new(SLATE, 90)   : na, title = "NY PM Session")
 
 // --- Signal Confluence ---
 if show_signals
