@@ -86,16 +86,28 @@ is_three_candles(bool bullish) =>
         close < open and close[1] < open[1] and close[2] < open[2] and close < close[1] and close[1] < close[2]
 
 is_inside_outside(bool bullish) =>
+    float c_0 = close
+    float o_2 = open[2]
+    float c_2 = close[2]
+    float o_1 = open[1]
+    float c_1 = close[1]
+    float h_1 = high[1]
+    float l_1 = low[1]
+    float h_2 = high[2]
+    float l_2 = low[2]
+
+    bool res = false
     if bullish
-        // Three Inside Up
-        (close[2] < open[2] and close[1] > open[1] and high[1] <= high[2] and low[1] >= low[2] and close > high[2]) or
-        // Three Outside Up
-        (close[2] < open[2] and close[1] > open[1] and high[1] >= high[2] and low[1] <= low[2] and close > close[1])
+        // Three Inside Up or Three Outside Up
+        bool inside = c_2 < o_2 and c_1 > o_1 and h_1 <= h_2 and l_1 >= l_2 and c_0 > h_2
+        bool outside = c_2 < o_2 and c_1 > o_1 and h_1 >= h_2 and l_1 <= l_2 and c_0 > c_1
+        res := inside or outside
     else
-        // Three Inside Down
-        (close[2] > open[2] and close[1] < open[1] and high[1] <= high[2] and low[1] >= low[2] and close < low[2]) or
-        // Three Outside Down
-        (close[2] > open[2] and close[1] < open[1] and high[1] >= high[2] and low[1] <= low[2] and close < close[1])
+        // Three Inside Down or Three Outside Down
+        bool inside = c_2 > o_2 and c_1 < o_1 and h_1 <= h_2 and l_1 >= l_2 and c_0 < l_2
+        bool outside = c_2 > o_2 and c_1 < o_1 and h_1 >= h_2 and l_1 <= l_2 and c_0 < c_1
+        res := inside or outside
+    res
 
 is_doji(bool bullish) =>
     body = math.abs(close - open)
@@ -106,8 +118,29 @@ is_doji(bool bullish) =>
     else // Gravestone
         is_doji_base and (math.min(open, close) - low) <= candle_range * 0.1
 
-bool pattern_bull = is_pin_bar(true) or is_engulfing(true) or is_harami(true) or is_piercing_dark_cloud(true) or is_star_pattern(true) or is_tweezer(true) or is_marubozu(true) or is_kicker(true) or is_three_candles(true) or is_inside_outside(true) or is_doji(true)
-bool pattern_bear = is_pin_bar(false) or is_engulfing(false) or is_harami(false) or is_piercing_dark_cloud(false) or is_star_pattern(false) or is_tweezer(false) or is_marubozu(false) or is_kicker(false) or is_three_candles(false) or is_inside_outside(false) or is_doji(false)
+pattern_bull = is_pin_bar(true)
+pattern_bull := pattern_bull or is_engulfing(true)
+pattern_bull := pattern_bull or is_harami(true)
+pattern_bull := pattern_bull or is_piercing_dark_cloud(true)
+pattern_bull := pattern_bull or is_star_pattern(true)
+pattern_bull := pattern_bull or is_tweezer(true)
+pattern_bull := pattern_bull or is_marubozu(true)
+pattern_bull := pattern_bull or is_kicker(true)
+pattern_bull := pattern_bull or is_three_candles(true)
+pattern_bull := pattern_bull or is_inside_outside(true)
+pattern_bull := pattern_bull or is_doji(true)
+
+pattern_bear = is_pin_bar(false)
+pattern_bear := pattern_bear or is_engulfing(false)
+pattern_bear := pattern_bear or is_harami(false)
+pattern_bear := pattern_bear or is_piercing_dark_cloud(false)
+pattern_bear := pattern_bear or is_star_pattern(false)
+pattern_bear := pattern_bear or is_tweezer(false)
+pattern_bear := pattern_bear or is_marubozu(false)
+pattern_bear := pattern_bear or is_kicker(false)
+pattern_bear := pattern_bear or is_three_candles(false)
+pattern_bear := pattern_bear or is_inside_outside(false)
+pattern_bear := pattern_bear or is_doji(false)
 
 // --- SUPPLY AND DEMAND ZONES ---
 
