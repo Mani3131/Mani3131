@@ -1,0 +1,202 @@
+//@version=6
+indicator("FX Telepath Candlestick Strategy", overlay=true, max_boxes_count=500, max_labels_count=500)
+
+// --- INPUTS ---
+atr_length = input.int(14, "ATR Length", minval=1)
+momentum_mult = input.float(2.0, "Momentum Threshold (ATR Mult)", step=0.1)
+pivot_lookback = input.int(5, "Pivot Lookback", minval=2)
+zone_extend_bars = input.int(50, "Zone Extension (Bars)", minval=10)
+
+// --- COLORS ---
+color_demand = color.new(color.blue, 80)
+color_supply = color.new(color.red, 80)
+color_bull = color.green
+color_bear = color.red
+
+// --- TYPES ---
+type Zone
+    float top
+    float bottom
+    box   box_id
+    bool  is_demand
+
+var Zone[] active_zones = array.new<Zone>()
+
+// --- CANDLESTICK PATTERN DETECTION ---
+
+is_pin_bar(bool bullish) =>
+    body = math.abs(close - open)
+    upper_wick = high - math.max(open, close)
+    lower_wick = math.min(open, close) - low
+    if bullish
+        lower_wick >= 2 * body and upper_wick <= 0.5 * lower_wick
+    else
+        upper_wick >= 2 * body and lower_wick <= 0.5 * upper_wick
+
+is_engulfing(bool bullish) =>
+    if bullish
+        close[1] < open[1] and close > open and close >= open[1] and open <= close[1]
+    else
+        close[1] > open[1] and close < open and close <= open[1] and open >= close[1]
+
+is_harami(bool bullish) =>
+    if bullish
+        close[1] < open[1] and close > open and high <= high[1] and low >= low[1] and open > close[1] and close < open[1]
+    else
+        close[1] > open[1] and close < open and high <= high[1] and low >= low[1] and open < close[1] and close > open[1]
+
+is_piercing_dark_cloud(bool bullish) =>
+    midpoint = (open[1] + close[1]) / 2
+    if bullish
+        close[1] < open[1] and open < low[1] and close > midpoint and close < open[1]
+    else
+        close[1] > open[1] and open > high[1] and close < midpoint and close > open[1]
+
+is_star_pattern(bool bullish) =>
+    if bullish // Morning Star
+        close[2] < open[2] and math.abs(close[1] - open[1]) < (high[1] - low[1]) * 0.3 and close > (open[2] + close[2]) / 2 and close > open
+    else // Evening Star
+        close[2] > open[2] and math.abs(close[1] - open[1]) < (high[1] - low[1]) * 0.3 and close < (open[2] + close[2]) / 2 and close < open
+
+is_tweezer(bool bullish) =>
+    margin = syminfo.mintick * 5
+    if bullish
+        math.abs(low - low[1]) <= margin and close > open and close[1] < open[1]
+    else
+        math.abs(high - high[1]) <= margin and close < open and close[1] > open[1]
+
+is_marubozu(bool bullish) =>
+    body = math.abs(close - open)
+    candle_range = high - low
+    if bullish
+        close > open and body >= candle_range * 0.9
+    else
+        close < open and body >= candle_range * 0.9
+
+is_kicker(bool bullish) =>
+    if bullish
+        close[1] < open[1] and open >= open[1] and close > open and open > close[1]
+    else
+        close[1] > open[1] and open <= open[1] and close < open and open < close[1]
+
+is_three_candles(bool bullish) =>
+    if bullish // Three White Soldiers
+        close > open and close[1] > open[1] and close[2] > open[2] and close > close[1] and close[1] > close[2]
+    else // Three Black Crows
+        close < open and close[1] < open[1] and close[2] < open[2] and close < close[1] and close[1] < close[2]
+
+is_inside_outside(bool bullish) =>
+    float c_0 = close
+    float o_2 = open[2]
+    float c_2 = close[2]
+    float o_1 = open[1]
+    float c_1 = close[1]
+    float h_1 = high[1]
+    float l_1 = low[1]
+    float h_2 = high[2]
+    float l_2 = low[2]
+
+    bool res = false
+    if bullish
+        // Three Inside Up or Three Outside Up
+        bool inside = c_2 < o_2 and c_1 > o_1 and h_1 <= h_2 and l_1 >= l_2 and c_0 > h_2
+        bool outside = c_2 < o_2 and c_1 > o_1 and h_1 >= h_2 and l_1 <= l_2 and c_0 > c_1
+        res := inside or outside
+    else
+        // Three Inside Down or Three Outside Down
+        bool inside = c_2 > o_2 and c_1 < o_1 and h_1 <= h_2 and l_1 >= l_2 and c_0 < l_2
+        bool outside = c_2 > o_2 and c_1 < o_1 and h_1 >= h_2 and l_1 <= l_2 and c_0 < c_1
+        res := inside or outside
+    res
+
+is_doji(bool bullish) =>
+    body = math.abs(close - open)
+    candle_range = high - low
+    is_doji_base = body <= candle_range * 0.1
+    if bullish // Dragonfly
+        is_doji_base and (high - math.max(open, close)) <= candle_range * 0.1
+    else // Gravestone
+        is_doji_base and (math.min(open, close) - low) <= candle_range * 0.1
+
+pattern_bull = is_pin_bar(true)
+pattern_bull := pattern_bull or is_engulfing(true)
+pattern_bull := pattern_bull or is_harami(true)
+pattern_bull := pattern_bull or is_piercing_dark_cloud(true)
+pattern_bull := pattern_bull or is_star_pattern(true)
+pattern_bull := pattern_bull or is_tweezer(true)
+pattern_bull := pattern_bull or is_marubozu(true)
+pattern_bull := pattern_bull or is_kicker(true)
+pattern_bull := pattern_bull or is_three_candles(true)
+pattern_bull := pattern_bull or is_inside_outside(true)
+pattern_bull := pattern_bull or is_doji(true)
+
+pattern_bear = is_pin_bar(false)
+pattern_bear := pattern_bear or is_engulfing(false)
+pattern_bear := pattern_bear or is_harami(false)
+pattern_bear := pattern_bear or is_piercing_dark_cloud(false)
+pattern_bear := pattern_bear or is_star_pattern(false)
+pattern_bear := pattern_bear or is_tweezer(false)
+pattern_bear := pattern_bear or is_marubozu(false)
+pattern_bear := pattern_bear or is_kicker(false)
+pattern_bear := pattern_bear or is_three_candles(false)
+pattern_bear := pattern_bear or is_inside_outside(false)
+pattern_bear := pattern_bear or is_doji(false)
+
+// --- SUPPLY AND DEMAND ZONES ---
+
+atr = ta.atr(atr_length)
+body_size = math.abs(close - open)
+is_displacement = body_size > atr * momentum_mult
+
+ph = ta.pivothigh(pivot_lookback, pivot_lookback)
+pl = ta.pivotlow(pivot_lookback, pivot_lookback)
+
+// Cleanup old zones or mitigated zones
+if array.size(active_zones) > 0
+    for i = array.size(active_zones) - 1 to 0
+        Zone z = array.get(active_zones, i)
+        // Mitigated if close breaks the zone
+        mitigated = z.is_demand ? close < z.bottom : close > z.top
+        if mitigated
+            // We keep the box but maybe change style or just remove from detection
+            array.remove(active_zones, i)
+
+// Logic to create zones
+if not na(ph)
+    for i = 1 to 5
+        if is_displacement[i-1]
+            float top = high[pivot_lookback]
+            float bottom = math.min(open[pivot_lookback], close[pivot_lookback])
+            box b = box.new(bar_index[pivot_lookback], top, bar_index + zone_extend_bars, bottom, border_color=color.new(color.red, 50), bgcolor=color_supply)
+            array.push(active_zones, Zone.new(top, bottom, b, false))
+            break
+
+if not na(pl)
+    for i = 1 to 5
+        if is_displacement[i-1]
+            float top = math.max(open[pivot_lookback], close[pivot_lookback])
+            float bottom = low[pivot_lookback]
+            box b = box.new(bar_index[pivot_lookback], top, bar_index + zone_extend_bars, bottom, border_color=color.new(color.blue, 50), bgcolor=color_demand)
+            array.push(active_zones, Zone.new(top, bottom, b, true))
+            break
+
+// --- FILTERING AND SIGNALS ---
+
+bool in_demand_zone = false
+bool in_supply_zone = false
+
+if array.size(active_zones) > 0
+    for i = 0 to array.size(active_zones) - 1
+        Zone z = array.get(active_zones, i)
+        if z.is_demand
+            if low <= z.top and high >= z.bottom
+                in_demand_zone := true
+        else
+            if high >= z.bottom and low <= z.top
+                in_supply_zone := true
+
+bool buy_signal = pattern_bull and in_demand_zone
+bool sell_signal = pattern_bear and in_supply_zone
+
+plotshape(buy_signal, "Buy Signal", shape.labelup, location.belowbar, color.new(color.green, 0), text="BUY", textcolor=color.white, size=size.small)
+plotshape(sell_signal, "Sell Signal", shape.labeldown, location.abovebar, color.new(color.red, 0), text="SELL", textcolor=color.white, size=size.small)
