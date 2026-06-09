@@ -101,73 +101,76 @@ get_poc(int start_idx, int end_idx) =>
 
 // --- DETECTION LOGIC ---
 if not na(ph) and not na(last_pl_idx)
-    if (ph - last_pl_val) > atr * i_impulseMult
+    if (ph - last_pl_val) > nz(atr) * i_impulseMult
         float poc = get_poc(last_pl_idx, bar_index - i_swingLookback)
         line  ln  = line.new(bar_index - i_swingLookback, poc, bar_index, poc, color = C_EMERALD, style = line.style_dotted, extend = extend.right)
         label lb  = label.new(bar_index, poc, "Strong Support (POC)", color = C_EMERALD, textcolor = C_WHITE, style = label.style_label_left, size = size.tiny)
         array.push(zones, Zone.new(poc, bar_index, ln, lb, false, true))
 
 if not na(pl) and not na(last_ph_idx)
-    if (last_ph_val - pl) > atr * i_impulseMult
+    if (last_ph_val - pl) > nz(atr) * i_impulseMult
         float poc = get_poc(last_ph_idx, bar_index - i_swingLookback)
         line  ln  = line.new(bar_index - i_swingLookback, poc, bar_index, poc, color = C_ROSE, style = line.style_dotted, extend = extend.right)
         label lb  = label.new(bar_index, poc, "Strong Resistance (POC)", color = C_ROSE, textcolor = C_WHITE, style = label.style_label_left, size = size.tiny)
         array.push(zones, Zone.new(poc, bar_index, ln, lb, false, false))
 
 // --- CANDLESTICK PATTERNS ---
-bool is_pinbar_bull = (math.min(open, close) - low) > (high - low) * 0.66 and (high - math.max(open, close)) < (high - low) * 0.1
-bool is_pinbar_bear = (high - math.max(open, close)) > (high - low) * 0.66 and (math.min(open, close) - low) < (high - low) * 0.1
-bool is_engulfing_bull = close > open and close[1] < open[1] and close > open[1] and open < close[1]
-bool is_engulfing_bear = close < open and close[1] > open[1] and close < open[1] and open > close[1]
+float candle_range = high - low
+bool is_pinbar_bull = candle_range > 0 and (math.min(open, close) - low) > candle_range * 0.66 and (high - math.max(open, close)) < candle_range * 0.1
+bool is_pinbar_bear = candle_range > 0 and (high - math.max(open, close)) > candle_range * 0.66 and (math.min(open, close) - low) < candle_range * 0.1
+bool is_engulfing_bull = bar_index > 0 and close > open and close[1] < open[1] and close > open[1] and open < close[1]
+bool is_engulfing_bear = bar_index > 0 and close < open and close[1] > open[1] and close < open[1] and open > close[1]
 
 // --- ZONE MITIGATION & SIGNALS ---
-for i = array.size(zones) - 1 to 0
-    Zone z = array.get(zones, i)
-    if not z.isMitigated
-        // Update line position
-        line.set_x2(z.lineId, bar_index)
-        label.set_x(z.labelId, bar_index)
+if array.size(zones) > 0
+    for i = array.size(zones) - 1 to 0 by -1
+        Zone z = array.get(zones, i)
+        if not z.isMitigated
+            // Update line position
+            line.set_x2(z.lineId, bar_index)
+            label.set_x(z.labelId, bar_index)
 
-        // Mitigation check
-        if (z.isBullish and close < z.level - atr) or (not z.isBullish and close > z.level + atr)
-            z.isMitigated := true
-            line.delete(z.lineId)
-            label.delete(z.labelId)
-            array.remove(zones, i)
-            continue
+            // Mitigation check
+            float current_atr = nz(atr)
+            if (z.isBullish and close < z.level - current_atr) or (not z.isBullish and close > z.level + current_atr)
+                z.isMitigated := true
+                line.delete(z.lineId)
+                label.delete(z.labelId)
+                array.remove(zones, i)
+                continue
 
-        // Entry Signal Logic
-        if na(activeSignal)
-            bool rejection_bull = (is_pinbar_bull or is_engulfing_bull) and low <= z.level + (atr * 0.2) and close > z.level
-            bool rejection_bear = (is_pinbar_bear or is_engulfing_bear) and high >= z.level - (atr * 0.2) and close < z.level
+            // Entry Signal Logic
+            if na(activeSignal)
+                bool rejection_bull = (is_pinbar_bull or is_engulfing_bull) and low <= z.level + (current_atr * 0.2) and close > z.level
+                bool rejection_bear = (is_pinbar_bear or is_engulfing_bear) and high >= z.level - (current_atr * 0.2) and close < z.level
 
-            if (z.isBullish and rejection_bull) or (not z.isBullish and rejection_bear)
-                float entry_p = close
-                float sl_p    = z.isBullish ? low - (atr * 0.5) : high + (atr * 0.5)
-                float risk    = math.abs(entry_p - sl_p)
-                float tp1_p   = z.isBullish ? entry_p + risk * i_rr1 : entry_p - risk * i_rr1
-                float tp2_p   = z.isBullish ? entry_p + risk * i_rr2 : entry_p - risk * i_rr2
-                float tp3_p   = z.isBullish ? entry_p + risk * i_rr3 : entry_p - risk * i_rr3
+                if (z.isBullish and rejection_bull) or (not z.isBullish and rejection_bear)
+                    float entry_p = close
+                    float sl_p    = z.isBullish ? low - (current_atr * 0.5) : high + (current_atr * 0.5)
+                    float risk    = math.abs(entry_p - sl_p)
+                    float tp1_p   = z.isBullish ? entry_p + risk * i_rr1 : entry_p - risk * i_rr1
+                    float tp2_p   = z.isBullish ? entry_p + risk * i_rr2 : entry_p - risk * i_rr2
+                    float tp3_p   = z.isBullish ? entry_p + risk * i_rr3 : entry_p - risk * i_rr3
 
-                color sig_col = z.isBullish ? C_EMERALD : C_ROSE
+                    color sig_col = z.isBullish ? C_EMERALD : C_ROSE
 
-                line ln_ent = line.new(bar_index, entry_p, bar_index + 10, entry_p, color = C_WHITE, width = 2)
-                line ln_sl  = line.new(bar_index, sl_p, bar_index + 10, sl_p, color = C_ROSE, style = line.style_dashed)
-                line ln_tp1 = line.new(bar_index, tp1_p, bar_index + 10, tp1_p, color = C_GOLD, style = line.style_dotted)
-                line ln_tp2 = line.new(bar_index, tp2_p, bar_index + 10, tp2_p, color = C_GOLD, style = line.style_dotted)
-                line ln_tp3 = line.new(bar_index, tp3_p, bar_index + 10, tp3_p, color = C_GOLD, style = line.style_dotted)
+                    line ln_ent = line.new(bar_index, entry_p, bar_index + 10, entry_p, color = C_WHITE, width = 2)
+                    line ln_sl  = line.new(bar_index, sl_p, bar_index + 10, sl_p, color = C_ROSE, style = line.style_dashed)
+                    line ln_tp1 = line.new(bar_index, tp1_p, bar_index + 10, tp1_p, color = C_GOLD, style = line.style_dotted)
+                    line ln_tp2 = line.new(bar_index, tp2_p, bar_index + 10, tp2_p, color = C_GOLD, style = line.style_dotted)
+                    line ln_tp3 = line.new(bar_index, tp3_p, bar_index + 10, tp3_p, color = C_GOLD, style = line.style_dotted)
 
-                label lb_stat = label.new(bar_index, entry_p, "Signal Active", color = sig_col, textcolor = C_WHITE, size = size.small)
+                    label lb_stat = label.new(bar_index, entry_p, "Signal Active", color = sig_col, textcolor = C_WHITE, size = size.small)
 
-                activeSignal := Signal.new(entry_p, sl_p, tp1_p, tp2_p, tp3_p, ln_ent, ln_sl, ln_tp1, ln_tp2, ln_tp3, lb_stat, true)
+                    activeSignal := Signal.new(entry_p, sl_p, tp1_p, tp2_p, tp3_p, ln_ent, ln_sl, ln_tp1, ln_tp2, ln_tp3, lb_stat, true)
 
-                // Use labels for signals instead of plotshape to avoid scope errors
-                label.new(bar_index, z.isBullish ? low : high, z.isBullish ? "▲" : "▼",
-                          color = color.new(sig_col, 100),
-                          textcolor = sig_col,
-                          style = label.style_none,
-                          size = size.large,
-                          yloc = z.isBullish ? yloc.belowbar : yloc.abovebar)
+                    // Use labels for signals instead of plotshape to avoid scope errors
+                    label.new(bar_index, z.isBullish ? low : high, z.isBullish ? "▲" : "▼",
+                              color = color.new(sig_col, 100),
+                              textcolor = sig_col,
+                              style = label.style_none,
+                              size = size.large,
+                              yloc = z.isBullish ? yloc.belowbar : yloc.abovebar)
 
 // --- SIGNAL MANAGEMENT ---
 if not na(activeSignal)
