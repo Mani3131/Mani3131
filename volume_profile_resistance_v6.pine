@@ -1,0 +1,195 @@
+// @version=6
+indicator("Volume Profile Resistance [Jules]", "VP Resistance", overlay = true, max_labels_count = 500, max_lines_count = 500)
+
+// --- COLORS ---
+color C_EMERALD = color.rgb(0, 201, 167)
+color C_ROSE    = color.rgb(255, 51, 102)
+color C_GOLD    = color.rgb(255, 184, 0)
+color C_WHITE   = color.white
+color C_GRAY    = color.gray
+
+// --- TYPES ---
+type Zone
+    float level
+    int   startIdx
+    line  lineId
+    label labelId
+    bool  isMitigated = false
+    bool  isBullish   = false
+
+type Signal
+    float entry
+    float sl
+    float tp1
+    float tp2
+    float tp3
+    line  lineEntry
+    line  lineSL
+    line  lineTP1
+    line  lineTP2
+    line  lineTP3
+    label labelStatus
+    bool  isActive    = true
+
+// --- INPUTS ---
+group_swing = "Swing Detection"
+i_swingLookback = input.int(10, "Swing Lookback", minval = 2, group = group_swing)
+i_impulseMult   = input.float(1.5, "Impulse Multiplier (vs ATR)", minval = 0.5, group = group_swing)
+
+group_vp = "Volume Profile"
+i_vpRows = input.int(50, "VP Rows", minval = 10, maxval = 200, group = group_vp)
+
+group_risk = "Risk Management"
+i_rr1 = input.float(1.0, "Risk:Reward TP1", step = 0.1, group = group_risk)
+i_rr2 = input.float(2.0, "Risk:Reward TP2", step = 0.1, group = group_risk)
+i_rr3 = input.float(3.0, "Risk:Reward TP3", step = 0.1, group = group_risk)
+
+// --- STORAGE ---
+var Zone[] zones = array.new<Zone>()
+var Signal activeSignal = na
+var int last_ph_idx = na
+var int last_pl_idx = na
+var float last_ph_val = na
+var float last_pl_val = na
+
+// --- CALCULATIONS ---
+float atr = ta.atr(14)
+
+// Pivot Detection
+float ph = ta.pivothigh(i_swingLookback, i_swingLookback)
+float pl = ta.pivotlow(i_swingLookback, i_swingLookback)
+
+if not na(ph)
+    last_ph_idx := bar_index - i_swingLookback
+    last_ph_val := ph
+if not na(pl)
+    last_pl_idx := bar_index - i_swingLookback
+    last_pl_val := pl
+
+// Volume Profile POC Calculation
+get_poc(int start_idx, int end_idx) =>
+    int lookback_start = bar_index - start_idx
+    int lookback_end   = bar_index - end_idx
+
+    float hi = high[lookback_start]
+    float lo = low[lookback_start]
+    for i = lookback_end to lookback_start
+        hi := math.max(hi, high[i])
+        lo := math.min(lo, low[i])
+
+    float price_range = hi - lo
+    float bin_size = price_range / i_vpRows
+    float[] bins = array.new_float(i_vpRows, 0.0)
+
+    if price_range > 0
+        for i = lookback_end to lookback_start
+            float bar_vol = nz(volume[i])
+            if bar_vol > 0
+                int bin_idx = int(math.floor((close[i] - lo) / bin_size))
+                bin_idx := math.max(0, math.min(i_vpRows - 1, bin_idx))
+                array.set(bins, bin_idx, array.get(bins, bin_idx) + bar_vol)
+
+    int max_bin = 0
+    float max_vol = 0.0
+    for i = 0 to i_vpRows - 1
+        float v = array.get(bins, i)
+        if v > max_vol
+            max_vol := v
+            max_bin := i
+
+    lo + (max_bin + 0.5) * bin_size
+
+// --- DETECTION LOGIC ---
+if not na(ph) and not na(last_pl_idx)
+    if (ph - last_pl_val) > atr * i_impulseMult
+        float poc = get_poc(last_pl_idx, bar_index - i_swingLookback)
+        line  ln  = line.new(bar_index - i_swingLookback, poc, bar_index, poc, color = C_EMERALD, style = line.style_dotted, extend = extend.right)
+        label lb  = label.new(bar_index, poc, "Strong Support (POC)", color = C_EMERALD, textcolor = C_WHITE, style = label.style_label_left, size = size.tiny)
+        array.push(zones, Zone.new(poc, bar_index, ln, lb, false, true))
+
+if not na(pl) and not na(last_ph_idx)
+    if (last_ph_val - pl) > atr * i_impulseMult
+        float poc = get_poc(last_ph_idx, bar_index - i_swingLookback)
+        line  ln  = line.new(bar_index - i_swingLookback, poc, bar_index, poc, color = C_ROSE, style = line.style_dotted, extend = extend.right)
+        label lb  = label.new(bar_index, poc, "Strong Resistance (POC)", color = C_ROSE, textcolor = C_WHITE, style = label.style_label_left, size = size.tiny)
+        array.push(zones, Zone.new(poc, bar_index, ln, lb, false, false))
+
+// --- CANDLESTICK PATTERNS ---
+bool is_pinbar_bull = (math.min(open, close) - low) > (high - low) * 0.66 and (high - math.max(open, close)) < (high - low) * 0.1
+bool is_pinbar_bear = (high - math.max(open, close)) > (high - low) * 0.66 and (math.min(open, close) - low) < (high - low) * 0.1
+bool is_engulfing_bull = close > open and close[1] < open[1] and close > open[1] and open < close[1]
+bool is_engulfing_bear = close < open and close[1] > open[1] and close < open[1] and open > close[1]
+
+// --- ZONE MITIGATION & SIGNALS ---
+for i = array.size(zones) - 1 to 0
+    Zone z = array.get(zones, i)
+    if not z.isMitigated
+        // Update line position
+        line.set_x2(z.lineId, bar_index)
+        label.set_x(z.labelId, bar_index)
+
+        // Mitigation check
+        if (z.isBullish and close < z.level - atr) or (not z.isBullish and close > z.level + atr)
+            z.isMitigated := true
+            line.delete(z.lineId)
+            label.delete(z.labelId)
+            array.remove(zones, i)
+            continue
+
+        // Entry Signal Logic
+        if na(activeSignal)
+            bool rejection_bull = (is_pinbar_bull or is_engulfing_bull) and low <= z.level + (atr * 0.2) and close > z.level
+            bool rejection_bear = (is_pinbar_bear or is_engulfing_bear) and high >= z.level - (atr * 0.2) and close < z.level
+
+            if (z.isBullish and rejection_bull) or (not z.isBullish and rejection_bear)
+                float entry_p = close
+                float sl_p    = z.isBullish ? low - (atr * 0.5) : high + (atr * 0.5)
+                float risk    = math.abs(entry_p - sl_p)
+                float tp1_p   = z.isBullish ? entry_p + risk * i_rr1 : entry_p - risk * i_rr1
+                float tp2_p   = z.isBullish ? entry_p + risk * i_rr2 : entry_p - risk * i_rr2
+                float tp3_p   = z.isBullish ? entry_p + risk * i_rr3 : entry_p - risk * i_rr3
+
+                color sig_col = z.isBullish ? C_EMERALD : C_ROSE
+
+                line ln_ent = line.new(bar_index, entry_p, bar_index + 10, entry_p, color = C_WHITE, width = 2)
+                line ln_sl  = line.new(bar_index, sl_p, bar_index + 10, sl_p, color = C_ROSE, style = line.style_dashed)
+                line ln_tp1 = line.new(bar_index, tp1_p, bar_index + 10, tp1_p, color = C_GOLD, style = line.style_dotted)
+                line ln_tp2 = line.new(bar_index, tp2_p, bar_index + 10, tp2_p, color = C_GOLD, style = line.style_dotted)
+                line ln_tp3 = line.new(bar_index, tp3_p, bar_index + 10, tp3_p, color = C_GOLD, style = line.style_dotted)
+
+                label lb_stat = label.new(bar_index, entry_p, "Signal Active", color = sig_col, textcolor = C_WHITE, size = size.small)
+
+                activeSignal := Signal.new(entry_p, sl_p, tp1_p, tp2_p, tp3_p, ln_ent, ln_sl, ln_tp1, ln_tp2, ln_tp3, lb_stat, true)
+
+                // Use labels for signals instead of plotshape to avoid scope errors
+                label.new(bar_index, z.isBullish ? low : high, z.isBullish ? "▲" : "▼",
+                          color = color.new(sig_col, 100),
+                          textcolor = sig_col,
+                          style = label.style_none,
+                          size = size.large,
+                          yloc = z.isBullish ? yloc.belowbar : yloc.abovebar)
+
+// --- SIGNAL MANAGEMENT ---
+if not na(activeSignal)
+    // Extend lines
+    line.set_x2(activeSignal.lineEntry, bar_index)
+    line.set_x2(activeSignal.lineSL, bar_index)
+    line.set_x2(activeSignal.lineTP1, bar_index)
+    line.set_x2(activeSignal.lineTP2, bar_index)
+    line.set_x2(activeSignal.lineTP3, bar_index)
+    label.set_x(activeSignal.labelStatus, bar_index)
+
+    // Check SL
+    bool sl_hit = (activeSignal.entry > activeSignal.sl and low <= activeSignal.sl) or (activeSignal.entry < activeSignal.sl and high >= activeSignal.sl)
+    // Check TP3 (Final)
+    bool tp_hit = (activeSignal.entry > activeSignal.sl and high >= activeSignal.tp3) or (activeSignal.entry < activeSignal.sl and low <= activeSignal.tp3)
+
+    if sl_hit or tp_hit
+        label.set_text(activeSignal.labelStatus, sl_hit ? "SL Hit" : "TP3 Hit")
+        label.set_color(activeSignal.labelStatus, sl_hit ? color.gray : C_GOLD)
+        activeSignal := na
+
+// --- WATERMARK ---
+var table watermark = table.new(position.bottom_right, 1, 1)
+if barstate.islast
+    table.cell(watermark, 0, 0, "VP Resistance [Jules]", text_color = color.new(C_GRAY, 50), text_size = size.small)
