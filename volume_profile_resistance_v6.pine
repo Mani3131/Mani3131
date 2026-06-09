@@ -1,6 +1,12 @@
 // @version=6
 indicator("Volume Profile Resistance [Jules]", "VP Resistance", overlay = true, max_labels_count = 500, max_lines_count = 500)
 
+// Ensure data buffers are large enough for custom VP calculations
+max_bars_back(high, 1000)
+max_bars_back(low, 1000)
+max_bars_back(close, 1000)
+max_bars_back(volume, 1000)
+
 // --- COLORS ---
 color C_EMERALD = color.rgb(0, 201, 167)
 color C_ROSE    = color.rgb(255, 51, 102)
@@ -29,6 +35,7 @@ type Signal
     line  lineTP2
     line  lineTP3
     label labelStatus
+    label labelIcon
     bool  isActive    = true
 
 // --- INPUTS ---
@@ -123,24 +130,20 @@ bool is_engulfing_bear = bar_index > 0 and close < open and close[1] > open[1] a
 
 // --- ZONE MITIGATION & SIGNALS ---
 if array.size(zones) > 0
-    for i = array.size(zones) - 1 to 0 by -1
+    int i = array.size(zones) - 1
+    while i >= 0
         Zone z = array.get(zones, i)
         if not z.isMitigated
-            // Update line position
             line.set_x2(z.lineId, bar_index)
             label.set_x(z.labelId, bar_index)
 
-            // Mitigation check
             float current_atr = nz(atr)
             if (z.isBullish and close < z.level - current_atr) or (not z.isBullish and close > z.level + current_atr)
                 z.isMitigated := true
                 line.delete(z.lineId)
                 label.delete(z.labelId)
                 array.remove(zones, i)
-                continue
-
-            // Entry Signal Logic
-            if na(activeSignal)
+            else if na(activeSignal)
                 bool rejection_bull = (is_pinbar_bull or is_engulfing_bull) and low <= z.level + (current_atr * 0.2) and close > z.level
                 bool rejection_bear = (is_pinbar_bear or is_engulfing_bear) and high >= z.level - (current_atr * 0.2) and close < z.level
 
@@ -161,20 +164,18 @@ if array.size(zones) > 0
                     line ln_tp3 = line.new(bar_index, tp3_p, bar_index + 10, tp3_p, color = C_GOLD, style = line.style_dotted)
 
                     label lb_stat = label.new(bar_index, entry_p, "Signal Active", color = sig_col, textcolor = C_WHITE, size = size.small)
+                    label lb_icon = label.new(bar_index, z.isBullish ? low : high, z.isBullish ? "▲" : "▼",
+                                              color = color.new(sig_col, 100),
+                                              textcolor = sig_col,
+                                              style = label.style_none,
+                                              size = size.large,
+                                              yloc = z.isBullish ? yloc.belowbar : yloc.abovebar)
 
-                    activeSignal := Signal.new(entry_p, sl_p, tp1_p, tp2_p, tp3_p, ln_ent, ln_sl, ln_tp1, ln_tp2, ln_tp3, lb_stat, true)
-
-                    // Use labels for signals instead of plotshape to avoid scope errors
-                    label.new(bar_index, z.isBullish ? low : high, z.isBullish ? "▲" : "▼",
-                              color = color.new(sig_col, 100),
-                              textcolor = sig_col,
-                              style = label.style_none,
-                              size = size.large,
-                              yloc = z.isBullish ? yloc.belowbar : yloc.abovebar)
+                    activeSignal := Signal.new(entry_p, sl_p, tp1_p, tp2_p, tp3_p, ln_ent, ln_sl, ln_tp1, ln_tp2, ln_tp3, lb_stat, lb_icon, true)
+        i -= 1
 
 // --- SIGNAL MANAGEMENT ---
 if not na(activeSignal)
-    // Extend lines
     line.set_x2(activeSignal.lineEntry, bar_index)
     line.set_x2(activeSignal.lineSL, bar_index)
     line.set_x2(activeSignal.lineTP1, bar_index)
@@ -182,9 +183,7 @@ if not na(activeSignal)
     line.set_x2(activeSignal.lineTP3, bar_index)
     label.set_x(activeSignal.labelStatus, bar_index)
 
-    // Check SL
     bool sl_hit = (activeSignal.entry > activeSignal.sl and low <= activeSignal.sl) or (activeSignal.entry < activeSignal.sl and high >= activeSignal.sl)
-    // Check TP3 (Final)
     bool tp_hit = (activeSignal.entry > activeSignal.sl and high >= activeSignal.tp3) or (activeSignal.entry < activeSignal.sl and low <= activeSignal.tp3)
 
     if sl_hit or tp_hit
