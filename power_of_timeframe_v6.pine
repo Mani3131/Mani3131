@@ -1,0 +1,192 @@
+//@version=6
+indicator("Power of Timeframe [Jules]", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// --- Colors ---
+color EMERALD = color.rgb(0, 201, 167)
+color ROSE    = color.rgb(255, 51, 102)
+color GOLD    = color.rgb(255, 184, 0)
+color WHITE   = color.white
+color GRAY    = color.gray
+
+// --- Inputs ---
+grp_tf = "Timeframe Settings"
+tf_htf = input.timeframe("240", "HTF Timeframe (4H)", group = grp_tf)
+tf_itf = input.timeframe("60", "ITF Timeframe (1H)", group = grp_tf)
+
+grp_style = "Styling"
+show_htf_ob     = input.bool(true, "Show 4H Order Blocks", group = grp_style)
+show_itf_fvg    = input.bool(true, "Show 1H FVGs", group = grp_style)
+show_itf_liq    = input.bool(true, "Show 1H Liquidity", group = grp_style)
+show_itf_sess   = input.bool(true, "Show 1H Prev Session H/L", group = grp_style)
+show_dash       = input.bool(true, "Show Dashboard", group = grp_style)
+
+// --- Types ---
+type OrderBlock
+    box id
+    float top
+    float bottom
+    bool is_bullish
+
+type FVG
+    box id
+    float top
+    float bottom
+    bool is_bullish
+
+var array<OrderBlock> htf_obs = array.new<OrderBlock>()
+var array<FVG> itf_fvgs = array.new<FVG>()
+
+// --- 4H HTF Structure & OB Logic ---
+// Fetch HTF data without lookahead
+[htf_c, htf_o, htf_h, htf_l, htf_ph, htf_pl] = request.security(syminfo.tickerid, tf_htf, [close, open, high, low, ta.pivothigh(5, 5), ta.pivotlow(5, 5)])
+
+var float htf_last_ph = na
+var float htf_last_pl = na
+var bool  htf_bullish = true
+
+if not na(htf_ph)
+    htf_last_ph := htf_ph
+if not na(htf_pl)
+    htf_last_pl := htf_pl
+
+// BOS detection
+if ta.crossover(htf_c, htf_last_ph)
+    htf_bullish := true
+if ta.crossunder(htf_c, htf_last_pl)
+    htf_bullish := false
+
+// OB Detection (Executed on HTF via a function to ensure correct indexing)
+get_htf_ob() =>
+    float ob_t = na
+    float ob_b = na
+    bool ob_bull = na
+    if ta.crossover(close, ta.valuewhen(ta.pivothigh(5, 5), ta.pivothigh(5, 5), 0))
+        for i = 1 to 10
+            if close[i] < open[i]
+                ob_t := high[i]
+                ob_b := low[i]
+                ob_bull := true
+                break
+    if ta.crossunder(close, ta.valuewhen(ta.pivotlow(5, 5), ta.pivotlow(5, 5), 0))
+        for i = 1 to 10
+            if close[i] > open[i]
+                ob_t := high[i]
+                ob_b := low[i]
+                ob_bull := false
+                break
+    [ob_t, ob_b, ob_bull]
+
+[htf_ob_t, htf_ob_b, htf_ob_bull] = request.security(syminfo.tickerid, tf_htf, get_htf_ob())
+
+if not na(htf_ob_t) and show_htf_ob and ta.change(htf_ob_t) != 0
+    htf_obs.push(OrderBlock.new(box.new(left = bar_index, top = htf_ob_t, right = bar_index + 20, bottom = htf_ob_b, border_color = htf_ob_bull ? EMERALD : ROSE, bgcolor = color.new(htf_ob_bull ? EMERALD : ROSE, 85)), htf_ob_t, htf_ob_b, htf_ob_bull))
+
+// Manage OBs (mitigation)
+if htf_obs.size() > 0
+    for i = htf_obs.size() - 1 to 0 by -1
+        ob = htf_obs.get(i)
+        box.set_right(ob.id, bar_index + 10)
+        if (ob.is_bullish and low < ob.bottom) or (not ob.is_bullish and high > ob.top)
+            box.delete(ob.id)
+            htf_obs.remove(i)
+
+// --- 1H Liquidity & FVG ---
+get_itf_data() =>
+    bool f_bull = low[0] > high[2]
+    bool f_bear = high[0] < low[2]
+    [f_bull, f_bear, low[0], high[2], low[2], high[0], ta.pivothigh(3, 3), ta.pivotlow(3, 3)]
+
+[itf_fvg_bull, itf_fvg_bear, itf_fvg_t_bull, itf_fvg_b_bull, itf_fvg_t_bear, itf_fvg_b_bear, itf_ph, itf_pl] = request.security(syminfo.tickerid, tf_itf, get_itf_data())
+
+if show_itf_fvg
+    if itf_fvg_bull and ta.change(time(tf_itf)) != 0
+        itf_fvgs.push(FVG.new(box.new(left = bar_index, top = itf_fvg_t_bull, right = bar_index + 20, bottom = itf_fvg_b_bull, border_color = EMERALD, bgcolor = color.new(EMERALD, 90)), itf_fvg_t_bull, itf_fvg_b_bull, true))
+    if itf_fvg_bear and ta.change(time(tf_itf)) != 0
+        itf_fvgs.push(FVG.new(box.new(left = bar_index, top = itf_fvg_t_bear, right = bar_index + 20, bottom = itf_fvg_b_bear, border_color = ROSE, bgcolor = color.new(ROSE, 90)), itf_fvg_t_bear, itf_fvg_b_bear, false))
+
+if itf_fvgs.size() > 0
+    for i = itf_fvgs.size() - 1 to 0 by -1
+        fvg = itf_fvgs.get(i)
+        box.set_right(fvg.id, bar_index + 10)
+        if (fvg.is_bullish and low < fvg.bottom) or (not fvg.is_bullish and high > fvg.top)
+            box.delete(fvg.id)
+            itf_fvgs.remove(i)
+
+plotshape(not na(itf_ph) and show_itf_liq, "ITF High Liquidity", shape.xcross, location.abovebar, GOLD, size = size.tiny)
+plotshape(not na(itf_pl) and show_itf_liq, "ITF Low Liquidity", shape.xcross, location.belowbar, GOLD, size = size.tiny)
+
+// --- Prev Session H/L ---
+[prev_h, prev_l] = request.security(syminfo.tickerid, "D", [high[1], low[1]])
+var line high_line = na
+var line low_line  = na
+var label high_label = na
+var label low_label = na
+if show_itf_sess and barstate.islast
+    line.delete(high_line)
+    line.delete(low_line)
+    label.delete(high_label)
+    label.delete(low_label)
+    high_line := line.new(bar_index - 50, prev_h, bar_index + 10, prev_h, color = GOLD, style = line.style_dashed)
+    low_line  := line.new(bar_index - 50, prev_l, bar_index + 10, prev_l, color = GOLD, style = line.style_dashed)
+    high_label := label.new(bar_index + 10, prev_h, "Prev Day High", color = color.new(GOLD, 100), textcolor = GOLD, style = label.style_label_left, size = size.small)
+    low_label := label.new(bar_index + 10, prev_l, "Prev Day Low", color = color.new(GOLD, 100), textcolor = GOLD, style = label.style_label_left, size = size.small)
+
+// --- LTF Logic & Confluence ---
+var float ltf_last_ph = na
+var float ltf_last_pl = na
+ph = ta.pivothigh(3, 3)
+pl = ta.pivotlow(3, 3)
+if not na(ph)
+    ltf_last_ph := ph
+if not na(pl)
+    ltf_last_pl := pl
+
+mss_bull = ta.crossover(close, ltf_last_ph)
+mss_bear = ta.crossunder(close, ltf_last_pl)
+cisd_bull = bar_index > 0 and close > high[1] and close[1] < open[1]
+cisd_bear = bar_index > 0 and close < low[1] and close[1] > open[1]
+
+// Confluence Check
+bool in_bull_zone = false
+bool in_bear_zone = false
+
+if htf_obs.size() > 0
+    for i = 0 to htf_obs.size() - 1
+        ob = htf_obs.get(i)
+        if low <= ob.top and high >= ob.bottom
+            if ob.is_bullish
+                in_bull_zone := true
+            else
+                in_bear_zone := true
+
+if itf_fvgs.size() > 0
+    for i = 0 to itf_fvgs.size() - 1
+        fvg = itf_fvgs.get(i)
+        if low <= fvg.top and high >= fvg.bottom
+            if fvg.is_bullish
+                in_bull_zone := true
+            else
+                in_bear_zone := true
+
+long_signal = mss_bull and cisd_bull and in_bull_zone
+short_signal = mss_bear and cisd_bear and in_bear_zone
+
+plotshape(long_signal, "Entry", shape.triangleup, location.belowbar, EMERALD, size = size.small, text = "ENTRY")
+plotshape(short_signal, "Entry", shape.triangledown, location.abovebar, ROSE, size = size.small, text = "ENTRY")
+
+// --- Dashboard ---
+var table dash = table.new(position.top_right, 4, 3, border_width = 1, border_color = GRAY)
+if show_dash and barstate.islast
+    table.cell(dash, 0, 0, "TF", bgcolor = GRAY, text_color = WHITE)
+    table.cell(dash, 1, 0, "4H", bgcolor = GRAY, text_color = WHITE)
+    table.cell(dash, 2, 0, "1H", bgcolor = GRAY, text_color = WHITE)
+    table.cell(dash, 3, 0, "15M", bgcolor = GRAY, text_color = WHITE)
+    table.cell(dash, 0, 1, "Bias", bgcolor = GRAY, text_color = WHITE)
+    table.cell(dash, 1, 1, htf_bullish ? "BULL" : "BEAR", bgcolor = htf_bullish ? EMERALD : ROSE, text_color = WHITE)
+    table.cell(dash, 2, 1, in_bull_zone ? "BULL ZONE" : (in_bear_zone ? "BEAR ZONE" : "NEUTRAL"), bgcolor = in_bull_zone ? EMERALD : (in_bear_zone ? ROSE : GRAY), text_color = WHITE)
+    table.cell(dash, 3, 1, close > open ? "BULL" : "BEAR", bgcolor = close > open ? EMERALD : ROSE, text_color = WHITE)
+
+    table.cell(dash, 0, 2, "Signal", bgcolor = GRAY, text_color = WHITE)
+    table.cell(dash, 1, 2, "Structure", bgcolor = GRAY, text_color = WHITE)
+    table.cell(dash, 2, 2, "POI", bgcolor = GRAY, text_color = WHITE)
+    table.cell(dash, 3, 2, long_signal ? "BUY" : (short_signal ? "SELL" : "WAIT"), bgcolor = long_signal ? EMERALD : (short_signal ? ROSE : GRAY), text_color = WHITE)
