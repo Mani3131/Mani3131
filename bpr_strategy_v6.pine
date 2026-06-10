@@ -1,0 +1,185 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Peter Gianfx44 (re-implemented by Jules)
+
+//@version=6
+indicator("Balanced Price Range (BPR) Strategy [Jules]", overlay = true, max_boxes_count = 500, max_labels_count = 500)
+
+// --- Inputs ---
+group_fvg = "Fair Value Gap (FVG) Settings"
+fvg_color_bull = input.color(color.new(color.green, 85), "Bullish FVG Color", group = group_fvg)
+fvg_color_bear = input.color(color.new(color.red, 85), "Bearish FVG Color", group = group_fvg)
+
+group_bpr = "Balanced Price Range (BPR) Settings"
+bpr_color_bull = input.color(color.new(color.aqua, 70), "Bullish BPR Color", group = group_bpr)
+bpr_color_bear = input.color(color.new(color.rgb(255, 128, 128), 70), "Bearish BPR Color", group = group_bpr)
+
+// --- Types ---
+type FVG
+    float top
+    float bottom
+    int start_index
+    bool is_bullish
+
+type BPR
+    float top
+    float bottom
+    int start_index
+    bool is_bullish // true = Bullish BPR (Buy), false = Bearish BPR (Sell)
+    box box_id
+
+// --- Arrays ---
+var fvg_list = array.new<FVG>()
+var bpr_list = array.new<BPR>()
+
+// --- Market Structure ---
+var float swing_high = na
+var float swing_low = na
+var bool is_bullish_mss = false
+var bool is_bearish_mss = false
+
+detect_structure() =>
+    float sh = ta.pivothigh(high, 3, 3)
+    float sl = ta.pivotlow(low, 3, 3)
+    [sh, sl]
+
+[sh_val, sl_val] = detect_structure()
+
+if not na(sh_val)
+    swing_high := sh_val
+if not na(sl_val)
+    swing_low := sl_val
+
+bool mss_bull = ta.crossover(close, swing_high)
+bool mss_bear = ta.crossunder(close, swing_low)
+
+// Track MSS state
+var bool bull_mss_active = false
+var bool bear_mss_active = false
+
+if mss_bull
+    bull_mss_active := true
+    bear_mss_active := false
+if mss_bear
+    bear_mss_active := true
+    bull_mss_active := false
+
+// --- BPR Detection Logic ---
+detect_bpr(FVG current_fvg) =>
+    if array.size(fvg_list) > 0
+        for i = array.size(fvg_list) - 1 to 0
+            FVG prev_fvg = array.get(fvg_list, i)
+            // Only look back a reasonable number of bars or FVGs
+            if bar_index - prev_fvg.start_index > 50
+                break
+
+            // Check for opposite FVG
+            if prev_fvg.is_bullish != current_fvg.is_bullish
+                // Check for overlap
+                float overlap_top = math.min(current_fvg.top, prev_fvg.top)
+                float overlap_bottom = math.max(current_fvg.bottom, prev_fvg.bottom)
+
+                if overlap_top > overlap_bottom
+                    // BPR Found!
+                    // If current is Bullish, it's a Bullish BPR (Buy setup)
+                    box b = box.new(bar_index, overlap_top, bar_index + 10, overlap_bottom,
+                      bgcolor = current_fvg.is_bullish ? bpr_color_bull : bpr_color_bear,
+                      border_color = na,
+                      text = "BPR", text_color = color.white, text_size = size.small,
+                      extend = extend.right)
+                    array.push(bpr_list, BPR.new(overlap_top, overlap_bottom, bar_index, current_fvg.is_bullish, b))
+                    break // Usually only the most recent overlap matters
+
+// --- FVG Detection ---
+detect_fvg() =>
+    float bull_fvg_top = low[0]
+    float bull_fvg_bottom = high[2]
+    bool is_bull_fvg = bull_fvg_top > bull_fvg_bottom
+
+    float bear_fvg_top = low[2]
+    float bear_fvg_bottom = high[0]
+    bool is_bear_fvg = bear_fvg_top > bear_fvg_bottom
+
+    if is_bull_fvg
+        FVG new_fvg = FVG.new(bull_fvg_top, bull_fvg_bottom, bar_index - 1, true)
+        detect_bpr(new_fvg)
+        array.push(fvg_list, new_fvg)
+    if is_bear_fvg
+        FVG new_fvg = FVG.new(bear_fvg_top, bear_fvg_bottom, bar_index - 1, false)
+        detect_bpr(new_fvg)
+        array.push(fvg_list, new_fvg)
+
+    // Manage memory: Keep arrays at a reasonable size
+    if array.size(fvg_list) > 100
+        array.shift(fvg_list)
+    if array.size(bpr_list) > 100
+        array.shift(bpr_list)
+
+if barstate.isconfirmed
+    detect_fvg()
+
+// --- BPR Violation Logic ---
+if array.size(bpr_list) > 0
+    for i = array.size(bpr_list) - 1 to 0
+        BPR b = array.get(bpr_list, i)
+        bool violated = b.is_bullish ? close < b.bottom : close > b.top
+
+        if violated
+            box.delete(b.box_id)
+            array.remove(bpr_list, i)
+
+// --- Signal Logic ---
+var BPR active_bull_bpr = na
+var BPR active_bear_bpr = na
+
+// Update active BPRs
+if array.size(bpr_list) > 0
+    BPR latest = array.get(bpr_list, array.size(bpr_list) - 1)
+    if latest.start_index == bar_index
+        if latest.is_bullish
+            active_bull_bpr := latest
+        else
+            active_bear_bpr := latest
+
+// Entry Signals
+bool long_condition = bull_mss_active and not na(active_bull_bpr) and low <= active_bull_bpr.top and low >= active_bull_bpr.bottom
+bool short_condition = bear_mss_active and not na(active_bear_bpr) and high >= active_bear_bpr.bottom and high <= active_bear_bpr.top
+
+// Reset active BPRs once used or invalidated
+if long_condition
+    active_bull_bpr := na
+    bull_mss_active := false
+if short_condition
+    active_bear_bpr := na
+    bear_mss_active := false
+
+// --- Risk Management ---
+var float sl_price = na
+var float tp_price = na
+
+if long_condition
+    sl_price := swing_low
+    tp_price := swing_high
+if short_condition
+    sl_price := swing_high
+    tp_price := swing_low
+
+// --- Visualizations ---
+// 1. Draw BPR Zones
+// (Already handled in detect_bpr and bpr_list management)
+
+// 2. Plot Signals
+plotshape(long_condition, "Long Entry", shape.triangleup, location.belowbar, color.lime, size = size.normal, text = "LONG")
+plotshape(short_condition, "Short Entry", shape.triangledown, location.abovebar, color.red, size = size.normal, text = "SHORT")
+
+// 3. SL/TP Labels
+if long_condition or short_condition
+    label.new(bar_index, sl_price, "SL: " + str.tostring(sl_price, format.mintick), color = color.red, style = label.style_label_up, textcolor = color.white)
+    label.new(bar_index, tp_price, "TP: " + str.tostring(tp_price, format.mintick), color = color.green, style = label.style_label_down, textcolor = color.white)
+
+// 4. Watermark Dashboard
+var table watermark = table.new(position.middle_center, 1, 1)
+if barstate.islast
+    table.cell(watermark, 0, 0, "BPR STRATEGY\nPeter Gianfx44", text_color = color.new(color.gray, 90), text_size = size.huge)
+
+// Final Plot
+plot(close, color = color.new(color.white, 100))
