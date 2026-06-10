@@ -1,0 +1,284 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("1 Rectangle Scalping Strategy [Jules]", overlay = true, max_boxes_count = 500, max_labels_count = 500)
+
+// --- Colors & Aesthetics ---
+color EMERALD = color.rgb(0, 201, 167)
+color ROSE    = color.rgb(255, 51, 102)
+color GOLD    = color.rgb(255, 184, 0)
+color SLATE   = color.rgb(30, 41, 59)
+
+// --- Inputs ---
+group_str = "Strategy Settings"
+pivot_lookback = input.int(5, "Pivot Lookback", minval = 2, group = group_str)
+displacement_mult = input.float(1.5, "Displacement Mult (ATR)", minval = 1.0, group = group_str)
+rr_1 = input.float(2.0, "Risk:Reward 1", minval = 1.0, group = group_str)
+rr_2 = input.float(3.0, "Risk:Reward 2", minval = 1.0, group = group_str)
+
+group_vis = "Visuals"
+show_pivots = input.bool(false, "Show Pivots", group = group_vis)
+show_dashboard = input.bool(true, "Show Dashboard", group = group_vis)
+
+// --- Types ---
+type Pivot
+    float price
+    int   index
+    bool  is_high
+
+type OrderBlock
+    float top
+    float bottom
+    int   start_index
+    box   rect
+    bool  is_bullish
+    bool  is_mitigated
+
+type Trade
+    float entry
+    float sl
+    float tp1
+    float tp2
+    label l_entry
+    label l_sl
+    label l_tp1
+    label l_tp2
+    line  ln_entry
+    line  ln_sl
+    line  ln_tp1
+    line  ln_tp2
+    bool  active
+    bool  filled
+
+// --- Persistent Variables ---
+var Pivot last_ph = na
+var Pivot last_pl = na
+var float last_high_sweep = na
+var float last_low_sweep = na
+var bool high_swept = false
+var bool low_swept = false
+
+var OrderBlock[] active_obs = array.new<OrderBlock>()
+var Trade[] active_trades = array.new<Trade>()
+
+// --- Stats & Performance ---
+var int total_trades = 0
+var int wins = 0
+var int losses = 0
+
+// --- Functions ---
+method delete_trade(Trade t) =>
+    label.delete(t.l_entry)
+    label.delete(t.l_sl)
+    label.delete(t.l_tp1)
+    label.delete(t.l_tp2)
+    line.delete(t.ln_entry)
+    line.delete(t.ln_sl)
+    line.delete(t.ln_tp1)
+    line.delete(t.ln_tp2)
+
+// --- Logic ---
+ph = ta.pivothigh(pivot_lookback, pivot_lookback)
+pl = ta.pivotlow(pivot_lookback, pivot_lookback)
+
+if not na(ph)
+    last_ph := Pivot.new(price = ph, index = bar_index - pivot_lookback, is_high = true)
+if not na(pl)
+    last_pl := Pivot.new(price = pl, index = bar_index - pivot_lookback, is_high = false)
+
+// Detect Sweeps
+if not na(last_ph) and high > last_ph.price and not high_swept
+    high_swept := true
+    last_high_sweep := high
+    label.new(bar_index, high, "Liquidity Sweep", color = ROSE, style = label.style_label_down, textcolor = color.white, size = size.tiny)
+
+if not na(last_pl) and low < last_pl.price and not low_swept
+    low_swept := true
+    last_low_sweep := low
+    label.new(bar_index, low, "Liquidity Sweep", color = EMERALD, style = label.style_label_up, textcolor = color.white, size = size.tiny)
+
+// MSS & Rectangle Detection
+atr = ta.atr(14)
+body_size = math.abs(close - open)
+
+// Bearish MSS (after high sweep)
+if high_swept and not na(last_pl) and close < last_pl.price
+    // Displacement check
+    is_displacement = body_size > atr * displacement_mult
+    if is_displacement
+        // Find the "Rectangle" - The last bullish candle before the drop
+        float ob_top = na
+        float ob_bottom = na
+        int ob_idx = na
+        for i = 1 to 10
+            if open[i] < close[i] // Bullish candle
+                ob_top := high[i]
+                ob_bottom := low[i]
+                ob_idx := bar_index - i
+                break
+
+        if not na(ob_top)
+            label.new(bar_index, high, "MSS", color = ROSE, style = label.style_label_down, textcolor = color.white, size = size.tiny)
+            box_rect = box.new(ob_idx, ob_top, bar_index + 10, ob_bottom, border_color = ROSE, bgcolor = color.new(ROSE, 80))
+            array.push(active_obs, OrderBlock.new(top = ob_top, bottom = ob_bottom, start_index = ob_idx, rect = box_rect, is_bullish = false, is_mitigated = false))
+
+            // Trade Setup
+            sl = last_high_sweep
+            entry = ob_bottom
+            risk = math.abs(sl - entry)
+            tp1 = entry - risk * rr_1
+            tp2 = entry - risk * rr_2
+
+            t = Trade.new(entry = entry, sl = sl, tp1 = tp1, tp2 = tp2,
+                 l_entry = label.new(bar_index + 5, entry, "Entry", color = color.gray, style = label.style_label_left, textcolor = color.white, size = size.tiny),
+                 l_sl = label.new(bar_index + 5, sl, "SL", color = ROSE, style = label.style_label_left, textcolor = color.white, size = size.tiny),
+                 l_tp1 = label.new(bar_index + 5, tp1, "TP1", color = EMERALD, style = label.style_label_left, textcolor = color.white, size = size.tiny),
+                 l_tp2 = label.new(bar_index + 5, tp2, "TP2", color = EMERALD, style = label.style_label_left, textcolor = color.white, size = size.tiny),
+                 ln_entry = line.new(x1 = bar_index, y1 = entry, x2 = bar_index + 10, y2 = entry, color = color.gray, style = line.style_dotted),
+                 ln_sl = line.new(x1 = bar_index, y1 = sl, x2 = bar_index + 10, y2 = sl, color = ROSE, style = line.style_dotted),
+                 ln_tp1 = line.new(x1 = bar_index, y1 = tp1, x2 = bar_index + 10, y2 = tp1, color = EMERALD, style = line.style_dotted),
+                 ln_tp2 = line.new(x1 = bar_index, y1 = tp2, x2 = bar_index + 10, y2 = tp2, color = EMERALD, style = line.style_dotted),
+                 active = true, filled = false)
+            array.push(active_trades, t)
+
+    high_swept := false // Reset after detection
+
+// Bullish MSS (after low sweep)
+if low_swept and not na(last_ph) and close > last_ph.price
+    is_displacement = body_size > atr * displacement_mult
+    if is_displacement
+        // Find the "Rectangle" - The last bearish candle before the move up
+        float ob_top = na
+        float ob_bottom = na
+        int ob_idx = na
+        for i = 1 to 10
+            if open[i] > close[i] // Bearish candle
+                ob_top := high[i]
+                ob_bottom := low[i]
+                ob_idx := bar_index - i
+                break
+
+        if not na(ob_top)
+            label.new(bar_index, low, "MSS", color = EMERALD, style = label.style_label_up, textcolor = color.white, size = size.tiny)
+            box_rect = box.new(ob_idx, ob_top, bar_index + 10, ob_bottom, border_color = EMERALD, bgcolor = color.new(EMERALD, 80))
+            array.push(active_obs, OrderBlock.new(top = ob_top, bottom = ob_bottom, start_index = ob_idx, rect = box_rect, is_bullish = true, is_mitigated = false))
+
+            // Trade Setup
+            sl = last_low_sweep
+            entry = ob_top
+            risk = math.abs(sl - entry)
+            tp1 = entry + risk * rr_1
+            tp2 = entry + risk * rr_2
+
+            t = Trade.new(entry = entry, sl = sl, tp1 = tp1, tp2 = tp2,
+                 l_entry = label.new(bar_index + 5, entry, "Entry", color = color.gray, style = label.style_label_left, textcolor = color.white, size = size.tiny),
+                 l_sl = label.new(bar_index + 5, sl, "SL", color = ROSE, style = label.style_label_left, textcolor = color.white, size = size.tiny),
+                 l_tp1 = label.new(bar_index + 5, tp1, "TP1", color = EMERALD, style = label.style_label_left, textcolor = color.white, size = size.tiny),
+                 l_tp2 = label.new(bar_index + 5, tp2, "TP2", color = EMERALD, style = label.style_label_left, textcolor = color.white, size = size.tiny),
+                 ln_entry = line.new(x1 = bar_index, y1 = entry, x2 = bar_index + 10, y2 = entry, color = color.gray, style = line.style_dotted),
+                 ln_sl = line.new(x1 = bar_index, y1 = sl, x2 = bar_index + 10, y2 = sl, color = ROSE, style = line.style_dotted),
+                 ln_tp1 = line.new(x1 = bar_index, y1 = tp1, x2 = bar_index + 10, y2 = tp1, color = EMERALD, style = line.style_dotted),
+                 ln_tp2 = line.new(x1 = bar_index, y1 = tp2, x2 = bar_index + 10, y2 = tp2, color = EMERALD, style = line.style_dotted),
+                 active = true, filled = false)
+            array.push(active_trades, t)
+
+    low_swept := false // Reset after detection
+
+// Reset sweeps if price moves too far away without MSS (optional, but good for sanity)
+if high_swept and high > last_high_sweep
+    last_high_sweep := high // Update sweep extreme
+if low_swept and low < last_low_sweep
+    last_low_sweep := low
+
+// --- Mitigation & Cleanup ---
+if array.size(active_obs) > 0
+    int i = array.size(active_obs) - 1
+    while i >= 0
+        ob = array.get(active_obs, i)
+        if not ob.is_mitigated
+            box.set_right(ob.rect, bar_index + 5)
+            // Check for mitigation
+            if ob.is_bullish
+                if low < ob.bottom
+                    ob.is_mitigated := true
+            else
+                if high > ob.top
+                    ob.is_mitigated := true
+
+        if ob.is_mitigated
+            box.set_bgcolor(ob.rect, color.new(color.gray, 90))
+            box.set_border_color(ob.rect, color.new(color.gray, 50))
+            array.remove(active_obs, i)
+        i := i - 1
+
+// Update Trade Visuals & Monitor
+if array.size(active_trades) > 0
+    int i = array.size(active_trades) - 1
+    while i >= 0
+        t = array.get(active_trades, i)
+        if t.active
+            label.set_x(t.l_entry, bar_index + 5)
+            label.set_x(t.l_sl, bar_index + 5)
+            label.set_x(t.l_tp1, bar_index + 5)
+            label.set_x(t.l_tp2, bar_index + 5)
+            line.set_x2(t.ln_entry, bar_index + 5)
+            line.set_x2(t.ln_sl, bar_index + 5)
+            line.set_x2(t.ln_tp1, bar_index + 5)
+            line.set_x2(t.ln_tp2, bar_index + 5)
+
+            // Check for fill
+            if not t.filled
+                if (t.entry > t.sl and low <= t.entry) or (t.entry < t.sl and high >= t.entry)
+                    t.filled := true
+                    label.set_color(t.l_entry, GOLD)
+
+            // Monitor outcome after fill
+            if t.filled
+                is_win = (t.entry > t.sl and high >= t.tp1) or (t.entry < t.sl and low <= t.tp1)
+                is_loss = (t.entry > t.sl and low <= t.sl) or (t.entry < t.sl and high >= t.sl)
+
+                if is_loss
+                    losses := losses + 1
+                    total_trades := total_trades + 1
+                    t.active := false
+                else if is_win
+                    wins := wins + 1
+                    total_trades := total_trades + 1
+                    t.active := false
+
+            // If trade is not filled for too long, expire it (e.g. 50 bars)
+            if t.active and not t.filled and bar_index - line.get_x1(t.ln_entry) > 50
+                t.active := false
+        i := i - 1
+
+    // Cleanup old drawings
+    if array.size(active_trades) > 20
+        old_t = array.remove(active_trades, 0)
+        delete_trade(old_t)
+
+// --- Visual Plots ---
+plot(show_pivots and not na(last_ph) ? last_ph.price : na, "PH", color = ROSE, style = plot.style_cross, offset = -pivot_lookback)
+plot(show_pivots and not na(last_pl) ? last_pl.price : na, "PL", color = EMERALD, style = plot.style_cross, offset = -pivot_lookback)
+
+// --- Dashboard ---
+var table main_table = table.new(position.top_right, 2, 6, border_width = 1, border_color = color.new(color.white, 20))
+if show_dashboard and barstate.islast
+    table.cell(main_table, 0, 0, "Strategy", text_color = color.white, bgcolor = SLATE, text_size = size.small)
+    table.cell(main_table, 1, 0, "1 Rectangle", text_color = GOLD, bgcolor = SLATE, text_size = size.small)
+
+    table.cell(main_table, 0, 1, "Status", text_color = color.white, bgcolor = SLATE, text_size = size.small)
+    table.cell(main_table, 1, 1, high_swept ? "High Swept" : low_swept ? "Low Swept" : "Searching...", text_color = color.white, bgcolor = high_swept or low_swept ? GOLD : SLATE, text_size = size.small)
+
+    table.cell(main_table, 0, 2, "Total Trades", text_color = color.white, bgcolor = SLATE, text_size = size.small)
+    table.cell(main_table, 1, 2, str.tostring(total_trades), text_color = color.white, bgcolor = SLATE, text_size = size.small)
+
+    table.cell(main_table, 0, 3, "Wins", text_color = EMERALD, bgcolor = SLATE, text_size = size.small)
+    table.cell(main_table, 1, 3, str.tostring(wins), text_color = EMERALD, bgcolor = SLATE, text_size = size.small)
+
+    table.cell(main_table, 0, 4, "Losses", text_color = ROSE, bgcolor = SLATE, text_size = size.small)
+    table.cell(main_table, 1, 4, str.tostring(losses), text_color = ROSE, bgcolor = SLATE, text_size = size.small)
+
+    win_rate = total_trades > 0 ? (wins / total_trades) * 100 : 0
+    table.cell(main_table, 0, 5, "Win Rate", text_color = color.white, bgcolor = SLATE, text_size = size.small)
+    table.cell(main_table, 1, 5, str.format("{0,number,#.##}%", win_rate), text_color = GOLD, bgcolor = SLATE, text_size = size.small)
