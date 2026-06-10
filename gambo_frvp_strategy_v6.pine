@@ -193,11 +193,15 @@ while trade_idx < active_trades.size()
         bool loss = false
 
         if tr.entry > tr.sl
-            if high >= tr.tp then win := true
-            else if low <= tr.sl then loss := true
+            if high >= tr.tp
+                win := true
+            else if low <= tr.sl
+                loss := true
         else
-            if low <= tr.tp then win := true
-            else if high >= tr.sl then loss := true
+            if low <= tr.tp
+                win := true
+            else if high >= tr.sl
+                loss := true
 
         if win or loss or bar_index - label.get_x(tr.lbl_entry) > 300
             tr.active := false
