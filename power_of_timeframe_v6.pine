@@ -78,8 +78,8 @@ get_htf_ob() =>
 
 [htf_ob_t, htf_ob_b, htf_ob_bull] = request.security(syminfo.tickerid, tf_htf, get_htf_ob())
 
-// Add OB only once when the HTF bar closes or the OB value is first identified
-if not na(htf_ob_t) and show_htf_ob and (ta.change(time(tf_htf)) != 0 or na(htf_ob_t[1]))
+// Add OB only once when the HTF bar closes
+if not na(htf_ob_t) and show_htf_ob and (nz(ta.change(time(tf_htf))) != 0 or na(htf_ob_t[1]))
     htf_obs.push(OrderBlock.new(box.new(left = bar_index, top = htf_ob_t, right = bar_index + 20, bottom = htf_ob_b, border_color = htf_ob_bull ? EMERALD : ROSE, bgcolor = color.new(htf_ob_bull ? EMERALD : ROSE, 85)), htf_ob_t, htf_ob_b, htf_ob_bull))
 
 // Manage OBs (mitigation)
@@ -93,16 +93,16 @@ if htf_obs.size() > 0
 
 // --- 1H Liquidity & FVG ---
 get_itf_data() =>
-    bool f_bull = low[0] > high[2]
-    bool f_bear = high[0] < low[2]
-    [f_bull, f_bear, low[0], high[2], low[2], high[0], ta.pivothigh(3, 3), ta.pivotlow(3, 3)]
+    bool f_bull = low > high[2]
+    bool f_bear = high < low[2]
+    [f_bull, f_bear, low, high[2], low[2], high, ta.pivothigh(3, 3), ta.pivotlow(3, 3)]
 
 [itf_fvg_bull, itf_fvg_bear, itf_fvg_t_bull, itf_fvg_b_bull, itf_fvg_t_bear, itf_fvg_b_bear, itf_ph, itf_pl] = request.security(syminfo.tickerid, tf_itf, get_itf_data())
 
 if show_itf_fvg
-    if itf_fvg_bull and (ta.change(time(tf_itf)) != 0 or na(itf_fvg_bull[1]))
+    if itf_fvg_bull and (nz(ta.change(time(tf_itf))) != 0 or na(itf_fvg_t_bull[1]))
         itf_fvgs.push(FVG.new(box.new(left = bar_index, top = itf_fvg_t_bull, right = bar_index + 20, bottom = itf_fvg_b_bull, border_color = EMERALD, bgcolor = color.new(EMERALD, 90)), itf_fvg_t_bull, itf_fvg_b_bull, true))
-    if itf_fvg_bear and (ta.change(time(tf_itf)) != 0 or na(itf_fvg_bear[1]))
+    if itf_fvg_bear and (nz(ta.change(time(tf_itf))) != 0 or na(itf_fvg_t_bear[1]))
         itf_fvgs.push(FVG.new(box.new(left = bar_index, top = itf_fvg_t_bear, right = bar_index + 20, bottom = itf_fvg_b_bear, border_color = ROSE, bgcolor = color.new(ROSE, 90)), itf_fvg_t_bear, itf_fvg_b_bear, false))
 
 if itf_fvgs.size() > 0
