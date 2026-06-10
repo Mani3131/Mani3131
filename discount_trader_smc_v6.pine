@@ -13,6 +13,11 @@ float displacement_mult = input.float(1.5, "Displacement ATR Multiplier", minval
 int zone_limit = input.int(10, "Max Active Zones", minval = 1, maxval = 50)
 bool show_pd_zones = input.bool(true, "Show Premium/Discount Zones")
 
+// --- RSI Inputs ---
+int rsi_len = input.int(14, "RSI Length", minval = 1)
+int rsi_overbought = input.int(70, "RSI Overbought Level", minval = 50, maxval = 100)
+int rsi_oversold = input.int(30, "RSI Oversold Level", minval = 0, maxval = 50)
+
 // --- Types ---
 type Swing
     float price
@@ -34,11 +39,19 @@ var Swing last_low  = Swing.new(na, na, false)
 var box pd_box = na
 var line eq_line = na
 
+var Zone active_long_zone = na
+var Zone active_short_zone = na
+
 var float atr = na
 atr := ta.atr(14)
 
 var array<Zone> supply_zones = array.new<Zone>()
 var array<Zone> demand_zones = array.new<Zone>()
+
+// --- RSI Calculation ---
+float rsi = ta.rsi(close, rsi_len)
+bool rsi_cross_up = ta.crossover(rsi, rsi_oversold)
+bool rsi_cross_down = ta.crossunder(rsi, rsi_overbought)
 
 // --- Swing Detection ---
 float ph = ta.pivothigh(pivot_len, pivot_len)
@@ -153,6 +166,52 @@ manage_zones(arr) =>
 
 manage_zones(supply_zones)
 manage_zones(demand_zones)
+
+// --- Entry Signals (SMC + RSI) ---
+// Find active zone for RSI confirmation
+if array.size(demand_zones) > 0
+    int i = array.size(demand_zones) - 1
+    while i >= 0
+        Zone z = array.get(demand_zones, i)
+        if not z.isMitigated and not z.isInducement and low <= z.top and high >= z.bottom
+            active_long_zone := z
+            break
+        i := i - 1
+
+if array.size(supply_zones) > 0
+    int i = array.size(supply_zones) - 1
+    while i >= 0
+        Zone z = array.get(supply_zones, i)
+        if not z.isMitigated and not z.isInducement and high >= z.bottom and low <= z.top
+            active_short_zone := z
+            break
+        i := i - 1
+
+// Execution
+if not na(active_long_zone) and rsi_cross_up
+    label.new(bar_index, low, "BUY\n(SMC + RSI)", color = EMERALD, textcolor = color.white, style = label.style_label_up)
+    active_long_zone := na // Clear once triggered
+
+if not na(active_short_zone) and rsi_cross_down
+    label.new(bar_index, high, "SELL\n(SMC + RSI)", color = ROSE, textcolor = color.white, style = label.style_label_down)
+    active_short_zone := na
+
+// --- Exit Signals ---
+bool rsi_ob = rsi >= rsi_overbought
+bool rsi_os = rsi <= rsi_oversold
+
+// Track previous states to avoid spamming exit labels
+var bool was_ob = false
+var bool was_os = false
+
+if rsi_ob and not was_ob
+    label.new(bar_index, high, "EXIT LONG (RSI OB)", color = color.new(GOLD, 50), style = label.style_label_down, size = size.tiny)
+
+if rsi_os and not was_os
+    label.new(bar_index, low, "EXIT SHORT (RSI OS)", color = color.new(GOLD, 50), style = label.style_label_up, size = size.tiny)
+
+was_ob := rsi_ob
+was_os := rsi_os
 
 // --- Visualization (Debug) ---
 
