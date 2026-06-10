@@ -59,7 +59,7 @@ if ta.crossunder(htf_c, htf_last_pl)
 get_htf_ob() =>
     float ob_t = na
     float ob_b = na
-    bool ob_bull = na
+    bool ob_bull = false
     if ta.crossover(close, ta.valuewhen(ta.pivothigh(5, 5), ta.pivothigh(5, 5), 0))
         for i = 1 to 10
             if close[i] < open[i]
