@@ -8,15 +8,15 @@ indicator("Gambo FRVP Strategy [Jules]", "Gambo FRVP", overlay = true, max_label
 // -- Inputs --
 // ==========================================
 grp_impulse = "Impulse Detection"
-pivot_len   = input.int(5, "Pivot Length", minval = 1, group = grp_impulse, help = "Lookback for identifying pivot highs/lows.")
-atr_mult    = input.float(2.0, "ATR Filter Multiplier", minval = 0.1, step = 0.1, group = grp_impulse, help = "Minimum movement required for an impulse leg, as a multiplier of ATR.")
+pivot_len   = input.int(5, "Pivot Length", minval = 1, group = grp_impulse, tooltip = "Lookback for identifying pivot highs/lows.")
+atr_mult    = input.float(2.0, "ATR Filter Multiplier", minval = 0.1, step = 0.1, group = grp_impulse, tooltip = "Minimum movement required for an impulse leg, as a multiplier of ATR.")
 
 grp_vp      = "Volume Profile"
-vp_bins     = input.int(50, "Number of Bins", minval = 10, maxval = 100, group = grp_vp, help = "Granularity of the Volume Profile calculation.")
+vp_bins     = input.int(50, "Number of Bins", minval = 10, maxval = 100, group = grp_vp, tooltip = "Granularity of the Volume Profile calculation.")
 
 grp_trade   = "Trade Settings"
-rr_ratio    = input.float(2.0, "Risk:Reward Ratio", minval = 0.1, step = 0.1, group = grp_trade, help = "Target Profit relative to Risk.")
-use_patterns = input.bool(true, "Require Pattern Confirmation", group = grp_trade, help = "If enabled, entry requires a Pin Bar or Engulfing pattern at the POC.")
+rr_ratio    = input.float(2.0, "Risk:Reward Ratio", minval = 0.1, step = 0.1, group = grp_trade, tooltip = "Target Profit relative to Risk.")
+use_patterns = input.bool(true, "Require Pattern Confirmation", group = grp_trade, tooltip = "If enabled, entry requires a Pin Bar or Engulfing pattern at the POC.")
 
 // ==========================================
 // -- Constants & Palette --
