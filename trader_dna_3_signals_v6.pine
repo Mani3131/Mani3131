@@ -28,9 +28,9 @@ ema_slow = ta.ema(close, ema_slow_len)
 // ==========================================
 // --- PLOTTING ---
 // ==========================================
-p_fast = plot(ema_fast, "Fast EMA", color = color.new(color_up, 10), width = 1)
-p_med  = plot(ema_med, "Medium EMA", color = color.new(color_dn, 10), width = 1)
-plot(ema_slow, "Trend EMA", color = color_trend, width = 2)
+p_fast = plot(ema_fast, "Fast EMA", color = color.new(color_up, 10), linewidth = 1)
+p_med  = plot(ema_med, "Medium EMA", color = color.new(color_dn, 10), linewidth = 1)
+plot(ema_slow, "Trend EMA", color = color_trend, linewidth = 2)
 
 // Cloud logic
 cloud_color = show_ema_cloud ? (ema_fast > ema_med ? color.new(color_up, 80) : color.new(color_dn, 80)) : na
