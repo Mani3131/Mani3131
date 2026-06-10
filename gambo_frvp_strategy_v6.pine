@@ -52,11 +52,17 @@ var Leg[] legs = array.new<Leg>()
 var Trade[] active_trades = array.new<Trade>()
 
 // ==========================================
-// -- Calculations --
+// -- Global Stateful Calculations --
 // ==========================================
 atr = ta.atr(14)
 ph = ta.pivothigh(pivot_len, pivot_len)
 pl = ta.pivotlow(pivot_len, pivot_len)
+
+// Global state tracking for pivots
+val_ph = ta.valuewhen(not na(ph), ph, 0)
+idx_ph = ta.valuewhen(not na(ph), bar_index - pivot_len, 0)
+val_pl = ta.valuewhen(not na(pl), pl, 0)
+idx_pl = ta.valuewhen(not na(pl), bar_index - pivot_len, 0)
 
 // Pattern Detection
 is_pinbar() =>
@@ -83,13 +89,17 @@ get_poc(int start_idx, int end_idx, float p1, float p2) =>
 
     if end_idx > start_idx and max_p > min_p
         float bin_size = (max_p - min_p) / vp_bins
-        if bin_size > 0
+        // Safety: Check 5000-bar limit for history access
+        int lookback_start = bar_index - start_idx
+        int lookback_end = bar_index - end_idx
+
+        if bin_size > 0 and lookback_start < 5000 and lookback_end >= 0
             float[] bins = array.new_float(vp_bins, 0.0)
-            for i = (bar_index - end_idx) to (bar_index - start_idx)
+            for i = lookback_end to lookback_start
                 float p = close[i]
                 float v = nz(volume[i])
-                int bin_idx = int(math.floor((p - min_p) / bin_size))
-                if bin_idx >= 0 and bin_idx < vp_bins
+                int bin_idx = math.min(vp_bins - 1, int(math.floor((p - min_p) / bin_size)))
+                if bin_idx >= 0
                     array.set(bins, bin_idx, array.get(bins, bin_idx) + v)
 
             int max_bin = 0
@@ -102,86 +112,77 @@ get_poc(int start_idx, int end_idx, float p1, float p2) =>
             poc_level := min_p + (max_bin + 0.5) * bin_size
     poc_level
 
-// Impulse Detection Logic
+// ==========================================
+// -- Impulse Detection --
+// ==========================================
 if not na(ph)
-    float prev_pl = ta.valuewhen(not na(pl), pl, 0)
-    int prev_pl_idx = int(ta.valuewhen(not na(pl), bar_index - pivot_len, 0))
-    if not na(prev_pl) and (ph - prev_pl) > nz(atr) * atr_mult
-        float leg_poc = get_poc(prev_pl_idx, bar_index - pivot_len, prev_pl, ph)
+    if (ph - val_pl) > nz(atr) * atr_mult
+        float leg_poc = get_poc(idx_pl, bar_index - pivot_len, val_pl, ph)
         if not na(leg_poc)
-            legs.push(Leg.new(prev_pl_idx, bar_index - pivot_len, prev_pl, ph, leg_poc, true, false))
-            if legs.size() > 50
-                Leg old = legs.shift()
-                box.delete(old.bx)
-                line.delete(old.ln_poc)
-                label.delete(old.lbl_poc)
+            legs.push(Leg.new(idx_pl, bar_index - pivot_len, val_pl, ph, leg_poc, true, false))
 
 if not na(pl)
-    float prev_ph = ta.valuewhen(not na(ph), ph, 0)
-    int prev_ph_idx = int(ta.valuewhen(not na(ph), bar_index - pivot_len, 0))
-    if not na(prev_ph) and (prev_ph - pl) > nz(atr) * atr_mult
-        float leg_poc = get_poc(prev_ph_idx, bar_index - pivot_len, prev_ph, pl)
+    if (val_ph - pl) > nz(atr) * atr_mult
+        float leg_poc = get_poc(idx_ph, bar_index - pivot_len, val_ph, pl)
         if not na(leg_poc)
-            legs.push(Leg.new(prev_ph_idx, bar_index - pivot_len, prev_ph, pl, leg_poc, false, false))
-            if legs.size() > 50
-                Leg old = legs.shift()
-                box.delete(old.bx)
-                line.delete(old.ln_poc)
-                label.delete(old.lbl_poc)
+            legs.push(Leg.new(idx_ph, bar_index - pivot_len, val_ph, pl, leg_poc, false, false))
 
-// Visualizing Legs and POC (Done once per Leg creation to avoid real-time stacking)
+// Cleanup old legs
+if legs.size() > 50
+    Leg old = legs.shift()
+    box.delete(old.bx)
+    line.delete(old.ln_poc)
+    label.delete(old.lbl_poc)
+
+// ==========================================
+// -- Visuals & Trade Logic --
+// ==========================================
 if legs.size() > 0
     Leg l = legs.get(legs.size() - 1)
-    if na(l.bx) // If not already drawn
+    if na(l.bx) // Draw if new
         color col = l.is_bullish ? color.new(COLOR_EMERALD, 85) : color.new(COLOR_ROSE, 85)
         l.bx := box.new(l.start_index, l.start_price, l.end_index, l.end_price, border_color = col, bgcolor = col)
         l.ln_poc := line.new(l.end_index, l.poc, bar_index, l.poc, color = l.is_bullish ? COLOR_EMERALD : COLOR_ROSE, width = 1, style = line.style_dashed)
         l.lbl_poc := label.new(bar_index, l.poc, "POC", color = color.new(color.black, 100), textcolor = l.is_bullish ? COLOR_EMERALD : COLOR_ROSE, style = label.style_label_left, size = size.tiny)
 
-// Update POC lines in real-time
-if legs.size() > 0
     for i = 0 to legs.size() - 1
-        Leg l = legs.get(i)
-        line.set_x2(l.ln_poc, bar_index)
-        label.set_x(l.lbl_poc, bar_index)
+        Leg leg = legs.get(i)
+        line.set_x2(leg.ln_poc, bar_index)
+        label.set_x(leg.lbl_poc, bar_index)
 
-// ==========================================
-// -- Trade Logic --
-// ==========================================
-if legs.size() > 0
-    for i = 0 to legs.size() - 1
-        Leg l = legs.get(i)
-        if not l.used
-            if l.is_bullish
-                if low <= l.poc and high >= l.poc and (not use_patterns or is_bull_pattern)
-                    float sl = l.start_price
-                    float risk = l.poc - sl
+        // Signal Detection
+        if not leg.used
+            if leg.is_bullish
+                if low <= leg.poc and high >= leg.poc and (not use_patterns or is_bull_pattern)
+                    float sl = leg.start_price
+                    float risk = leg.poc - sl
                     if risk > 0
-                        float tp = l.poc + risk * rr_ratio
-                        active_trades.push(Trade.new(l.poc, sl, tp, true,
+                        float tp = leg.poc + risk * rr_ratio
+                        active_trades.push(Trade.new(leg.poc, sl, tp, true,
                           label.new(bar_index, low, "BUY", color=COLOR_EMERALD, textcolor=color.white, style=label.style_label_up, size = size.small),
                           line.new(bar_index, sl, bar_index + 5, sl, color=COLOR_ROSE, style=line.style_solid, width = 2),
                           line.new(bar_index, tp, bar_index + 5, tp, color=COLOR_EMERALD, style=line.style_solid, width = 2)))
-                        l.used := true
+                        leg.used := true
             else
-                if high >= l.poc and low <= l.poc and (not use_patterns or is_bear_pattern)
-                    float sl = l.start_price
-                    float risk = sl - l.poc
+                if high >= leg.poc and low <= leg.poc and (not use_patterns or is_bear_pattern)
+                    float sl = leg.start_price
+                    float risk = sl - leg.poc
                     if risk > 0
-                        float tp = l.poc - risk * rr_ratio
-                        active_trades.push(Trade.new(l.poc, sl, tp, true,
+                        float tp = leg.poc - risk * rr_ratio
+                        active_trades.push(Trade.new(leg.poc, sl, tp, true,
                           label.new(bar_index, high, "SELL", color=COLOR_ROSE, textcolor=color.white, style=label.style_label_down, size = size.small),
                           line.new(bar_index, sl, bar_index + 5, sl, color=COLOR_ROSE, style=line.style_solid, width = 2),
                           line.new(bar_index, tp, bar_index + 5, tp, color=COLOR_EMERALD, style=line.style_solid, width = 2)))
-                        l.used := true
+                        leg.used := true
 
-        if active_trades.size() > 50
-            Trade old = active_trades.shift()
-            label.delete(old.lbl_entry)
-            line.delete(old.ln_sl)
-            line.delete(old.ln_tp)
+// Cleanup old trades
+if active_trades.size() > 50
+    Trade old_t = active_trades.shift()
+    label.delete(old_t.lbl_entry)
+    line.delete(old_t.ln_sl)
+    line.delete(old_t.ln_tp)
 
-// Manage Active Trades (update visuals)
+// Update Active Trades
 int trade_idx = 0
 while trade_idx < active_trades.size()
     Trade tr = active_trades.get(trade_idx)
@@ -191,7 +192,6 @@ while trade_idx < active_trades.size()
 
         bool win = false
         bool loss = false
-
         if tr.entry > tr.sl
             if high >= tr.tp
                 win := true
