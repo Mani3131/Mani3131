@@ -258,8 +258,8 @@ if array.size(active_trades) > 0
         delete_trade(old_t)
 
 // --- Visual Plots ---
-plot(show_pivots ? last_ph?.price : na, "PH", color = ROSE, style = plot.style_cross, offset = -pivot_lookback)
-plot(show_pivots ? last_pl?.price : na, "PL", color = EMERALD, style = plot.style_cross, offset = -pivot_lookback)
+plot(show_pivots and not na(last_ph) ? last_ph.price : na, "PH", color = ROSE, style = plot.style_cross, offset = -pivot_lookback)
+plot(show_pivots and not na(last_pl) ? last_pl.price : na, "PL", color = EMERALD, style = plot.style_cross, offset = -pivot_lookback)
 
 // --- Dashboard ---
 var table main_table = table.new(position.top_right, 2, 6, border_width = 1, border_color = color.new(color.white, 20))
