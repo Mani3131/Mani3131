@@ -83,9 +83,9 @@ ph = ta.pivothigh(pivot_lookback, pivot_lookback)
 pl = ta.pivotlow(pivot_lookback, pivot_lookback)
 
 if not na(ph)
-    last_ph := Pivot.new(ph, bar_index - pivot_lookback, true)
+    last_ph := Pivot.new(price = ph, index = bar_index - pivot_lookback, is_high = true)
 if not na(pl)
-    last_pl := Pivot.new(pl, bar_index - pivot_lookback, false)
+    last_pl := Pivot.new(price = pl, index = bar_index - pivot_lookback, is_high = false)
 
 // Detect Sweeps
 if not na(last_ph) and high > last_ph.price and not high_swept
@@ -103,7 +103,7 @@ atr = ta.atr(14)
 body_size = math.abs(close - open)
 
 // Bearish MSS (after high sweep)
-if high_swept and close < last_pl.price
+if high_swept and not na(last_pl) and close < last_pl.price
     // Displacement check
     is_displacement = body_size > atr * displacement_mult
     if is_displacement
@@ -145,7 +145,7 @@ if high_swept and close < last_pl.price
     high_swept := false // Reset after detection
 
 // Bullish MSS (after low sweep)
-if low_swept and close > last_ph.price
+if low_swept and not na(last_ph) and close > last_ph.price
     is_displacement = body_size > atr * displacement_mult
     if is_displacement
         // Find the "Rectangle" - The last bearish candle before the move up
@@ -258,8 +258,8 @@ if array.size(active_trades) > 0
         delete_trade(old_t)
 
 // --- Visual Plots ---
-plot(show_pivots ? last_ph.price : na, "PH", color = ROSE, style = plot.style_cross, offset = -pivot_lookback)
-plot(show_pivots ? last_pl.price : na, "PL", color = EMERALD, style = plot.style_cross, offset = -pivot_lookback)
+plot(show_pivots ? last_ph?.price : na, "PH", color = ROSE, style = plot.style_cross, offset = -pivot_lookback)
+plot(show_pivots ? last_pl?.price : na, "PL", color = EMERALD, style = plot.style_cross, offset = -pivot_lookback)
 
 // --- Dashboard ---
 var table main_table = table.new(position.top_right, 2, 6, border_width = 1, border_color = color.new(color.white, 20))
