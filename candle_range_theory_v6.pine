@@ -1,0 +1,114 @@
+//@version=6
+indicator("Candle Range Theory [Jules]", shorttitle="CRT", overlay=true, max_labels_count=500, max_boxes_count=500, max_lines_count=500)
+
+// --- Inputs ---
+string htf_tf = input.timeframe("D", "Anchor Timeframe")
+color bull_color = input.color(color.rgb(0, 201, 167), "Bullish Color")
+color bear_color = input.color(color.rgb(255, 51, 102), "Bearish Color")
+bool show_range = input.bool(true, "Show HTF Range")
+bool show_sweeps = input.bool(true, "Show Sweeps")
+bool show_mss = input.bool(true, "Show MSS")
+bool show_fvg = input.bool(true, "Show FVG after MSS")
+bool auto_bias = input.bool(true, "Auto Bias (Based on HTF candle color)")
+int pivot_len = input.int(3, "Pivot Length", minval=1)
+
+// --- HTF Data ---
+float range_high = request.security(syminfo.tickerid, htf_tf, high[1], lookahead=barmerge.lookahead_on)
+float range_low  = request.security(syminfo.tickerid, htf_tf, low[1], lookahead=barmerge.lookahead_on)
+float range_open = request.security(syminfo.tickerid, htf_tf, open[1], lookahead=barmerge.lookahead_on)
+float range_close = request.security(syminfo.tickerid, htf_tf, close[1], lookahead=barmerge.lookahead_on)
+
+bool htf_bull = range_close > range_open
+bool htf_bear = range_close < range_open
+
+// --- Range Visualization ---
+var box range_box = box(na)
+if ta.change(time(htf_tf)) != 0
+    if not na(range_box)
+        box.set_right(range_box, bar_index)
+    if show_range
+        range_box := box.new(left=bar_index, top=range_high, right=bar_index, bottom=range_low,
+                             border_color=color.new(color.gray, 50),
+                             bgcolor=color.new(color.gray, 95),
+                             border_style=line.style_dashed)
+else
+    if not na(range_box)
+        box.set_right(range_box, bar_index)
+
+// --- Sweep Detection ---
+bool sweep_high = high > range_high and open < range_high
+bool sweep_low  = low < range_low and open > range_low
+
+var bool high_swept = false
+var bool low_swept = false
+
+if ta.change(time(htf_tf)) != 0
+    high_swept := false
+    low_swept := false
+
+if sweep_high and not high_swept and (not auto_bias or htf_bear)
+    high_swept := true
+    if show_sweeps
+        label.new(bar_index, high, "Sweep H", color=bear_color, style=label.style_label_down, textcolor=color.white, size=size.tiny)
+
+if sweep_low and not low_swept and (not auto_bias or htf_bull)
+    low_swept := true
+    if show_sweeps
+        label.new(bar_index, low, "Sweep L", color=bull_color, style=label.style_label_up, textcolor=color.white, size=size.tiny)
+
+// --- Market Structure Shift (MSS) ---
+float ph = ta.pivothigh(high, pivot_len, pivot_len)
+float pl = ta.pivotlow(low, pivot_len, pivot_len)
+
+var float last_ph = float(na)
+var float last_pl = float(na)
+var int last_ph_idx = int(na)
+var int last_pl_idx = int(na)
+
+if not na(ph)
+    last_ph := ph
+    last_ph_idx := bar_index - pivot_len
+if not na(pl)
+    last_pl := pl
+    last_pl_idx := bar_index - pivot_len
+
+bool mss_bull = low_swept and close > last_ph
+bool mss_bear = high_swept and close < last_pl
+
+var bool mss_bull_triggered = false
+var bool mss_bear_triggered = false
+var bool fvg_bull_drawn = false
+var bool fvg_bear_drawn = false
+
+if ta.change(time(htf_tf)) != 0
+    mss_bull_triggered := false
+    mss_bear_triggered := false
+    fvg_bull_drawn := false
+    fvg_bear_drawn := false
+
+if mss_bull and not mss_bull_triggered and not na(last_ph)
+    mss_bull_triggered := true
+    if show_mss
+        label.new(bar_index, low, "MSS", color=bull_color, style=label.style_label_up, textcolor=color.white, size=size.tiny)
+        line.new(last_ph_idx, last_ph, bar_index, last_ph, color=bull_color, style=line.style_dashed)
+
+if mss_bear and not mss_bear_triggered and not na(last_pl)
+    mss_bear_triggered := true
+    if show_mss
+        label.new(bar_index, high, "MSS", color=bear_color, style=label.style_label_down, textcolor=color.white, size=size.tiny)
+        line.new(last_pl_idx, last_pl, bar_index, last_pl, color=bear_color, style=line.style_dashed)
+
+// --- FVG Detection (Post-MSS) ---
+if show_fvg and bar_index > 2
+    // Bullish FVG
+    if mss_bull_triggered and not fvg_bull_drawn and low[0] > high[2] and bar_index - last_ph_idx < 15
+        box.new(bar_index[2], high[2], bar_index, low[0], bgcolor=color.new(bull_color, 85), border_color=na)
+        fvg_bull_drawn := true
+    // Bearish FVG
+    if mss_bear_triggered and not fvg_bear_drawn and high[0] < low[2] and bar_index - last_pl_idx < 15
+        box.new(bar_index[2], low[2], bar_index, high[0], bgcolor=color.new(bear_color, 85), border_color=na)
+        fvg_bear_drawn := true
+
+// --- Plots ---
+plot(show_range ? range_high : na, "Range High", color=color.new(color.gray, 80), style=plot.style_stepline)
+plot(show_range ? range_low : na, "Range Low", color=color.new(color.gray, 80), style=plot.style_stepline)
