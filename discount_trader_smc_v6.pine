@@ -149,8 +149,8 @@ manage_zones(supply_zones)
 manage_zones(demand_zones)
 
 // --- Visualization (Debug) ---
-plotshape(ph, "Pivot High", shape.triangle_down, location.abovebar, color = ROSE, offset = -pivot_len, size = size.tiny)
-plotshape(pl, "Pivot Low", shape.triangle_up, location.belowbar, color = EMERALD, offset = -pivot_len, size = size.tiny)
+plotshape(ph, "Pivot High", shape.triangledown, location.abovebar, color = ROSE, offset = -pivot_len, size = size.tiny)
+plotshape(pl, "Pivot Low", shape.triangleup, location.belowbar, color = EMERALD, offset = -pivot_len, size = size.tiny)
 
 // Plot IDM
 var line idm_line = na
