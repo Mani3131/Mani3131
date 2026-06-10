@@ -1,0 +1,259 @@
+//@version=6
+indicator("Institutional Entry Workflow [Jules]", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// --- Inputs ---
+grp_htf = "Higher Timeframe Settings"
+htf_tf = input.timeframe("240", "HTF Timeframe (Daily/4H)", group = grp_htf)
+show_htf_structure = input.bool(true, "Show HTF Structure", group = grp_htf)
+
+grp_sessions = "Session Settings"
+use_sessions = input.bool(true, "Use Session Filter", group = grp_sessions)
+session_london = input.session("0300-1100", "London Session", group = grp_sessions)
+session_ny = input.session("0800-1200", "NY Overlap", group = grp_sessions)
+session_timezone = input.string("UTC", "Timezone", group = grp_sessions)
+
+grp_entry = "Entry Workflow Settings"
+lookback_pivots = input.int(5, "Pivot Lookback", minval = 1, group = grp_entry)
+rr_ratio_1 = input.float(1.0, "TP1 Risk:Reward", minval = 0.1, group = grp_entry)
+rr_ratio_2 = input.float(2.0, "TP2 Risk:Reward", minval = 0.1, group = grp_entry)
+rr_ratio_3 = input.float(3.0, "TP3 Risk:Reward", minval = 0.1, group = grp_entry)
+
+// --- Colors ---
+color_bull = color.rgb(0, 201, 167) // Emerald
+color_bear = color.rgb(255, 51, 102) // Rose
+color_neutral = color.rgb(255, 184, 0) // Gold
+
+// --- Session Logic ---
+is_in_session(sess) =>
+    not na(time(timeframe.period, sess + ":1234567", session_timezone))
+
+in_london = is_in_session(session_london)
+in_ny = is_in_session(session_ny)
+valid_session = not use_sessions or in_london or in_ny
+
+// --- HTF Bias Logic ---
+// Fetch HTF data
+// Using lookahead=barmerge.lookahead_on to sync with LTF, but checking previous HTF candles for bias to avoid repainting
+[h0, h1, h2, l0, l1, l2] = request.security(syminfo.tickerid, htf_tf, [high[0], high[1], high[2], low[0], low[1], low[2]], lookahead = barmerge.lookahead_on)
+
+// HTF Structure detection (Simplified HH/HL or LH/LL)
+var int htf_bias = 0 // 1: Bullish, -1: Bearish
+htf_hh = h1 > h2
+htf_hl = l1 > l2
+htf_lh = h1 < h2
+htf_ll = l1 < l2
+
+if htf_hh or htf_hl
+    htf_bias := 1
+else if htf_lh or htf_ll
+    htf_bias := -1
+
+// --- Display HTF Bias ---
+var table bias_table = table.new(position.top_right, 1, 1, border_width = 1)
+if barstate.islast
+    table.cell(bias_table, 0, 0, "HTF Bias: " + (htf_bias == 1 ? "BULLISH" : htf_bias == -1 ? "BEARISH" : "NEUTRAL"),
+               bgcolor = htf_bias == 1 ? color_bull : htf_bias == -1 ? color_bear : color.gray,
+               text_color = color.white, text_size = size.small)
+
+// --- LTF Structure and Liquidity Sweep ---
+ph = ta.pivothigh(lookback_pivots, lookback_pivots)
+pl = ta.pivotlow(lookback_pivots, lookback_pivots)
+
+var float last_ph_val = na
+var int last_ph_idx = na
+var float last_pl_val = na
+var int last_pl_idx = na
+
+if not na(ph)
+    last_ph_val := ph
+    last_ph_idx := bar_index[lookback_pivots]
+if not na(pl)
+    last_pl_val := pl
+    last_pl_idx := bar_index[lookback_pivots]
+
+// Liquidity Sweep Detection
+// Bullish Sweep: Price goes below a previous Pivot Low and closes above it
+bull_sweep = low < last_pl_val and close > last_pl_val and low[1] > last_pl_val // Simplified sweep
+// Bearish Sweep: Price goes above a previous Pivot High and closes below it
+bear_sweep = high > last_ph_val and close < last_ph_val and high[1] < last_ph_val
+
+plotshape(bull_sweep, "Bullish Sweep", shape.triangleup, location.belowbar, color_bull, size = size.tiny)
+plotshape(bear_sweep, "Bearish Sweep", shape.triangledown, location.abovebar, color_bear, size = size.tiny)
+
+// Market Structure Shift (CHoCH)
+// Bullish CHoCH: After a Bullish Sweep, price breaks above the most recent Pivot High
+var bool sweep_occured_bull = false
+var bool sweep_occured_bear = false
+
+if bull_sweep
+    sweep_occured_bull := true
+    sweep_occured_bear := false
+if bear_sweep
+    sweep_occured_bear := true
+    sweep_occured_bull := false
+
+bull_choch = sweep_occured_bull and ta.crossover(close, last_ph_val)
+bear_choch = sweep_occured_bear and ta.crossunder(close, last_pl_val)
+
+if bull_choch
+    sweep_occured_bull := false // Reset after CHoCH
+if bear_choch
+    sweep_occured_bear := false // Reset after CHoCH
+
+plotshape(bull_choch, "Bullish CHoCH", shape.labelup, location.belowbar, color_bull, text = "CHoCH", textcolor = color.white, size = size.tiny)
+plotshape(bear_choch, "Bearish CHoCH", shape.labeldown, location.abovebar, color_bear, text = "CHoCH", textcolor = color.white, size = size.tiny)
+
+// --- Order Blocks and FVGs ---
+type Zone
+    float top
+    float bottom
+    int start_idx
+    bool is_bullish
+    bool is_ob
+    bool is_active = true
+    box b_id = na
+
+var active_zones = array.new<Zone>(0)
+
+// FVG Detection
+bull_fvg = low > high[2]
+bear_fvg = high < low[2]
+
+if bull_fvg
+    box b = box.new(bar_index - 2, low, bar_index, high[2], bgcolor = color.new(color_bull, 85), border_color = color_bull, text = "FVG", text_size = size.tiny, text_color = color.gray)
+    array.push(active_zones, Zone.new(low, high[2], bar_index - 1, true, false, true, b))
+if bear_fvg
+    box b = box.new(bar_index - 2, low[2], bar_index, high, bgcolor = color.new(color_bear, 85), border_color = color_bear, text = "FVG", text_size = size.tiny, text_color = color.gray)
+    array.push(active_zones, Zone.new(low[2], high, bar_index - 1, false, false, true, b))
+
+// OB Detection (Simplified: Last opposite candle before CHoCH)
+if bull_choch
+    for i = 1 to 20
+        if close[i] < open[i]
+            box b = box.new(bar_index[i], high[i], bar_index, low[i], bgcolor = color.new(color_bull, 85), border_color = color_bull, text = "OB", text_size = size.tiny, text_color = color.gray)
+            array.push(active_zones, Zone.new(high[i], low[i], bar_index[i], true, true, true, b))
+            break
+        if i == 20 // Fallback if no opposite candle found
+            box b = box.new(bar_index[1], high[1], bar_index, low[1], bgcolor = color.new(color_bull, 85), border_color = color_bull, text = "OB", text_size = size.tiny, text_color = color.gray)
+            array.push(active_zones, Zone.new(high[1], low[1], bar_index[1], true, true, true, b))
+
+if bear_choch
+    for i = 1 to 20
+        if close[i] > open[i]
+            box b = box.new(bar_index[i], high[i], bar_index, low[i], bgcolor = color.new(color_bear, 85), border_color = color_bear, text = "OB", text_size = size.tiny, text_color = color.gray)
+            array.push(active_zones, Zone.new(high[i], low[i], bar_index[i], false, true, true, b))
+            break
+        if i == 20 // Fallback if no opposite candle found
+            box b = box.new(bar_index[1], high[1], bar_index, low[1], bgcolor = color.new(color_bear, 85), border_color = color_bear, text = "OB", text_size = size.tiny, text_color = color.gray)
+            array.push(active_zones, Zone.new(high[1], low[1], bar_index[1], false, true, true, b))
+
+// --- Confirmation Patterns ---
+is_bull_engulfing = close > open[1] and close[1] < open[1] and close > high[1]
+is_bear_engulfing = close < open[1] and close[1] > open[1] and close < low[1]
+
+body_size = math.abs(close - open)
+candle_range = high - low
+is_bull_pin = candle_range > 0 and (high - math.max(open, close)) < (candle_range * 0.2) and (math.min(open, close) - low) > (candle_range * 0.6)
+is_bear_pin = candle_range > 0 and (math.min(open, close) - low) < (candle_range * 0.2) and (high - math.max(open, close)) > (candle_range * 0.6)
+
+bull_conf = is_bull_engulfing or is_bull_pin
+bear_conf = is_bear_engulfing or is_bear_pin
+
+// --- Entry Workflow State Machine ---
+var bool waiting_for_retest_bull = false
+var bool waiting_for_retest_bear = false
+var bool bull_retested = false
+var bool bear_retested = false
+
+if bull_sweep or bull_choch
+    bull_retested := false
+if bear_sweep or bear_choch
+    bear_retested := false
+
+if bull_choch
+    waiting_for_retest_bull := true
+    waiting_for_retest_bear := false
+if bear_choch
+    waiting_for_retest_bear := true
+    waiting_for_retest_bull := false
+
+// Reset logic and zone management
+if array.size(active_zones) > 0
+    for i = array.size(active_zones) - 1 to 0
+        Zone z = array.get(active_zones, i)
+        if z.is_active
+            box.set_right(z.b_id, bar_index)
+            // Check for mitigation
+            if z.is_bullish
+                if low <= z.top and low >= z.bottom
+                    bull_retested := true
+                if low < z.bottom // Violated
+                    z.is_active := false
+                    box.set_bgcolor(z.b_id, color.new(color.gray, 90))
+                    box.set_border_color(z.b_id, color.gray)
+            else
+                if high >= z.bottom and high <= z.top
+                    bear_retested := true
+                if high > z.top // Violated
+                    z.is_active := false
+                    box.set_bgcolor(z.b_id, color.new(color.gray, 90))
+                    box.set_border_color(z.b_id, color.gray)
+
+        // Remove old zones to save memory
+        if bar_index - z.start_idx > 500
+            box.delete(z.b_id)
+            array.remove(active_zones, i)
+
+// Final Signal Conditions
+long_condition = valid_session and htf_bias == 1 and waiting_for_retest_bull and bull_retested and bull_conf
+short_condition = valid_session and htf_bias == -1 and waiting_for_retest_bear and bear_retested and bear_conf
+
+if long_condition
+    waiting_for_retest_bull := false
+    bull_retested := false
+if short_condition
+    waiting_for_retest_bear := false
+    bear_retested := false
+
+plotshape(long_condition, "Long Entry", shape.triangleup, location.belowbar, color_bull, size = size.small, text = "LONG", textcolor = color_bull)
+plotshape(short_condition, "Short Entry", shape.triangledown, location.abovebar, color_bear, size = size.small, text = "SHORT", textcolor = color_bear)
+
+// --- TP/SL Visualization ---
+if long_condition
+    float sl = low - ta.atr(14) * 1.5
+    float entry = close
+    float tp1 = entry + (entry - sl) * rr_ratio_1
+    float tp2 = entry + (entry - sl) * rr_ratio_2
+    float tp3 = entry + (entry - sl) * rr_ratio_3
+    line.new(bar_index, entry, bar_index + 15, entry, color = color.gray, style = line.style_dashed)
+    line.new(bar_index, sl, bar_index + 15, sl, color = color.red, width = 2)
+    line.new(bar_index, tp1, bar_index + 15, tp1, color = color_bull, width = 1)
+    line.new(bar_index, tp2, bar_index + 15, tp2, color = color_bull, width = 2)
+    line.new(bar_index, tp3, bar_index + 15, tp3, color = color_bull, width = 3)
+    label.new(bar_index + 15, sl, "SL: " + str.tostring(sl, format.mintick), color = color.new(color.red, 100), textcolor = color.red, style = label.style_label_left, size = size.tiny)
+    label.new(bar_index + 15, tp1, "TP1: " + str.tostring(tp1, format.mintick), color = color.new(color_bull, 100), textcolor = color_bull, style = label.style_label_left, size = size.tiny)
+    label.new(bar_index + 15, tp2, "TP2: " + str.tostring(tp2, format.mintick), color = color.new(color_bull, 100), textcolor = color_bull, style = label.style_label_left, size = size.tiny)
+    label.new(bar_index + 15, tp3, "TP3: " + str.tostring(tp3, format.mintick), color = color.new(color_bull, 100), textcolor = color_bull, style = label.style_label_left, size = size.tiny)
+
+if short_condition
+    float sl = high + ta.atr(14) * 1.5
+    float entry = close
+    float tp1 = entry - (sl - entry) * rr_ratio_1
+    float tp2 = entry - (sl - entry) * rr_ratio_2
+    float tp3 = entry - (sl - entry) * rr_ratio_3
+    line.new(bar_index, entry, bar_index + 15, entry, color = color.gray, style = line.style_dashed)
+    line.new(bar_index, sl, bar_index + 15, sl, color = color.red, width = 2)
+    line.new(bar_index, tp1, bar_index + 15, tp1, color = color_bear, width = 1)
+    line.new(bar_index, tp2, bar_index + 15, tp2, color = color_bear, width = 2)
+    line.new(bar_index, tp3, bar_index + 15, tp3, color = color_bear, width = 3)
+    label.new(bar_index + 15, sl, "SL: " + str.tostring(sl, format.mintick), color = color.new(color.red, 100), textcolor = color.red, style = label.style_label_left, size = size.tiny)
+    label.new(bar_index + 15, tp1, "TP1: " + str.tostring(tp1, format.mintick), color = color.new(color_bear, 100), textcolor = color_bear, style = label.style_label_left, size = size.tiny)
+    label.new(bar_index + 15, tp2, "TP2: " + str.tostring(tp2, format.mintick), color = color.new(color_bear, 100), textcolor = color_bear, style = label.style_label_left, size = size.tiny)
+    label.new(bar_index + 15, tp3, "TP3: " + str.tostring(tp3, format.mintick), color = color.new(color_bear, 100), textcolor = color_bear, style = label.style_label_left, size = size.tiny)
+
+// --- Alerts ---
+alertcondition(long_condition, "Institutional Long Entry", "Long Entry Workflow Completed on {{ticker}}")
+alertcondition(short_condition, "Institutional Short Entry", "Short Entry Workflow Completed on {{ticker}}")
+
+// Global plot
+plot(na)
