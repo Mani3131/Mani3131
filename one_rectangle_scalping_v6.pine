@@ -193,7 +193,8 @@ if low_swept and low < last_low_sweep
 
 // --- Mitigation & Cleanup ---
 if array.size(active_obs) > 0
-    for i = array.size(active_obs) - 1 to 0 by -1
+    int i = array.size(active_obs) - 1
+    while i >= 0
         ob = array.get(active_obs, i)
         if not ob.is_mitigated
             box.set_right(ob.rect, bar_index + 5)
@@ -209,10 +210,12 @@ if array.size(active_obs) > 0
             box.set_bgcolor(ob.rect, color.new(color.gray, 90))
             box.set_border_color(ob.rect, color.new(color.gray, 50))
             array.remove(active_obs, i)
+        i := i - 1
 
 // Update Trade Visuals & Monitor
 if array.size(active_trades) > 0
-    for i = array.size(active_trades) - 1 to 0 by -1
+    int i = array.size(active_trades) - 1
+    while i >= 0
         t = array.get(active_trades, i)
         if t.active
             label.set_x(t.l_entry, bar_index + 5)
@@ -247,6 +250,7 @@ if array.size(active_trades) > 0
             // If trade is not filled for too long, expire it (e.g. 50 bars)
             if t.active and not t.filled and bar_index - line.get_x1(t.ln_entry) > 50
                 t.active := false
+        i := i - 1
 
     // Cleanup old drawings
     if array.size(active_trades) > 20
