@@ -167,6 +167,7 @@ update_visuals(Trade t) =>
         t.l_tp3     := line.new(t.entry_bar, t.tp3_price, bar_index, t.tp3_price, color = c_main, style = line.style_solid, width = 2)
         t.lbl_setup := label.new(t.entry_bar, t.entry_price, t.is_long ? "LONG SETUP" : "SHORT SETUP",
              color = color.new(c_main, 20), textcolor = color.white, style = label.style_label_left, size = size.small)
+        na
     else
         // Update existing objects
         line.set_x2(t.l_entry, bar_index)
@@ -174,6 +175,7 @@ update_visuals(Trade t) =>
         line.set_x2(t.l_tp1, bar_index)
         line.set_x2(t.l_tp2, bar_index)
         line.set_x2(t.l_tp3, bar_index)
+        na
 
 // Monitor active trades
 if array.size(active_trades) > 0
@@ -220,3 +222,4 @@ if barstate.islast
     table.cell(dash, 0, 3, "Pullback (PB)", text_color = color.white, text_size = size.small)
     table.cell(dash, 1, 3, (sig2_bull or sig3_bull) ? "BULL" : (sig2_bear or sig3_bear) ? "BEAR" : "NONE",
          text_color = (sig2_bull or sig3_bull) ? color_up : (sig2_bear or sig3_bear) ? color_dn : color.gray, text_size = size.small)
+    na
