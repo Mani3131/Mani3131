@@ -21,6 +21,7 @@ type Swing
 
 type Zone
     box b
+    label l
     float top
     float bottom
     bool isSupply
@@ -45,9 +46,11 @@ float pl = ta.pivotlow(pivot_len, pivot_len)
 
 if not na(ph)
     last_high := Swing.new(ph, bar_index[pivot_len], true)
+    label.new(bar_index[pivot_len], ph, "PH", color = ROSE, textcolor = color.white, style = label.style_label_down, size = size.tiny)
 
 if not na(pl)
     last_low := Swing.new(pl, bar_index[pivot_len], false)
+    label.new(bar_index[pivot_len], pl, "PL", color = EMERALD, textcolor = color.white, style = label.style_label_up, size = size.tiny)
 
 // --- P/D Range Logic ---
 float range_high = last_high.price
@@ -103,11 +106,12 @@ if close < open and is_displacement and high[1] > high
             box b = box.new(bar_index[1], top, bar_index + 10, bottom,
                  border_color = is_inducement ? color.new(ROSE, 70) : ROSE,
                  bgcolor = is_inducement ? color.new(ROSE, 95) : color.new(ROSE, 90))
+            label l = na
             if is_inducement
-                label.new(bar_index[1], top, "Fake Supply (Inducement)", color = ROSE, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+                l := label.new(bar_index[1], top, "Fake Supply (Inducement)", color = ROSE, textcolor = color.white, style = label.style_label_down, size = size.tiny)
             else
-                label.new(bar_index[1], top, "High Prob Supply", color = EMERALD, textcolor = color.white, style = label.style_label_down, size = size.tiny)
-            array.push(supply_zones, Zone.new(b, top, bottom, true, false, is_inducement))
+                l := label.new(bar_index[1], top, "High Prob Supply", color = EMERALD, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+            array.push(supply_zones, Zone.new(b, l, top, bottom, true, false, is_inducement))
 
 // Bullish OB: Last bearish candle before bullish displacement
 if close > open and is_displacement and low[1] < low
@@ -120,11 +124,12 @@ if close > open and is_displacement and low[1] < low
             box b = box.new(bar_index[1], top, bar_index + 10, bottom,
                  border_color = is_inducement ? color.new(EMERALD, 70) : EMERALD,
                  bgcolor = is_inducement ? color.new(EMERALD, 95) : color.new(EMERALD, 90))
+            label l = na
             if is_inducement
-                label.new(bar_index[1], bottom, "Fake Demand (Inducement)", color = ROSE, textcolor = color.white, style = label.style_label_up, size = size.tiny)
+                l := label.new(bar_index[1], bottom, "Fake Demand (Inducement)", color = ROSE, textcolor = color.white, style = label.style_label_up, size = size.tiny)
             else
-                label.new(bar_index[1], bottom, "High Prob Demand", color = EMERALD, textcolor = color.white, style = label.style_label_up, size = size.tiny)
-            array.push(demand_zones, Zone.new(b, top, bottom, false, false, is_inducement))
+                l := label.new(bar_index[1], bottom, "High Prob Demand", color = EMERALD, textcolor = color.white, style = label.style_label_up, size = size.tiny)
+            array.push(demand_zones, Zone.new(b, l, top, bottom, false, false, is_inducement))
 
 // --- Zone Mitigation & Management ---
 manage_zones(arr) =>
@@ -142,15 +147,14 @@ manage_zones(arr) =>
 
         // Limit management
         while array.size(arr) > zone_limit
-            Zone old = array.shift(arr)
+            Zone old = array.remove(arr, 0)
             box.delete(old.b)
+            label.delete(old.l)
 
 manage_zones(supply_zones)
 manage_zones(demand_zones)
 
 // --- Visualization (Debug) ---
-plotshape(ph, "Pivot High", shape.triangledown, location.abovebar, color = ROSE, offset = -pivot_len, size = size.tiny)
-plotshape(pl, "Pivot Low", shape.triangleup, location.belowbar, color = EMERALD, offset = -pivot_len, size = size.tiny)
 
 // Plot IDM
 var line idm_line = na
