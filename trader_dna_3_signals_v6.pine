@@ -156,25 +156,24 @@ if (long_signal or short_signal) and barstate.isconfirmed
 
 // Function to update visual objects for a trade
 update_visuals(Trade t) =>
-    if t.is_active
-        color c_main = t.is_long ? color_up : color_dn
+    color c_main = t.is_long ? color_up : color_dn
 
-        // If objects don't exist yet, create them
-        if na(t.l_entry)
-            t.l_entry   := line.new(t.entry_bar, t.entry_price, bar_index, t.entry_price, color = color.gray, style = line.style_dotted)
-            t.l_sl      := line.new(t.entry_bar, t.sl_price, bar_index, t.sl_price, color = color.red, style = line.style_solid, width = 1)
-            t.l_tp1     := line.new(t.entry_bar, t.tp1_price, bar_index, t.tp1_price, color = color.new(c_main, 50), style = line.style_solid)
-            t.l_tp2     := line.new(t.entry_bar, t.tp2_price, bar_index, t.tp2_price, color = color.new(c_main, 30), style = line.style_solid)
-            t.l_tp3     := line.new(t.entry_bar, t.tp3_price, bar_index, t.tp3_price, color = c_main, style = line.style_solid, width = 2)
-            t.lbl_setup := label.new(t.entry_bar, t.entry_price, t.is_long ? "LONG SETUP" : "SHORT SETUP",
-                 color = color.new(c_main, 20), textcolor = color.white, style = label.style_label_left, size = size.small)
-        else
-            // Update existing objects
-            line.set_x2(t.l_entry, bar_index)
-            line.set_x2(t.l_sl, bar_index)
-            line.set_x2(t.l_tp1, bar_index)
-            line.set_x2(t.l_tp2, bar_index)
-            line.set_x2(t.l_tp3, bar_index)
+    // If objects don't exist yet, create them
+    if na(t.l_entry)
+        t.l_entry   := line.new(t.entry_bar, t.entry_price, bar_index, t.entry_price, color = color.gray, style = line.style_dotted)
+        t.l_sl      := line.new(t.entry_bar, t.sl_price, bar_index, t.sl_price, color = color.red, style = line.style_solid, width = 1)
+        t.l_tp1     := line.new(t.entry_bar, t.tp1_price, bar_index, t.tp1_price, color = color.new(c_main, 50), style = line.style_solid)
+        t.l_tp2     := line.new(t.entry_bar, t.tp2_price, bar_index, t.tp2_price, color = color.new(c_main, 30), style = line.style_solid)
+        t.l_tp3     := line.new(t.entry_bar, t.tp3_price, bar_index, t.tp3_price, color = c_main, style = line.style_solid, width = 2)
+        t.lbl_setup := label.new(t.entry_bar, t.entry_price, t.is_long ? "LONG SETUP" : "SHORT SETUP",
+             color = color.new(c_main, 20), textcolor = color.white, style = label.style_label_left, size = size.small)
+    else
+        // Update existing objects
+        line.set_x2(t.l_entry, bar_index)
+        line.set_x2(t.l_sl, bar_index)
+        line.set_x2(t.l_tp1, bar_index)
+        line.set_x2(t.l_tp2, bar_index)
+        line.set_x2(t.l_tp3, bar_index)
 
 // Monitor active trades
 if array.size(active_trades) > 0
@@ -193,8 +192,10 @@ if array.size(active_trades) > 0
             line.delete(t.l_tp3)
             label.delete(t.lbl_setup)
             array.remove(active_trades, i)
+            na
         else
             update_visuals(t)
+            na
 
         i := i - 1
 
