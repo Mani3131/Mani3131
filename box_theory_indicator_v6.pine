@@ -1,0 +1,65 @@
+//@version=6
+indicator("Box Theory Strategy [SmartMoney.Academy]", overlay = true, max_boxes_count = 500, max_lines_count = 500)
+
+// --- Inputs ---
+box_color_input = input.color(color.new(color.blue, 90), "Box Background Color")
+border_color_input = input.color(color.blue, "Box Border Color")
+median_color_input = input.color(color.gray, "Median Line Color")
+show_labels = input.bool(true, "Show Buy/Sell Labels")
+
+// --- Data Fetching ---
+// Using lookahead=barmerge.lookahead_on with [1] to get the COMPLETED previous day's data without repainting
+[pdh, pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+median = (pdh + pdl) / 2
+
+// --- Box and Median Line Implementation ---
+var box daily_box = na
+var line median_line = na
+
+// Detect new day to start a new box
+new_day = ta.change(time("D"))
+
+if new_day
+    daily_box := box.new(bar_index, pdh, bar_index, pdl, border_color = border_color_input, bgcolor = box_color_input)
+    median_line := line.new(bar_index, median, bar_index, median, color = median_color_input, style = line.style_dashed)
+    na
+else if not na(daily_box)
+    box.set_right(daily_box, bar_index)
+    line.set_x2(median_line, bar_index)
+    na
+
+// --- John Wick (Pin Bar) Detection ---
+body_size = math.abs(close - open)
+upper_wick = high - math.max(open, close)
+lower_wick = math.min(open, close) - low
+
+// A "John Wick" candle has a wick at least 2x the body size
+is_bearish_john_wick = upper_wick >= body_size * 2 and lower_wick < upper_wick / 2
+is_bullish_john_wick = lower_wick >= body_size * 2 and upper_wick < lower_wick / 2
+
+// --- Signal Conditions ---
+// Proximity check: Price is within 5% of the range from the top/bottom
+range_size = pdh - pdl
+proximity_threshold = range_size * 0.05
+
+at_box_top = high >= (pdh - proximity_threshold)
+at_box_bottom = low <= (pdl + proximity_threshold)
+
+sell_signal = at_box_top and is_bearish_john_wick
+buy_signal = at_box_bottom and is_bullish_john_wick
+
+// --- Visual Plotting ---
+color_emerald = color.rgb(0, 201, 167)
+color_rose    = color.rgb(255, 51, 102)
+
+plotshape(show_labels and sell_signal, "Sell Signal", shape.labeldown, location.abovebar, color_rose, text = "SELL\nJohn Wick", textcolor = color.white, size = size.tiny)
+plotshape(show_labels and buy_signal, "Buy Signal", shape.labelup, location.belowbar, color_emerald, text = "BUY\nJohn Wick", textcolor = color.white, size = size.tiny)
+
+// Alert conditions
+alertcondition(sell_signal, "Box Sell Signal", "John Wick Sell Signal at Box Top")
+alertcondition(buy_signal, "Box Buy Signal", "John Wick Buy Signal at Box Bottom")
+
+// Plotting levels for reference
+plot(pdh, "Previous Day High", color.new(color.red, 50), style = plot.style_stepline)
+plot(pdl, "Previous Day Low", color.new(color.green, 50), style = plot.style_stepline)
+plot(median, "Median Line", color.new(color.gray, 50), style = plot.style_stepline)
