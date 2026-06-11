@@ -17,7 +17,7 @@ var box daily_box = na
 var line median_line = na
 
 // Detect new day to start a new box
-new_day = ta.change(time("D"))
+new_day = ta.change(time("D")) != 0
 
 if new_day
     daily_box := box.new(bar_index, pdh, bar_index, pdl, border_color = border_color_input, bgcolor = box_color_input)
