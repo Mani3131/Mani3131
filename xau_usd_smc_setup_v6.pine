@@ -159,6 +159,6 @@ if show_dashboard and barstate.islast
     table.cell(checklist, 1, 9, "CHECK", text_color = color_gold)
 
 // --- Plotting & Alerts ---
-plotshape(entry_signal, "Buy Signal", shape.triangleup, location.belowbar, color_bull, size=size.small, title="Institutional Buy Entry")
+plotshape(entry_signal, title="Institutional Buy Entry", style=shape.triangleup, location=location.belowbar, color=color_bull, size=size.small)
 if entry_signal
     alert("XAU/USD Institutional Buy Entry Confirmed!", alert.freq_once_per_bar)
