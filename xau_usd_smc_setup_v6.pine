@@ -6,8 +6,8 @@ htf_tf           = input.timeframe("240", "HTF Timeframe (Daily/4H)")
 lookback_pivots  = input.int(10, "Pivot Lookback", minval = 1)
 show_dashboard   = input.bool(true, "Show Checklist Dashboard")
 show_projections = input.bool(true, "Show TP/SL Projections")
-london_session   = input.session("0700-1000", "London Open Session (UTC)")
-ny_overlap       = input.session("1300-1600", "London/NY Overlap (UTC)")
+london_session   = input.session("1000-1859", "London Session (UTC+3)")
+ny_session       = input.session("1500-1900", "New York Session (UTC+3)")
 
 // --- Colors & Styling (Standardized Palette) ---
 color_bull  = color.rgb(0, 201, 167) // Emerald
@@ -84,7 +84,7 @@ if mss_occurred
             break
 
 // --- 5. Session Filter ---
-in_session = time(timeframe.period, london_session, "UTC") or time(timeframe.period, ny_overlap, "UTC")
+in_session = not na(time(timeframe.period, london_session, "GMT+3")) or not na(time(timeframe.period, ny_session, "GMT+3"))
 
 // --- 6. Confirmation Candle Detection ---
 float c_range = high - low
