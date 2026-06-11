@@ -1,0 +1,107 @@
+//@version=6
+indicator("Mulham Trading - 2 Concepts Strategy", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// --- Inputs ---
+htf_tf          = input.timeframe("60", "Higher Timeframe", tooltip="Choose the higher timeframe for trend alignment.")
+pivot_len       = input.int(3, "Pivot Length", minval=1, tooltip="Sensitivity for detecting swing highs and lows.")
+show_htf_levels = input.bool(true, "Show HTF Levels", tooltip="Display horizontal lines for HTF structural levels.")
+show_ltf_labels = input.bool(true, "Show LTF Labels", tooltip="Display BOS and CHoCH labels on the current timeframe.")
+show_signals    = input.bool(true, "Show Entry Signals", tooltip="Highlight entry points where HTF and LTF align.")
+
+// Colors
+color_bull      = color.rgb(0, 201, 167) // Emerald
+color_bear      = color.rgb(255, 51, 102) // Rose
+color_neutral   = color.rgb(255, 184, 0) // Gold
+
+// --- Market Structure Logic ---
+// This function identifies trend based on pivots and detects BOS/CHoCH.
+get_structure(len) =>
+    float ph = ta.pivothigh(len, len)
+    float pl = ta.pivotlow(len, len)
+
+    var float last_ph = 0.0
+    var float last_pl = 0.0
+    var string trend = "Neutral"
+    bool bos = false
+    bool choch = false
+
+    if not na(ph)
+        if trend == "Bearish" and ph > last_ph
+            choch := true
+            trend := "Bullish"
+        else if trend == "Bullish" and ph > last_ph
+            bos := true
+        else if trend == "Neutral"
+            trend := "Bullish"
+        last_ph := ph
+
+    if not na(pl)
+        if trend == "Bullish" and pl < last_pl
+            choch := true
+            trend := "Bearish"
+        else if trend == "Bearish" and pl < last_pl
+            bos := true
+        else if trend == "Neutral"
+            trend := "Bearish"
+        last_pl := pl
+
+    [trend, bos, choch, last_ph, last_pl]
+
+// --- HTF Data (Multi-Timeframe) ---
+// Function to be called in HTF context to return previous (completed) structure.
+get_htf_structure() =>
+    [t, b, c, ph, pl] = get_structure(pivot_len)
+    [t[1], b[1], c[1], ph[1], pl[1]]
+
+// We use lookahead=barmerge.lookahead_on with [1] indexing logic to ensure non-repainting
+// while maintaining the HTF context of the *completed* candle.
+[htf_trend, htf_bos, htf_choch, htf_h, htf_l] = request.security(syminfo.tickerid, htf_tf, get_htf_structure(), lookahead=barmerge.lookahead_on)
+
+// --- LTF Data (Current Timeframe) ---
+[ltf_trend, ltf_bos, ltf_choch, ltf_h, ltf_l] = get_structure(pivot_len)
+
+// --- Entry Signals ---
+// Alignment logic:
+// 1. HTF Trend must be established.
+// 2. LTF must show a Change of Character (CHoCH) in the same direction.
+bool long_signal  = htf_trend == "Bullish" and ltf_trend == "Bullish" and ltf_choch
+bool short_signal = htf_trend == "Bearish" and ltf_trend == "Bearish" and ltf_choch
+
+// --- Visuals ---
+// HTF Bias Background - subtle tint to indicate higher timeframe direction.
+bgcolor(htf_trend == "Bullish" ? color.new(color_bull, 92) : htf_trend == "Bearish" ? color.new(color_bear, 92) : na)
+
+// LTF Labels - Plotting BOS and CHoCH for structure visibility.
+if show_ltf_labels
+    if ltf_choch
+        label.new(bar_index[pivot_len], ltf_trend == "Bullish" ? low[pivot_len] : high[pivot_len], "CHoCH",
+             color=ltf_trend == "Bullish" ? color_bull : color_bear,
+             textcolor=color.white,
+             style=ltf_trend == "Bullish" ? label.style_label_up : label.style_label_down,
+             size=size.tiny)
+    else if ltf_bos
+        label.new(bar_index[pivot_len], ltf_trend == "Bullish" ? low[pivot_len] : high[pivot_len], "BOS",
+             color=ltf_trend == "Bullish" ? color_bull : color_bear,
+             textcolor=color.white,
+             style=ltf_trend == "Bullish" ? label.style_label_up : label.style_label_down,
+             size=size.tiny)
+
+// Entry Signals - Triangles to mark high-probability entries.
+plotshape(show_signals and long_signal, "Long Signal", shape.triangleup, location.belowbar, color_bull, size=size.small, text="Entry")
+plotshape(show_signals and short_signal, "Short Signal", shape.triangledown, location.abovebar, color_bear, size=size.small, text="Entry")
+
+// HTF Levels - Dynamic horizontal lines showing the latest HTF swing points.
+var line htf_h_line = line.new(na, na, na, na, color=color.new(color_neutral, 60), style=line.style_dashed)
+var line htf_l_line = line.new(na, na, na, na, color=color.new(color_neutral, 60), style=line.style_dashed)
+
+if show_htf_levels and barstate.islast
+    if not na(htf_h)
+        line.set_xy1(htf_h_line, bar_index - 100, htf_h)
+        line.set_xy2(htf_h_line, bar_index, htf_h)
+    if not na(htf_l)
+        line.set_xy1(htf_l_line, bar_index - 100, htf_l)
+        line.set_xy2(htf_l_line, bar_index, htf_l)
+
+// --- Alerts ---
+alertcondition(long_signal, "Long Entry", "Bullish alignment and CHoCH on {{ticker}}")
+alertcondition(short_signal, "Short Entry", "Bearish alignment and CHoCH on {{ticker}}")
