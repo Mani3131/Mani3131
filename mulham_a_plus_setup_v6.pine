@@ -1,0 +1,220 @@
+//@version=6
+indicator("Mulham A+ Setup Indicator [Mani3131]", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=500)
+
+// --- UDTs ---
+type Level
+    float price
+    int   time_start
+    string name
+    line  ln
+    label lb
+
+type Zone
+    float top
+    float bottom
+    int   start_bar
+    box   bx
+    string type // "OB" or "FVG"
+    bool  active
+
+type TradeSetup
+    bool  is_bullish
+    float entry
+    float sl
+    float tp
+    int   start_bar
+    bool  active
+
+// --- Inputs ---
+group_htf = "Higher Timeframe Levels"
+htf_tf = input.timeframe("D", "HTF Timeframe", group=group_htf)
+show_pdh_pdl = input.bool(true, "Show PDH/PDL", group=group_htf)
+
+group_sessions = "Sessions"
+london_session = input.session("0300-1100:23456", "London Session", group=group_sessions)
+ny_session     = input.session("0800-1700:23456", "NY Session", group=group_sessions)
+
+group_logic = "Strategy Logic"
+displacement_mult = input.float(1.5, "Displacement Multiplier (ATR)", minval=1.0, group=group_logic, tooltip="Required move size relative to ATR to confirm displacement")
+swing_lookback   = input.int(3, "Swing High/Low Lookback", minval=2, group=group_logic, tooltip="Bars to left/right for pivot detection")
+
+group_visuals = "Visuals"
+bull_color = input.color(color.new(color.rgb(0, 201, 167), 80), "Bullish Color", group=group_visuals)
+bear_color = input.color(color.new(color.rgb(255, 51, 102), 80), "Bearish Color", group=group_visuals)
+
+// --- Global Variables & Arrays ---
+var array<Zone> active_zones = array.new<Zone>()
+var array<Level> mtf_levels = array.new<Level>()
+
+// --- Helper Functions ---
+is_in_session(sess) =>
+    not na(time(timeframe.period, sess))
+
+// --- MTF Levels ---
+[htf_h, htf_l] = request.security(syminfo.tickerid, htf_tf, [high[1], low[1]], lookahead=barmerge.lookahead_on)
+
+var line pdh_line = line.new(na, na, na, na, color=color.gray, style=line.style_dashed)
+var line pdl_line = line.new(na, na, na, na, color=color.gray, style=line.style_dashed)
+
+if barstate.islast and show_pdh_pdl
+    line.set_xy1(pdh_line, bar_index[100], htf_h)
+    line.set_xy2(pdh_line, bar_index, htf_h)
+    line.set_xy1(pdl_line, bar_index[100], htf_l)
+    line.set_xy2(pdl_line, bar_index, htf_l)
+
+// --- Liquidity Sweep Detection ---
+var bool htf_high_swept = false
+var bool htf_low_swept = false
+
+if high > htf_h and close < htf_h
+    htf_high_swept := true
+if low < htf_l and close > htf_l
+    htf_low_swept := true
+
+// Reset sweeps on new HTF candle
+if ta.change(time(htf_tf)) != 0
+    htf_high_swept := false
+    htf_low_swept := false
+
+// --- Market Structure ---
+float atr = ta.atr(14)
+float swing_h = ta.pivothigh(swing_lookback, swing_lookback)
+float swing_l = ta.pivotlow(swing_lookback, swing_lookback)
+
+var float last_swing_h = na
+var float last_swing_l = na
+var int last_swing_h_idx = na
+var int last_swing_l_idx = na
+
+if not na(swing_h)
+    last_swing_h := swing_h
+    last_swing_h_idx := bar_index[swing_lookback]
+if not na(swing_l)
+    last_swing_l := swing_l
+    last_swing_l_idx := bar_index[swing_lookback]
+
+// --- MSS & Displacement ---
+var bool bull_mss = false
+var bool bear_mss = false
+var int mss_bar = na
+
+// Displacement: Move from swing to break must be strong
+bool displacement_bull = close > last_swing_h and (close - low[1]) > atr * displacement_mult
+bool displacement_bear = close < last_swing_l and (high[1] - close) > atr * displacement_mult
+
+if displacement_bull and close[1] <= last_swing_h[1]
+    bull_mss := true
+    mss_bar := bar_index
+else
+    bull_mss := false
+
+if displacement_bear and close[1] >= last_swing_l[1]
+    bear_mss := true
+    mss_bar := bar_index
+else
+    bear_mss := false
+
+// Visual aids for MSS
+plotshape(bull_mss, "Bull MSS", shape.triangleup, location.belowbar, color.rgb(0, 201, 167), size=size.small)
+plotshape(bear_mss, "Bear MSS", shape.triangledown, location.abovebar, color.rgb(255, 51, 102), size=size.small)
+
+// --- Zone Management & Mitigation ---
+manage_zones() =>
+    if array.size(active_zones) > 0
+        int i = array.size(active_zones) - 1
+        while i >= 0
+            Zone z = array.get(active_zones, i)
+            // Update box right side
+            box.set_right(z.bx, bar_index)
+
+            // Mitigation check
+            bool mitigated = false
+            if z.type == "FVG" or z.type == "OB"
+                if (z.top > z.bottom) // Bullish zone
+                    if low < z.bottom
+                        mitigated := true
+                else // Bearish zone
+                    if high > z.top
+                        mitigated := true
+
+            if mitigated
+                box.delete(z.bx)
+                array.remove(active_zones, i)
+
+            i -= 1
+
+    // Cap array size
+    if array.size(active_zones) > 50
+        Zone z = array.remove(active_zones, 0)
+        box.delete(z.bx)
+
+// Call zone management
+manage_zones()
+
+// --- FVG Detection ---
+if high < low[2] // Bearish FVG
+    active_zones.push(Zone.new(top = low[2], bottom = high, start_bar = bar_index[1], bx = box.new(bar_index[1], low[2], bar_index, high, border_color=na, bgcolor=color.new(bear_color, 90)), type = "FVG", active = true))
+if low > high[2] // Bullish FVG
+    active_zones.push(Zone.new(top = low, bottom = high[2], start_bar = bar_index[1], bx = box.new(bar_index[1], low, bar_index, high[2], border_color=na, bgcolor=color.new(bull_color, 90)), type = "FVG", active = true))
+
+// --- Order Block (Last Opposite Candle) ---
+if bull_mss
+    int ob_idx = 1
+    for i = 1 to 10
+        if close[i] < open[i]
+            ob_idx := i
+            break
+    active_zones.push(Zone.new(top = high[ob_idx], bottom = low[ob_idx], start_bar = bar_index[ob_idx], bx = box.new(bar_index[ob_idx], high[ob_idx], bar_index, low[ob_idx], border_color=color.new(bull_color, 50), bgcolor=color.new(bull_color, 80)), type = "OB", active = true))
+
+if bear_mss
+    int ob_idx = 1
+    for i = 1 to 10
+        if close[i] > open[i]
+            ob_idx := i
+            break
+    active_zones.push(Zone.new(top = high[ob_idx], bottom = low[ob_idx], start_bar = bar_index[ob_idx], bx = box.new(bar_index[ob_idx], high[ob_idx], bar_index, low[ob_idx], border_color=color.new(bear_color, 50), bgcolor=color.new(bear_color, 80)), type = "OB", active = true))
+
+// --- Signal Logic ---
+var bool setup_active = false
+var bool bull_signal = false
+var bool bear_signal = false
+
+// A+ Setup: Sweep -> MSS -> Return to Zone
+// We track if a sweep happened recently
+var bool bull_sweep_pending = false
+var bool bear_sweep_pending = false
+
+if htf_low_swept
+    bull_sweep_pending := true
+if htf_high_swept
+    bear_sweep_pending := true
+
+// Reset pending sweeps if too much time passes or opposite sweep occurs
+if ta.change(time(htf_tf)) != 0
+    bull_sweep_pending := false
+    bear_sweep_pending := false
+
+in_session = is_in_session(london_session) or is_in_session(ny_session)
+
+if bull_mss and bull_sweep_pending and in_session
+    bull_signal := true
+    bull_sweep_pending := false // Use it then clear it
+else
+    bull_signal := false
+
+if bear_mss and bear_sweep_pending and in_session
+    bear_signal := true
+    bear_sweep_pending := false // Use it then clear it
+else
+    bear_signal := false
+
+// Final A+ Signals
+plotshape(bull_signal, "A+ Bullish Signal", shape.labelup, location.belowbar, color.rgb(0, 201, 167), size=size.normal, text="A+", textcolor=color.white)
+plotshape(bear_signal, "A+ Bearish Signal", shape.labeldown, location.abovebar, color.rgb(255, 51, 102), size=size.normal, text="A+", textcolor=color.white)
+
+// Alert conditions
+alertcondition(bull_signal, "A+ Bullish Setup", "Mulham A+ Bullish Setup Detected!")
+alertcondition(bear_signal, "A+ Bearish Setup", "Mulham A+ Bearish Setup Detected!")
+
+// --- Clean Visuals ---
+plot(close, color=color.new(color.white, 100))
