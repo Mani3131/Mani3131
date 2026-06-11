@@ -1,0 +1,209 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © user
+
+//@version=6
+indicator("SMC + Breaker + Candlestick Pro [v6]", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// --- COLORS ---
+color C_EMERALD = color.rgb(0, 201, 167)
+color C_ROSE    = color.rgb(255, 51, 102)
+color C_GOLD    = color.rgb(255, 184, 0)
+
+// --- INPUTS ---
+// Supertrend
+gp_st = "Supertrend Settings"
+st_len = input.int(10, "Period", minval = 1, group = gp_st)
+st_mul = input.float(3.0, "Multiplier", minval = 0.1, step = 0.1, group = gp_st)
+
+// RSI
+gp_rsi = "RSI Settings"
+rsi_len = input.int(6, "RSI Length", minval = 1, group = gp_rsi)
+rsi_ob  = input.int(70, "Overbought", group = gp_rsi)
+rsi_os  = input.int(30, "Oversold", group = gp_rsi)
+
+// Market Structure
+gp_ms = "Market Structure Settings"
+ms_lookback = input.int(3, "Pivot Lookback", minval = 1, group = gp_ms, tooltip = "Number of bars on either side of a pivot")
+show_hhll    = input.bool(true, "Show HH/HL/LH/LL", group = gp_ms)
+show_bos     = input.bool(true, "Show BOS Lines", group = gp_ms)
+
+// Breaker Blocks
+gp_bb = "Breaker Block Settings"
+show_bb = input.bool(true, "Show Breaker Blocks", group = gp_bb)
+
+// Candlestick Patterns
+gp_cp = "Candlestick Patterns"
+show_engulfing = input.bool(true, "Show Engulfing Patterns", group = gp_cp)
+show_hammer    = input.bool(true, "Show Hammer Patterns", group = gp_cp)
+
+// --- SUPERTREND LOGIC ---
+[st_val, st_dir] = ta.supertrend(st_mul, st_len)
+
+plot(st_dir < 0 ? st_val : na, "Supertrend Up", color = C_EMERALD, linewidth = 2, style = plot.style_linebr)
+plot(st_dir > 0 ? st_val : na, "Supertrend Down", color = C_ROSE, linewidth = 2, style = plot.style_linebr)
+
+// --- RSI LOGIC ---
+rsi_val = ta.rsi(close, rsi_len)
+
+// RSI Background Highlights
+bgcolor(rsi_val > rsi_ob ? color.new(C_ROSE, 90) : na, title = "RSI Overbought Highlight")
+bgcolor(rsi_val < rsi_os ? color.new(C_EMERALD, 90) : na, title = "RSI Oversold Highlight")
+
+// RSI Labels on chart (optional, but requested visual cue)
+if ta.crossover(rsi_val, rsi_os)
+    label.new(bar_index, low, "RSI OS", color = C_EMERALD, textcolor = color.white, style = label.style_label_up, size = size.tiny)
+if ta.crossunder(rsi_val, rsi_ob)
+    label.new(bar_index, high, "RSI OB", color = C_ROSE, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+
+// --- MARKET STRUCTURE LOGIC ---
+var float last_ph_val = na
+var int   last_ph_bar = na
+var float last_pl_val = na
+var int   last_pl_bar = na
+
+var float active_bos_up = na
+var float active_bos_dn = na
+
+ph = ta.pivothigh(ms_lookback, ms_lookback)
+pl = ta.pivotlow(ms_lookback, ms_lookback)
+
+if ph
+    type = "PH"
+    if not na(last_ph_val)
+        type := ph > last_ph_val ? "HH" : "LH"
+
+    if show_hhll
+        label.new(bar_index[ms_lookback], ph, type, color = color.new(color.gray, 50), textcolor = color.white, style = label.style_label_down, size = size.tiny)
+
+    last_ph_val := ph
+    last_ph_bar := bar_index[ms_lookback]
+    active_bos_up := ph
+
+if pl
+    type = "PL"
+    if not na(last_pl_val)
+        type := pl > last_pl_val ? "HL" : "LL"
+
+    if show_hhll
+        label.new(bar_index[ms_lookback], pl, type, color = color.new(color.gray, 50), textcolor = color.white, style = label.style_label_up, size = size.tiny)
+
+    last_pl_val := pl
+    last_pl_bar := bar_index[ms_lookback]
+    active_bos_dn := pl
+
+// BOS Detection
+if show_bos
+    if close > active_bos_up and bar_index > last_ph_bar
+        line.new(last_ph_bar, active_bos_up, bar_index, active_bos_up, color = color.new(C_EMERALD, 50), style = line.style_dashed)
+        label.new(bar_index, active_bos_up, "BOS", color = color.new(color.white, 100), textcolor = C_EMERALD, style = label.style_label_down, size = size.tiny)
+        active_bos_up := na
+
+    if close < active_bos_dn and bar_index > last_pl_bar
+        line.new(last_pl_bar, active_bos_dn, bar_index, active_bos_dn, color = color.new(C_ROSE, 50), style = line.style_dashed)
+        label.new(bar_index, active_bos_dn, "BOS", color = color.new(color.white, 100), textcolor = C_ROSE, style = label.style_label_up, size = size.tiny)
+        active_bos_dn := na
+
+// --- BREAKER BLOCK LOGIC ---
+type Breaker
+    box  b
+    float top
+    float bottom
+    int   dir // 1 for Bullish, -1 for Bearish
+
+var Breaker[] breakers = array.new<Breaker>()
+
+// Detect Sweeps
+is_low_sweep = low < last_pl_val and close > last_pl_val
+is_high_sweep = high > last_ph_val and close < last_ph_val
+
+// Track sweep state
+var bool bullish_sweep_occured = false
+var float sweep_high_to_break = na
+var int sweep_high_bar = na
+
+var bool bearish_sweep_occured = false
+var float sweep_low_to_break = na
+var int sweep_low_bar = na
+
+if is_low_sweep
+    bullish_sweep_occured := true
+    sweep_high_to_break   := last_ph_val
+    sweep_high_bar        := last_ph_bar
+
+if is_high_sweep
+    bearish_sweep_occured := true
+    sweep_low_to_break    := last_pl_val
+    sweep_low_bar         := last_pl_bar
+
+// Trigger Breaker
+if show_bb
+    // Bullish Breaker: After low sweep, price breaks the high
+    if bullish_sweep_occured and close > sweep_high_to_break
+        // Identify the candle responsible for the high (simplified as the pivot range)
+        top = sweep_high_to_break
+        bottom = low[bar_index - sweep_high_bar] // Rough approximation of the resistance zone
+        // For simplicity and matching diagram: The "Resistance" level
+        float b_top = sweep_high_to_break + (ta.atr(14) * 0.2)
+        float b_btm = sweep_high_to_break - (ta.atr(14) * 0.2)
+
+        box bx = box.new(sweep_high_bar, b_top, bar_index, b_btm, bgcolor = color.new(C_EMERALD, 80), border_color = C_EMERALD)
+        array.push(breakers, Breaker.new(bx, b_top, b_btm, 1))
+
+        bullish_sweep_occured := false
+        sweep_high_to_break := na
+
+    // Bearish Breaker: After high sweep, price breaks the low
+    if bearish_sweep_occured and close < sweep_low_to_break
+        float b_top = sweep_low_to_break + (ta.atr(14) * 0.2)
+        float b_btm = sweep_low_to_break - (ta.atr(14) * 0.2)
+
+        box bx = box.new(sweep_low_bar, b_top, bar_index, b_btm, bgcolor = color.new(C_ROSE, 80), border_color = C_ROSE)
+        array.push(breakers, Breaker.new(bx, b_top, b_btm, -1))
+
+        bearish_sweep_occured := false
+        sweep_low_to_break := na
+
+// Mitigation & Cleanup
+if array.size(breakers) > 0
+    int i = array.size(breakers) - 1
+    while i >= 0
+        Breaker brk = array.get(breakers, i)
+        box.set_right(brk.b, bar_index)
+
+        // Mitigation: If price crosses through the zone and closes outside
+        mitigated = false
+        if brk.dir == 1 and close < brk.bottom
+            mitigated := true
+        if brk.dir == -1 and close > brk.top
+            mitigated := true
+
+        if mitigated
+            box.set_bgcolor(brk.b, color.new(color.gray, 90))
+            box.set_border_color(brk.b, color.new(color.gray, 90))
+            array.remove(breakers, i)
+
+        i -= 1
+
+// Limit array size
+if array.size(breakers) > 50
+    Breaker old = array.remove(breakers, 0)
+    // box.delete(old.b) // Keep historical boxes but they won't update
+
+// --- CANDLESTICK PATTERN DETECTION ---
+// Bullish Engulfing
+is_bull_engulfing = close > open[1] and open < close[1] and close > open and open[1] > close[1]
+// Bearish Engulfing
+is_bear_engulfing = close < open[1] and open > close[1] and close < open and open[1] < close[1]
+
+// Hammer
+is_hammer = (high - low) > 3 * (open > close ? open - close : close - open) and (min(open, close) - low) / (high - low) > 0.6
+
+if show_engulfing
+    if is_bull_engulfing
+        label.new(bar_index, low, "Eng", color = color.new(C_EMERALD, 50), textcolor = color.white, style = label.style_label_up, size = size.tiny)
+    if is_bear_engulfing
+        label.new(bar_index, high, "Eng", color = color.new(C_ROSE, 50), textcolor = color.white, style = label.style_label_down, size = size.tiny)
+
+if show_hammer
+    if is_hammer
+        label.new(bar_index, low, "Hammer", color = color.new(C_GOLD, 50), textcolor = color.white, style = label.style_label_up, size = size.tiny)
