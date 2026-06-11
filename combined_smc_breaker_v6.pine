@@ -67,7 +67,7 @@ var float active_bos_dn = na
 ph = ta.pivothigh(ms_lookback, ms_lookback)
 pl = ta.pivotlow(ms_lookback, ms_lookback)
 
-if ph
+if not na(ph)
     type = "PH"
     if not na(last_ph_val)
         type := ph > last_ph_val ? "HH" : "LH"
@@ -79,7 +79,7 @@ if ph
     last_ph_bar := bar_index[ms_lookback]
     active_bos_up := ph
 
-if pl
+if not na(pl)
     type = "PL"
     if not na(last_pl_val)
         type := pl > last_pl_val ? "HL" : "LL"
@@ -139,9 +139,6 @@ if is_high_sweep
 if show_bb
     // Bullish Breaker: After low sweep, price breaks the high
     if bullish_sweep_occured and close > sweep_high_to_break
-        // Identify the candle responsible for the high (simplified as the pivot range)
-        top = sweep_high_to_break
-        bottom = low[bar_index - sweep_high_bar] // Rough approximation of the resistance zone
         // For simplicity and matching diagram: The "Resistance" level
         float b_top = sweep_high_to_break + (ta.atr(14) * 0.2)
         float b_btm = sweep_high_to_break - (ta.atr(14) * 0.2)
@@ -196,7 +193,9 @@ is_bull_engulfing = close > open[1] and open < close[1] and close > open and ope
 is_bear_engulfing = close < open[1] and open > close[1] and close < open and open[1] < close[1]
 
 // Hammer
-is_hammer = (high - low) > 3 * (open > close ? open - close : close - open) and (min(open, close) - low) / (high - low) > 0.6
+body_range = math.abs(open - close)
+candle_range = high - low
+is_hammer = candle_range > 0 and candle_range > 3 * body_range and (math.min(open, close) - low) / candle_range > 0.6
 
 if show_engulfing
     if is_bull_engulfing
