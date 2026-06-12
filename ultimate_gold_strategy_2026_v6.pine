@@ -95,8 +95,8 @@ hit_resistance_recent = ta.barssince(high >= last_hi) <= 5
 buy_signal = in_discount and hit_support_recent and is_bull_fvg
 sell_signal = in_premium and hit_resistance_recent and is_bear_fvg
 
-plotshape(buy_signal, "Buy Signal", shape.triangleup, location.belowbar, EMERALD, size = size.small, title = "BUY")
-plotshape(sell_signal, "Sell Signal", shape.triangledown, location.abovebar, ROSE, size = size.small, title = "SELL")
+plotshape(buy_signal, title = "Buy Signal", style = shape.triangleup, location = location.belowbar, color = EMERALD, size = size.small, text = "BUY")
+plotshape(sell_signal, title = "Sell Signal", style = shape.triangledown, location = location.abovebar, color = ROSE, size = size.small, text = "SELL")
 
 alertcondition(buy_signal, "Buy Signal", "Gold Strategy Buy!")
 alertcondition(sell_signal, "Sell Signal", "Gold Strategy Sell!")
