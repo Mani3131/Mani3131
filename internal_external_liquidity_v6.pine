@@ -1,0 +1,173 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Internal & External Liquidity [Discount Trader]", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// --- Colors & Styling ---
+color EMERALD = color.rgb(0, 201, 167)
+color ROSE    = color.rgb(255, 51, 102)
+color GOLD    = color.rgb(255, 184, 0)
+
+// --- Inputs ---
+grp_ext = "External Liquidity (Swings)"
+pivot_left  = input.int(10, "Pivot Left Strength", minval = 1, group = grp_ext, tooltip = "Number of bars to the left for pivot detection")
+pivot_right = input.int(10, "Pivot Right Strength", minval = 1, group = grp_ext, tooltip = "Number of bars to the right for pivot detection")
+show_ext    = input.bool(true, "Show External Liquidity", group = grp_ext)
+
+grp_int = "Internal Liquidity (FVG)"
+min_fvg_size = input.float(0.0, "Min FVG Size (%)", minval = 0.0, step = 0.1, group = grp_int, tooltip = "Minimum gap size as percentage of price to be considered an FVG")
+show_fvg     = input.bool(true, "Show Fair Value Gaps", group = grp_int)
+fvg_transp   = input.int(85, "FVG Transparency", minval = 0, maxval = 100, group = grp_int)
+show_mitigated = input.bool(true, "Show Mitigated FVGs", group = grp_int, tooltip = "If disabled, mitigated FVGs will be hidden from the chart.")
+show_disp    = input.bool(true, "Show Displacement Labels", group = grp_int)
+
+grp_range = "Range & Equilibrium"
+show_range = input.bool(true, "Show Premium/Discount Range", group = grp_range, tooltip = "Draws the range between the most recent swing high and low with a 0.5 equilibrium line.")
+pd_transp = input.int(95, "Background Transparency", minval = 0, maxval = 100, group = grp_range)
+
+// --- Types ---
+type FVG
+    box   element
+    float top
+    float bottom
+    int   start_bar
+    bool  mitigated
+
+type Swing
+    line  element
+    label lbl
+    float price
+    int   bar_index
+    bool  is_high
+
+// --- Global State ---
+var FVG[] bullish_fvgs = array.new<FVG>()
+var FVG[] bearish_fvgs = array.new<FVG>()
+var Swing last_high = na
+var Swing last_low  = na
+
+// --- External Liquidity Detection ---
+ph = ta.pivothigh(high, pivot_left, pivot_right)
+pl = ta.pivotlow(low, pivot_left, pivot_right)
+
+if not na(ph) and show_ext
+    ph_line = line.new(bar_index[pivot_right], ph, bar_index, ph, color = ROSE, width = 1, style = line.style_dashed)
+    ph_label = label.new(bar_index, ph, "External BSL", color = ROSE, style = label.style_label_down, textcolor = color.white, size = size.tiny)
+    last_high := Swing.new(ph_line, ph_label, ph, bar_index[pivot_right], true)
+
+if not na(pl) and show_ext
+    pl_line = line.new(bar_index[pivot_right], pl, bar_index, pl, color = EMERALD, width = 1, style = line.style_dashed)
+    pl_label = label.new(bar_index, pl, "External SSL", color = EMERALD, style = label.style_label_up, textcolor = color.white, size = size.tiny)
+    last_low := Swing.new(pl_line, pl_label, pl, bar_index[pivot_right], false)
+
+// Update external lines
+if not na(last_high)
+    line.set_x2(last_high.element, bar_index)
+    label.set_x(last_high.lbl, bar_index)
+if not na(last_low)
+    line.set_x2(last_low.element, bar_index)
+    label.set_x(last_low.lbl, bar_index)
+
+// --- Internal Liquidity (FVG) Detection ---
+is_bull_fvg = low[0] > high[2]
+is_bear_fvg = high[0] < low[2]
+
+fvg_size_bull = is_bull_fvg ? (low[0] - high[2]) / high[2] * 100 : 0.0
+fvg_size_bear = is_bear_fvg ? (low[2] - high[0]) / low[2] * 100 : 0.0
+
+if is_bull_fvg and fvg_size_bull >= min_fvg_size and show_fvg
+    b = box.new(bar_index[1], low[0], bar_index + 10, high[2], border_color = color.new(EMERALD, 50), bgcolor = color.new(EMERALD, fvg_transp), tooltip = "Bullish Internal Liquidity (FVG)")
+    array.push(bullish_fvgs, FVG.new(b, low[0], high[2], bar_index[1], false))
+    if array.size(bullish_fvgs) > 50
+        array.remove(bullish_fvgs, 0)
+    if show_disp
+        label.new(bar_index[1], low[0], "Displacement", style = label.style_none, textcolor = EMERALD, size = size.tiny)
+
+if is_bear_fvg and fvg_size_bear >= min_fvg_size and show_fvg
+    b = box.new(bar_index[1], low[2], bar_index + 10, high[0], border_color = color.new(ROSE, 50), bgcolor = color.new(ROSE, fvg_transp), tooltip = "Bearish Internal Liquidity (FVG)")
+    array.push(bearish_fvgs, FVG.new(b, low[2], high[0], bar_index[1], false))
+    if array.size(bearish_fvgs) > 50
+        array.remove(bearish_fvgs, 0)
+    if show_disp
+        label.new(bar_index[1], low[2], "Displacement", style = label.style_none, textcolor = ROSE, size = size.tiny)
+
+// --- Mitigation Logic ---
+for i = array.size(bullish_fvgs) - 1 to 0
+    fvg = array.get(bullish_fvgs, i)
+    if not fvg.mitigated
+        box.set_right(fvg.element, bar_index)
+        if low < fvg.bottom
+            fvg.mitigated := true
+            if show_mitigated
+                box.set_bgcolor(fvg.element, color.new(color.gray, 90))
+                box.set_border_color(fvg.element, color.new(color.gray, 70))
+            else
+                box.delete(fvg.element)
+
+for i = array.size(bearish_fvgs) - 1 to 0
+    fvg = array.get(bearish_fvgs, i)
+    if not fvg.mitigated
+        box.set_right(fvg.element, bar_index)
+        if high > fvg.top
+            fvg.mitigated := true
+            if show_mitigated
+                box.set_bgcolor(fvg.element, color.new(color.gray, 90))
+                box.set_border_color(fvg.element, color.new(color.gray, 70))
+            else
+                box.delete(fvg.element)
+
+// --- Range & Equilibrium ---
+var line eq_line = na
+var line range_high_line = na
+var line range_low_line = na
+var label eq_label = na
+var box premium_box = na
+var box discount_box = na
+
+if not na(eq_line)
+    line.set_visible(eq_line, show_range)
+    line.set_visible(range_high_line, show_range)
+    line.set_visible(range_low_line, show_range)
+    label.set_visible(eq_label, show_range)
+    box.set_visible(premium_box, show_range)
+    box.set_visible(discount_box, show_range)
+
+if show_range and not na(last_high) and not na(last_low)
+    price_high = last_high.price
+    price_low  = last_low.price
+    eq = (price_high + price_low) / 2
+
+    start_x = math.min(last_high.bar_index, last_low.bar_index)
+
+    if na(eq_line)
+        eq_line := line.new(start_x, eq, bar_index, eq, color = GOLD, style = line.style_dotted)
+        range_high_line := line.new(start_x, price_high, bar_index, price_high, color = GOLD, width = 1)
+        range_low_line := line.new(start_x, price_low, bar_index, price_low, color = GOLD, width = 1)
+        eq_label := label.new(bar_index, eq, "Equilibrium (0.5)", color = color.new(GOLD, 100), textcolor = GOLD, style = label.style_label_left, size = size.tiny)
+        premium_box := box.new(start_x, price_high, bar_index, eq, border_color = color.new(GOLD, 100), bgcolor = color.new(ROSE, pd_transp))
+        discount_box := box.new(start_x, eq, bar_index, price_low, border_color = color.new(GOLD, 100), bgcolor = color.new(EMERALD, pd_transp))
+    else
+        line.set_xy1(eq_line, start_x, eq)
+        line.set_xy2(eq_line, bar_index, eq)
+
+        line.set_xy1(range_high_line, start_x, price_high)
+        line.set_xy2(range_high_line, bar_index, price_high)
+
+        line.set_xy1(range_low_line, start_x, price_low)
+        line.set_xy2(range_low_line, bar_index, price_low)
+
+        label.set_xy(eq_label, bar_index, eq)
+
+        box.set_lefttop(premium_box, start_x, price_high)
+        box.set_rightbottom(premium_box, bar_index, eq)
+        box.set_lefttop(discount_box, start_x, eq)
+        box.set_rightbottom(discount_box, bar_index, price_low)
+
+// --- Table Information ---
+var table info_table = table.new(position.top_right, 2, 2, border_width = 1)
+if barstate.islast
+    table.cell(info_table, 0, 0, "Internal Liq", bgcolor = color.new(GOLD, 80), text_color = color.white, text_size = size.small)
+    table.cell(info_table, 1, 0, "FVG detected within range", text_color = color.gray, text_size = size.small)
+    table.cell(info_table, 0, 1, "External Liq", bgcolor = color.new(GOLD, 80), text_color = color.white, text_size = size.small)
+    table.cell(info_table, 1, 1, "Major Swing Highs/Lows", text_color = color.gray, text_size = size.small)
