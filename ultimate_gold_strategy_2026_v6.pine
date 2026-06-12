@@ -1,0 +1,102 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Ultimate GOLD Trading Strategy 2026", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// ==========================================
+// Colors & Constants
+// ==========================================
+color EMERALD = color.rgb(0, 201, 167)
+color ROSE    = color.rgb(255, 51, 102)
+
+// ==========================================
+// Inputs
+// ==========================================
+grp_sr = "Support & Resistance"
+sr_lookback = input.int(10, "S/R Lookback", minval = 1, group = grp_sr)
+show_sr = input.bool(true, "Show S/R Levels", group = grp_sr)
+
+grp_fvg = "Fair Value Gaps (FVG)"
+fvg_extend = input.int(10, "FVG Extension (Bars)", minval = 1, group = grp_fvg)
+show_fvg = input.bool(true, "Show FVGs", group = grp_fvg)
+bull_fvg_col = input.color(color.new(EMERALD, 80), "Bullish FVG Color", group = grp_fvg)
+bear_fvg_col = input.color(color.new(ROSE, 80), "Bearish FVG Color", group = grp_fvg)
+
+grp_pd = "Premium & Discount Zones"
+pd_lookback = input.int(100, "Dealing Range Lookback", minval = 1, group = grp_pd)
+show_pd = input.bool(true, "Show P/D Zones", group = grp_pd)
+premium_col = input.color(color.new(color.red, 90), "Premium Color", group = grp_pd)
+discount_col = input.color(color.new(color.green, 90), "Discount Color", group = grp_pd)
+
+// ==========================================
+// Support & Resistance Logic
+// ==========================================
+var float last_hi = na
+var float last_lo = na
+
+ph = ta.pivothigh(high, sr_lookback, sr_lookback)
+pl = ta.pivotlow(low, sr_lookback, sr_lookback)
+
+if not na(ph)
+    last_hi := ph
+if not na(pl)
+    last_lo := pl
+
+plot(show_sr ? last_hi : na, "Resistance", color.new(color.red, 50), 1, plot.style_linebr)
+plot(show_sr ? last_lo : na, "Support", color.new(color.green, 50), 1, plot.style_linebr)
+
+// ==========================================
+// Fair Value Gaps (FVG) Logic
+// ==========================================
+is_bull_fvg = low[0] > high[2]
+is_bear_fvg = high[0] < low[2]
+
+if show_fvg
+    if is_bull_fvg
+        box.new(bar_index[2], low[0], bar_index + fvg_extend, high[2], bgcolor = bull_fvg_col, border_color = color.new(EMERALD, 50))
+    if is_bear_fvg
+        box.new(bar_index[2], low[2], bar_index + fvg_extend, high[0], bgcolor = bear_fvg_col, border_color = color.new(ROSE, 50))
+
+// ==========================================
+// Premium & Discount Zones Logic
+// ==========================================
+range_hi = ta.highest(high, pd_lookback)
+range_lo = ta.lowest(low, pd_lookback)
+equilibrium = (range_hi + range_lo) / 2
+
+var box premium_box = na
+var box discount_box = na
+
+if show_pd
+    if na(premium_box)
+        premium_box := box.new(bar_index, range_hi, bar_index, equilibrium, bgcolor = premium_col, border_style = line.style_none)
+        discount_box := box.new(bar_index, equilibrium, bar_index, range_lo, bgcolor = discount_col, border_style = line.style_none)
+    else
+        box.set_lefttop(premium_box, math.max(0, bar_index - pd_lookback), range_hi)
+        box.set_rightbottom(premium_box, bar_index, equilibrium)
+        box.set_lefttop(discount_box, math.max(0, bar_index - pd_lookback), equilibrium)
+        box.set_rightbottom(discount_box, bar_index, range_lo)
+
+// ==========================================
+// Confluence Signal Logic
+// ==========================================
+// Interpretation:
+// Buy: Price is in Discount zone, hits Support (last_lo), and a Bullish FVG forms.
+// Sell: Price is in Premium zone, hits Resistance (last_hi), and a Bearish FVG forms.
+
+in_discount = close < equilibrium
+in_premium = close > equilibrium
+
+// Check if price "hit" Support/Resistance recently (within last 5 bars)
+hit_support_recent = ta.barssince(low <= last_lo) <= 5
+hit_resistance_recent = ta.barssince(high >= last_hi) <= 5
+
+buy_signal = in_discount and hit_support_recent and is_bull_fvg
+sell_signal = in_premium and hit_resistance_recent and is_bear_fvg
+
+plotshape(buy_signal, "Buy Signal", shape.triangleup, location.belowbar, EMERALD, size = size.small, title = "BUY")
+plotshape(sell_signal, "Sell Signal", shape.triangledown, location.abovebar, ROSE, size = size.small, title = "SELL")
+
+alertcondition(buy_signal, "Buy Signal", "Gold Strategy Buy!")
+alertcondition(sell_signal, "Sell Signal", "Gold Strategy Sell!")
