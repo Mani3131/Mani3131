@@ -1,0 +1,132 @@
+//@version=6
+indicator("Supply & Demand - [Wick] B-Liman", overlay = true, max_boxes_count = 500, max_labels_count = 500)
+
+// --- Inputs ---
+group_detection = "Detection Settings"
+impulsive_threshold = input.float(0.5, "Body-to-Range Ratio Threshold", minval = 0.1, maxval = 1.0, step = 0.1, tooltip = "Minimum ratio of body size to total candle range to be considered impulsive.", group = group_detection)
+atr_length = input.int(14, "ATR Length for Volatility Filter", minval = 1, group = group_detection)
+volatility_mult = input.float(1.2, "Volatility Multiplier", minval = 0.1, step = 0.1, tooltip = "Multiplier applied to ATR to define impulsive moves.", group = group_detection)
+min_base_candles = input.int(1, "Min Base Candles", minval = 1, maxval = 10, group = group_detection)
+max_base_candles = input.int(4, "Max Base Candles", minval = 1, maxval = 10, group = group_detection)
+
+group_visuals = "Visual Settings"
+supply_color = input.color(color.rgb(255, 51, 102, 60), "Supply Zone Color", group = group_visuals)
+demand_color = input.color(color.rgb(0, 201, 167, 60), "Demand Zone Color", group = group_visuals)
+supply_border = input.color(color.rgb(255, 51, 102), "Supply Border Color", group = group_visuals)
+demand_border = input.color(color.rgb(0, 201, 167), "Demand Border Color", group = group_visuals)
+touch_label_size = input.string(size.tiny, "Touch Label Size", options = [size.tiny, size.small, size.normal], group = group_visuals)
+show_mitigated = input.bool(true, "Show Mitigated Zones", group = group_visuals)
+
+// --- Types ---
+type Zone
+    box box_obj
+    float top
+    float bottom
+    int start_bar
+    bool is_supply
+    bool mitigated = false
+    bool touched = false
+
+var Zone[] active_zones = array.new<Zone>()
+
+// --- Logic ---
+float body_size = math.abs(close - open)
+float candle_range = high - low
+float body_ratio = candle_range > 0 ? body_size / candle_range : 0
+float atr = ta.atr(atr_length)
+
+bool is_bull_impulsive = (close > open) and (body_ratio >= impulsive_threshold) and (candle_range > atr * volatility_mult)
+bool is_bear_impulsive = (close < open) and (body_ratio >= impulsive_threshold) and (candle_range > atr * volatility_mult)
+// Base candles have small body-to-range ratio or are relatively small compared to ATR
+bool is_base = (body_ratio < impulsive_threshold) or (candle_range <= atr * 0.8)
+
+// State management for pattern detection
+var int last_bull_impulsive_idx = na
+var int last_bear_impulsive_idx = na
+var int base_start_idx = na
+var int base_count = 0
+
+// Reset or track base candles
+if is_base
+    if na(base_start_idx)
+        base_start_idx := bar_index
+    base_count += 1
+else
+    // If not a base candle, check if a pattern completed
+    if base_count >= min_base_candles and base_count <= max_base_candles
+        // Check for Rally-Base-Drop (Supply)
+        if not na(last_bull_impulsive_idx) and last_bull_impulsive_idx == base_start_idx - 1 and is_bear_impulsive
+            float zone_top = -1.0
+            float zone_bottom = 1.0e10
+            for i = 1 to base_count
+                zone_top := math.max(zone_top, high[i])
+                zone_bottom := math.min(zone_bottom, low[i])
+
+            box b = box.new(base_start_idx, zone_top, bar_index, zone_bottom, border_color = supply_border, bgcolor = supply_color)
+            array.push(active_zones, Zone.new(b, zone_top, zone_bottom, base_start_idx, true))
+
+        // Check for Drop-Base-Rally (Demand)
+        if not na(last_bear_impulsive_idx) and last_bear_impulsive_idx == base_start_idx - 1 and is_bull_impulsive
+            float zone_top = -1.0
+            float zone_bottom = 1.0e10
+            for i = 1 to base_count
+                zone_top := math.max(zone_top, high[i])
+                zone_bottom := math.min(zone_bottom, low[i])
+
+            box b = box.new(base_start_idx, zone_top, bar_index, zone_bottom, border_color = demand_border, bgcolor = demand_color)
+            array.push(active_zones, Zone.new(b, zone_top, zone_bottom, base_start_idx, false))
+
+    // Reset base tracking
+    base_start_idx := na
+    base_count := 0
+
+// Update last impulsive bars
+if is_bull_impulsive
+    last_bull_impulsive_idx := bar_index
+    last_bear_impulsive_idx := na
+if is_bear_impulsive
+    last_bear_impulsive_idx := bar_index
+    last_bull_impulsive_idx := na
+
+// --- Zone Management & Mitigation ---
+if array.size(active_zones) > 0
+    for i = array.size(active_zones) - 1 to 0
+        Zone z = array.get(active_zones, i)
+        if not z.mitigated
+            // Update box right
+            box.set_right(z.box_obj, bar_index)
+
+            // Check for Touch
+            bool price_touched = false
+            if z.is_supply
+                price_touched := high >= z.bottom
+            else
+                price_touched := low <= z.top
+
+            if price_touched and not z.touched
+                z.touched := true
+                string label_text = z.is_supply ? "Supply Touch" : "Demand Touch"
+                color label_color = z.is_supply ? supply_border : demand_border
+                label.new(bar_index, z.is_supply ? z.top : z.bottom, label_text, color = label_color, textcolor = color.white, size = touch_label_size, style = z.is_supply ? label.style_label_down : label.style_label_up)
+
+            // Check for Mitigation (Close through the zone)
+            if z.is_supply
+                if close > z.top
+                    z.mitigated := true
+                    if show_mitigated
+                        box.set_bgcolor(z.box_obj, color.new(supply_color, 90))
+                        box.set_border_style(z.box_obj, line.style_dotted)
+                    else
+                        box.delete(z.box_obj)
+            else
+                if close < z.bottom
+                    z.mitigated := true
+                    if show_mitigated
+                        box.set_bgcolor(z.box_obj, color.new(demand_color, 90))
+                        box.set_border_style(z.box_obj, line.style_dotted)
+                    else
+                        box.delete(z.box_obj)
+
+// Clean up old zones to prevent performance issues
+if array.size(active_zones) > 100
+    array.remove(active_zones, 0)
