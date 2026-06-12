@@ -126,14 +126,15 @@ var box premium_box = na
 var box discount_box = na
 
 if not na(eq_line)
-    line.set_visible(eq_line, show_range)
-    line.set_visible(range_high_line, show_range)
-    line.set_visible(range_low_line, show_range)
-    label.set_visible(eq_label, show_range)
-    box.set_visible(premium_box, show_range)
-    box.set_visible(discount_box, show_range)
+    line.set_color(eq_line, show_range ? GOLD : color.new(GOLD, 100))
+    line.set_color(range_high_line, show_range ? GOLD : color.new(GOLD, 100))
+    line.set_color(range_low_line, show_range ? GOLD : color.new(GOLD, 100))
+    label.set_textcolor(eq_label, show_range ? GOLD : color.new(GOLD, 100))
+    box.set_border_color(premium_box, show_range ? color.new(GOLD, 100) : color.new(GOLD, 100))
+    box.set_bgcolor(premium_box, show_range ? color.new(ROSE, pd_transp) : color.new(ROSE, 100))
+    box.set_bgcolor(discount_box, show_range ? color.new(EMERALD, pd_transp) : color.new(EMERALD, 100))
 
-if show_range and not na(last_high) and not na(last_low)
+if not na(last_high) and not na(last_low)
     price_high = last_high.price
     price_low  = last_low.price
     eq = (price_high + price_low) / 2
@@ -141,12 +142,12 @@ if show_range and not na(last_high) and not na(last_low)
     start_x = math.min(last_high.bar_index, last_low.bar_index)
 
     if na(eq_line)
-        eq_line := line.new(start_x, eq, bar_index, eq, color = GOLD, style = line.style_dotted)
-        range_high_line := line.new(start_x, price_high, bar_index, price_high, color = GOLD, width = 1)
-        range_low_line := line.new(start_x, price_low, bar_index, price_low, color = GOLD, width = 1)
-        eq_label := label.new(bar_index, eq, "Equilibrium (0.5)", color = color.new(GOLD, 100), textcolor = GOLD, style = label.style_label_left, size = size.tiny)
-        premium_box := box.new(start_x, price_high, bar_index, eq, border_color = color.new(GOLD, 100), bgcolor = color.new(ROSE, pd_transp))
-        discount_box := box.new(start_x, eq, bar_index, price_low, border_color = color.new(GOLD, 100), bgcolor = color.new(EMERALD, pd_transp))
+        eq_line := line.new(start_x, eq, bar_index, eq, color = show_range ? GOLD : color.new(GOLD, 100), style = line.style_dotted)
+        range_high_line := line.new(start_x, price_high, bar_index, price_high, color = show_range ? GOLD : color.new(GOLD, 100), width = 1)
+        range_low_line := line.new(start_x, price_low, bar_index, price_low, color = show_range ? GOLD : color.new(GOLD, 100), width = 1)
+        eq_label := label.new(bar_index, eq, "Equilibrium (0.5)", color = color.new(GOLD, 100), textcolor = show_range ? GOLD : color.new(GOLD, 100), style = label.style_label_left, size = size.tiny)
+        premium_box := box.new(start_x, price_high, bar_index, eq, border_color = color.new(GOLD, 100), bgcolor = show_range ? color.new(ROSE, pd_transp) : color.new(ROSE, 100))
+        discount_box := box.new(start_x, eq, bar_index, price_low, border_color = color.new(GOLD, 100), bgcolor = show_range ? color.new(EMERALD, pd_transp) : color.new(EMERALD, 100))
     else
         line.set_xy1(eq_line, start_x, eq)
         line.set_xy2(eq_line, bar_index, eq)
