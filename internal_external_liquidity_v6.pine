@@ -93,29 +93,31 @@ if is_bear_fvg and fvg_size_bear >= min_fvg_size and show_fvg
         label.new(bar_index[1], low[2], "Displacement", style = label.style_none, textcolor = ROSE, size = size.tiny)
 
 // --- Mitigation Logic ---
-for i = array.size(bullish_fvgs) - 1 to 0
-    fvg = array.get(bullish_fvgs, i)
-    if not fvg.mitigated
-        box.set_right(fvg.element, bar_index)
-        if low < fvg.bottom
-            fvg.mitigated := true
-            if show_mitigated
-                box.set_bgcolor(fvg.element, color.new(color.gray, 90))
-                box.set_border_color(fvg.element, color.new(color.gray, 70))
-            else
-                box.delete(fvg.element)
+if array.size(bullish_fvgs) > 0
+    for i = array.size(bullish_fvgs) - 1 to 0
+        fvg = array.get(bullish_fvgs, i)
+        if not fvg.mitigated
+            box.set_right(fvg.element, bar_index)
+            if low < fvg.bottom
+                fvg.mitigated := true
+                if show_mitigated
+                    box.set_bgcolor(fvg.element, color.new(color.gray, 90))
+                    box.set_border_color(fvg.element, color.new(color.gray, 70))
+                else
+                    box.delete(fvg.element)
 
-for i = array.size(bearish_fvgs) - 1 to 0
-    fvg = array.get(bearish_fvgs, i)
-    if not fvg.mitigated
-        box.set_right(fvg.element, bar_index)
-        if high > fvg.top
-            fvg.mitigated := true
-            if show_mitigated
-                box.set_bgcolor(fvg.element, color.new(color.gray, 90))
-                box.set_border_color(fvg.element, color.new(color.gray, 70))
-            else
-                box.delete(fvg.element)
+if array.size(bearish_fvgs) > 0
+    for i = array.size(bearish_fvgs) - 1 to 0
+        fvg = array.get(bearish_fvgs, i)
+        if not fvg.mitigated
+            box.set_right(fvg.element, bar_index)
+            if high > fvg.top
+                fvg.mitigated := true
+                if show_mitigated
+                    box.set_bgcolor(fvg.element, color.new(color.gray, 90))
+                    box.set_border_color(fvg.element, color.new(color.gray, 70))
+                else
+                    box.delete(fvg.element)
 
 // --- Range & Equilibrium ---
 var line eq_line = na
