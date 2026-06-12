@@ -77,7 +77,7 @@ fvg_size_bull = is_bull_fvg ? (low[0] - high[2]) / high[2] * 100 : 0.0
 fvg_size_bear = is_bear_fvg ? (low[2] - high[0]) / low[2] * 100 : 0.0
 
 if is_bull_fvg and fvg_size_bull >= min_fvg_size and show_fvg
-    b = box.new(bar_index[1], low[0], bar_index + 10, high[2], border_color = color.new(EMERALD, 50), bgcolor = color.new(EMERALD, fvg_transp), tooltip = "Bullish Internal Liquidity (FVG)")
+    b = box.new(bar_index[1], low[0], bar_index + 10, high[2], border_color = color.new(EMERALD, 50), bgcolor = color.new(EMERALD, fvg_transp))
     array.push(bullish_fvgs, FVG.new(b, low[0], high[2], bar_index[1], false))
     if array.size(bullish_fvgs) > 50
         array.remove(bullish_fvgs, 0)
@@ -85,7 +85,7 @@ if is_bull_fvg and fvg_size_bull >= min_fvg_size and show_fvg
         label.new(bar_index[1], low[0], "Displacement", style = label.style_none, textcolor = EMERALD, size = size.tiny)
 
 if is_bear_fvg and fvg_size_bear >= min_fvg_size and show_fvg
-    b = box.new(bar_index[1], low[2], bar_index + 10, high[0], border_color = color.new(ROSE, 50), bgcolor = color.new(ROSE, fvg_transp), tooltip = "Bearish Internal Liquidity (FVG)")
+    b = box.new(bar_index[1], low[2], bar_index + 10, high[0], border_color = color.new(ROSE, 50), bgcolor = color.new(ROSE, fvg_transp))
     array.push(bearish_fvgs, FVG.new(b, low[2], high[0], bar_index[1], false))
     if array.size(bearish_fvgs) > 50
         array.remove(bearish_fvgs, 0)
