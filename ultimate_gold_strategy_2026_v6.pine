@@ -70,8 +70,8 @@ var box discount_box = na
 
 if show_pd
     if na(premium_box)
-        premium_box := box.new(bar_index, range_hi, bar_index, equilibrium, bgcolor = premium_col, border_style = line.style_none)
-        discount_box := box.new(bar_index, equilibrium, bar_index, range_lo, bgcolor = discount_col, border_style = line.style_none)
+        premium_box := box.new(bar_index, range_hi, bar_index, equilibrium, bgcolor = premium_col, border_color = na)
+        discount_box := box.new(bar_index, equilibrium, bar_index, range_lo, bgcolor = discount_col, border_color = na)
     else
         box.set_lefttop(premium_box, math.max(0, bar_index - pd_lookback), range_hi)
         box.set_rightbottom(premium_box, bar_index, equilibrium)
