@@ -90,8 +90,8 @@ sweep_bull = is_john_wick_bull and low < target_level_bull and close > target_le
 sweep_bear = is_john_wick_bear and high > target_level_bear and close < target_level_bear
 
 // Signals
-plotshape(show_signals and sweep_bull, "Buy Signal", shape.triangleup, location.belowbar, color.green, size=size.small, title="Buy")
-plotshape(show_signals and sweep_bear, "Sell Signal", shape.triangledown, location.abovebar, color.red, size=size.small, title="Sell")
+plotshape(show_signals and sweep_bull, title="Buy Signal", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text="Buy")
+plotshape(show_signals and sweep_bear, title="Sell Signal", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text="Sell")
 
 // Reset levels if closed beyond (Mitigation)
 if close > last_liq_high
