@@ -1,0 +1,104 @@
+//@version=6
+indicator("Liquidity & Inducement SMC [Risk Taker FX]", shorttitle="L&I SMC", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// --- Inputs ---
+grp_daily = "Daily Range Settings"
+show_daily = input.bool(true, "Show Daily Range Box", group=grp_daily, tooltip="Draws a box representing the Previous Day High and Low.")
+daily_box_color = input.color(color.new(color.gray, 90), "Daily Box Color", group=grp_daily)
+eq_line_style = input.string(line.style_dashed, "Equilibrium Line Style", options=[line.style_solid, line.style_dashed, line.style_dotted], group=grp_daily)
+
+grp_smc = "SMC Structure Settings"
+liq_pivot_len = input.int(10, "Liquidity Pivot Length (Major)", minval=1, group=grp_smc, tooltip="Pivot period for identifying major liquidity levels.")
+ind_pivot_len = input.int(3, "Inducement Pivot Length (Minor)", minval=1, group=grp_smc, tooltip="Pivot period for identifying minor inducement levels.")
+show_liq = input.bool(true, "Show Liquidity Levels", group=grp_smc)
+show_ind = input.bool(true, "Show Inducement Levels", group=grp_smc)
+
+grp_signal = "John Wick Signal Settings"
+wick_ratio_input = input.float(2.0, "John Wick Ratio (Wick/Body)", minval=0.5, step=0.1, group=grp_signal, tooltip="The ratio of wick size to body size required for a John Wick candle.")
+show_signals = input.bool(true, "Show Buy/Sell Signals", group=grp_signal)
+
+// --- Daily Range Calculation ---
+// Using memory recommendation for non-repainting completed HTF data
+[pdh, pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead=barmerge.lookahead_on)
+equilibrium = (pdh + pdl) / 2
+
+// Draw Daily Range
+var box daily_box = box(na)
+var line eq_line = line(na)
+
+if show_daily and ta.change(time("D")) != 0
+    daily_box := box.new(bar_index, pdh, bar_index, pdl, bgcolor=daily_box_color, border_color=color.new(color.gray, 50))
+    eq_line := line.new(bar_index, equilibrium, bar_index, equilibrium, color=color.new(color.gray, 50), style=eq_line_style)
+
+if not na(daily_box)
+    box.set_right(daily_box, bar_index)
+    line.set_x2(eq_line, bar_index)
+
+// --- Structure Detection ---
+float ph_liq = ta.pivothigh(liq_pivot_len, liq_pivot_len)
+float pl_liq = ta.pivotlow(liq_pivot_len, liq_pivot_len)
+float ph_ind = ta.pivothigh(ind_pivot_len, ind_pivot_len)
+float pl_ind = ta.pivotlow(ind_pivot_len, ind_pivot_len)
+
+// State for active levels
+var float last_liq_high = float(na)
+var float last_liq_low = float(na)
+var float last_ind_high = float(na)
+var float last_ind_low = float(na)
+
+// Draw Major Liquidity
+if not na(ph_liq)
+    last_liq_high := ph_liq
+    if show_liq
+        label.new(bar_index[liq_pivot_len], ph_liq, "Liquidity", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.tiny)
+        line.new(bar_index[liq_pivot_len], ph_liq, bar_index, ph_liq, color=color.new(color.red, 50), style=line.style_dashed)
+
+if not na(pl_liq)
+    last_liq_low := pl_liq
+    if show_liq
+        label.new(bar_index[liq_pivot_len], pl_liq, "Liquidity", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.tiny)
+        line.new(bar_index[liq_pivot_len], pl_liq, bar_index, pl_liq, color=color.new(color.green, 50), style=line.style_dashed)
+
+// Draw Minor Inducement
+if not na(ph_ind)
+    last_ind_high := ph_ind
+    if show_ind
+        label.new(bar_index[ind_pivot_len], ph_ind, "Inducement", style=label.style_label_down, color=color.orange, textcolor=color.white, size=size.tiny)
+        line.new(bar_index[ind_pivot_len], ph_ind, bar_index, ph_ind, color=color.new(color.orange, 50), style=line.style_dotted)
+
+if not na(pl_ind)
+    last_ind_low := pl_ind
+    if show_ind
+        label.new(bar_index[ind_pivot_len], pl_ind, "Inducement", style=label.style_label_up, color=color.blue, textcolor=color.white, size=size.tiny)
+        line.new(bar_index[ind_pivot_len], pl_ind, bar_index, pl_ind, color=color.new(color.blue, 50), style=line.style_dotted)
+
+// --- Signal Logic (John Wick) ---
+body_size = math.abs(close - open)
+upper_wick = high - math.max(open, close)
+lower_wick = math.min(open, close) - low
+
+// John Wick detection: wick >= body * ratio
+is_john_wick_bull = lower_wick >= body_size * wick_ratio_input and body_size > 0
+is_john_wick_bear = upper_wick >= body_size * wick_ratio_input and body_size > 0
+
+// Sweep detection: low sweeps level and candle rejects back inside the level
+// Using nz(level, fallback) with a large/small fallback to ignore na levels in min/max
+target_level_bull = math.min(nz(last_liq_low, 1e10), nz(last_ind_low, 1e10), pdl)
+target_level_bear = math.max(nz(last_liq_high, -1e10), nz(last_ind_high, -1e10), pdh)
+
+sweep_bull = is_john_wick_bull and low < target_level_bull and close > target_level_bull
+sweep_bear = is_john_wick_bear and high > target_level_bear and close < target_level_bear
+
+// Signals
+plotshape(show_signals and sweep_bull, title="Buy Signal", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text="Buy")
+plotshape(show_signals and sweep_bear, title="Sell Signal", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text="Sell")
+
+// Reset levels if closed beyond (Mitigation)
+if close > last_liq_high
+    last_liq_high := float(na)
+if close < last_liq_low
+    last_liq_low := float(na)
+if close > last_ind_high
+    last_ind_high := float(na)
+if close < last_ind_low
+    last_ind_low := float(na)
