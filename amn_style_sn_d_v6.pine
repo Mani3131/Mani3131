@@ -34,7 +34,8 @@ var array<Zone> demand_zones = array.new<Zone>()
 
 // --- Utilities ---
 float atr = ta.atr(atr_len)
-bool is_displaced(float body_size) => body_size > atr * displacement_mult
+// Fixed: Removed 'bool' prefix from function declaration
+is_displaced(float body_size) => body_size > atr * displacement_mult
 
 // --- Detection Logic ---
 
@@ -99,7 +100,8 @@ if demand_detected
         label.delete(removed.label_id)
 
 // --- Lifecycle Management (Taps & Mitigation) ---
-manage_zones(array<Zone> zones) =>
+// Fixed: Simplified parameter syntax
+manage_zones(zones) =>
     if zones.size() > 0
         for i = zones.size() - 1 to 0
             Zone z = zones.get(i)
