@@ -74,7 +74,7 @@ if is_new_htf_bar
 
 // Update HTF Boxes and check Mitigation
 if htf_fvgs.size() > 0
-    for i = htf_fvgs.size() - 1 to 0
+    for i = htf_fvgs.size() - 1 to 0 by -1
         FVG fvg = htf_fvgs.get(i)
         if not fvg.is_mitigated
             box.set_right(fvg.box_id, bar_index)
@@ -111,7 +111,7 @@ bool current_bull_sweep = false
 bool current_bear_sweep = false
 
 if htf_pivots.size() > 0
-    for i = htf_pivots.size() - 1 to 0
+    for i = htf_pivots.size() - 1 to 0 by -1
         Pivot p = htf_pivots.get(i)
         if p.is_high
             if high > p.price and close < p.price
@@ -123,16 +123,16 @@ if htf_pivots.size() > 0
                 last_swept_low := low
 
 // Confluence check: Is the sweep happening in/near an HTF FVG?
-if current_bull_sweep
-    for i = htf_fvgs.size() - 1 to 0
+if current_bull_sweep and htf_fvgs.size() > 0
+    for i = htf_fvgs.size() - 1 to 0 by -1
         FVG f = htf_fvgs.get(i)
         if f.is_bullish and not f.is_mitigated
             if low <= f.top and high >= f.bottom
                 bull_sweep_waiting := true
                 break
 
-if current_bear_sweep
-    for i = htf_fvgs.size() - 1 to 0
+if current_bear_sweep and htf_fvgs.size() > 0
+    for i = htf_fvgs.size() - 1 to 0 by -1
         FVG f = htf_fvgs.get(i)
         if not f.is_bullish and not f.is_mitigated
             if high >= f.bottom and low <= f.top
@@ -192,7 +192,7 @@ if ltf_bear_fvg and show_ltf_fvg
 
 // Update LTF Boxes and check Mitigation
 if ltf_fvgs.size() > 0
-    for i = ltf_fvgs.size() - 1 to 0
+    for i = ltf_fvgs.size() - 1 to 0 by -1
         FVG fvg = ltf_fvgs.get(i)
         if not fvg.is_mitigated
             box.set_right(fvg.box_id, bar_index)
@@ -217,8 +217,8 @@ if bear_mss
     stop_loss := last_swept_high
 
 // Entry Logic: Price retests the displacement FVG
-if buy_waiting
-    for i = ltf_fvgs.size() - 1 to 0
+if buy_waiting and ltf_fvgs.size() > 0
+    for i = ltf_fvgs.size() - 1 to 0 by -1
         FVG f = ltf_fvgs.get(i)
         // Check if this FVG was created near the MSS bar (last 5 bars)
         if f.is_bullish and not f.is_mitigated and bar_index - f.start_bar < 5
@@ -230,8 +230,8 @@ if buy_waiting
     if low < stop_loss
         buy_waiting := false
 
-if sell_waiting
-    for i = ltf_fvgs.size() - 1 to 0
+if sell_waiting and ltf_fvgs.size() > 0
+    for i = ltf_fvgs.size() - 1 to 0 by -1
         FVG f = ltf_fvgs.get(i)
         if not f.is_bullish and not f.is_mitigated and bar_index - f.start_bar < 5
             if high >= f.bottom
