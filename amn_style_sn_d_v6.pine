@@ -34,7 +34,6 @@ var array<Zone> demand_zones = array.new<Zone>()
 
 // --- Utilities ---
 float atr = ta.atr(atr_len)
-// Fixed: Removed 'bool' prefix from function declaration
 is_displaced(float body_size) => body_size > atr * displacement_mult
 
 // --- Detection Logic ---
@@ -59,17 +58,17 @@ bool demand_detected = detection_mode == "Pivots" ? is_pivot_demand : is_fvg_dem
 if supply_detected
     Zone new_zone = Zone.new()
     if detection_mode == "Pivots"
-        new_zone.top = high[pivot_len]
-        new_zone.bottom = low[pivot_len]
-        new_zone.start_bar = bar_index - pivot_len
+        new_zone.top := high[pivot_len]
+        new_zone.bottom := low[pivot_len]
+        new_zone.start_bar := bar_index - pivot_len
     else
-        new_zone.top = low[2]
-        new_zone.bottom = high[0]
-        new_zone.start_bar = bar_index - 1
+        new_zone.top := low[2]
+        new_zone.bottom := high[0]
+        new_zone.start_bar := bar_index - 1
 
-    new_zone.is_supply = true
-    new_zone.box_id = box.new(new_zone.start_bar, new_zone.top, bar_index, new_zone.bottom, bgcolor = supply_color, border_color = color.new(color.red, 40))
-    new_zone.label_id = label.new(bar_index, new_zone.top, "Tap: 0", style = label.style_label_down, color = color.red, textcolor = color.white, size = size.tiny)
+    new_zone.is_supply := true
+    new_zone.box_id := box.new(new_zone.start_bar, new_zone.top, bar_index, new_zone.bottom, bgcolor = supply_color, border_color = color.new(color.red, 40))
+    new_zone.label_id := label.new(bar_index, new_zone.top, "Tap: 0", style = label.style_label_down, color = color.red, textcolor = color.white, size = size.tiny)
     supply_zones.unshift(new_zone)
     alert("New Supply Zone Detected (" + detection_mode + ")", alert.freq_once_per_bar)
     if supply_zones.size() > max_zones
@@ -81,17 +80,17 @@ if supply_detected
 if demand_detected
     Zone new_zone = Zone.new()
     if detection_mode == "Pivots"
-        new_zone.top = high[pivot_len]
-        new_zone.bottom = low[pivot_len]
-        new_zone.start_bar = bar_index - pivot_len
+        new_zone.top := high[pivot_len]
+        new_zone.bottom := low[pivot_len]
+        new_zone.start_bar := bar_index - pivot_len
     else
-        new_zone.top = low[0]
-        new_zone.bottom = high[2]
-        new_zone.start_bar = bar_index - 1
+        new_zone.top := low[0]
+        new_zone.bottom := high[2]
+        new_zone.start_bar := bar_index - 1
 
-    new_zone.is_supply = false
-    new_zone.box_id = box.new(new_zone.start_bar, new_zone.top, bar_index, new_zone.bottom, bgcolor = demand_color, border_color = color.new(color.green, 40))
-    new_zone.label_id = label.new(bar_index, new_zone.bottom, "Tap: 0", style = label.style_label_up, color = color.green, textcolor = color.white, size = size.tiny)
+    new_zone.is_supply := false
+    new_zone.box_id := box.new(new_zone.start_bar, new_zone.top, bar_index, new_zone.bottom, bgcolor = demand_color, border_color = color.new(color.green, 40))
+    new_zone.label_id := label.new(bar_index, new_zone.bottom, "Tap: 0", style = label.style_label_up, color = color.green, textcolor = color.white, size = size.tiny)
     demand_zones.unshift(new_zone)
     alert("New Demand Zone Detected (" + detection_mode + ")", alert.freq_once_per_bar)
     if demand_zones.size() > max_zones
@@ -100,7 +99,6 @@ if demand_detected
         label.delete(removed.label_id)
 
 // --- Lifecycle Management (Taps & Mitigation) ---
-// Fixed: Simplified parameter syntax
 manage_zones(zones) =>
     if zones.size() > 0
         for i = zones.size() - 1 to 0
@@ -122,7 +120,7 @@ manage_zones(zones) =>
                     bool enters_zone = low < z.top and high > z.bottom
                     if enters_zone
                         if not z.in_tap
-                            z.taps += 1
+                            z.taps := z.taps + 1
                             z.in_tap := true
                             label.set_text(z.label_id, "Tap: " + str.tostring(z.taps))
                             alert("Zone Tapped: " + (z.is_supply ? "Supply" : "Demand") + " (Tap #" + str.tostring(z.taps) + ")", alert.freq_once_per_bar)
