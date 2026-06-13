@@ -6,6 +6,7 @@ indicator("AMN Style Supply & Demand [6-Tap]", overlay = true, max_boxes_count =
 
 // --- Inputs ---
 grp_detection = "Zone Detection"
+string detection_mode = input.string("Pivots", "Detection Mode", options = ["Pivots", "Imbalances (FVG)"], group = grp_detection, tooltip = "Method used to identify S&D zones.")
 int pivot_len = input.int(5, "Pivot Strength", minval = 1, group = grp_detection, tooltip = "Number of bars on each side for pivot detection.")
 float displacement_mult = input.float(1.5, "Displacement Multiplier", minval = 0.1, group = grp_detection, tooltip = "Candle body must be X times the ATR for displacement (confirms zone strength).")
 int atr_len = input.int(14, "ATR Length", group = grp_detection)
@@ -36,45 +37,66 @@ float atr = ta.atr(atr_len)
 bool is_displaced(float body_size) => body_size > atr * displacement_mult
 
 // --- Detection Logic ---
+
+// 1. Pivot Detection
 float ph = ta.pivothigh(high, pivot_len, pivot_len)
 float pl = ta.pivotlow(low, pivot_len, pivot_len)
 
-// Detection of Supply
-if not na(ph)
-    // Check for displacement in the bar following the pivot high
-    float body_size = math.abs(close[pivot_len-1] - open[pivot_len-1])
-    if is_displaced(body_size) and close[pivot_len-1] < open[pivot_len-1]
-        Zone new_zone = Zone.new()
-        new_zone.top = high[pivot_len]
-        new_zone.bottom = low[pivot_len]
-        new_zone.start_bar = bar_index - pivot_len
-        new_zone.is_supply = true
-        new_zone.box_id = box.new(new_zone.start_bar, new_zone.top, bar_index, new_zone.bottom, bgcolor = supply_color, border_color = color.new(color.red, 40))
-        new_zone.label_id = label.new(bar_index, new_zone.top, "Tap: 0", style = label.style_label_down, color = color.red, textcolor = color.white, size = size.tiny)
-        supply_zones.unshift(new_zone)
-        alert("New Supply Zone Detected", alert.freq_once_per_bar)
-        if supply_zones.size() > max_zones
-            Zone removed = supply_zones.pop()
-            box.delete(removed.box_id)
-            label.delete(removed.label_id)
+bool is_pivot_supply = not na(ph) and is_displaced(math.abs(close[pivot_len-1] - open[pivot_len-1])) and close[pivot_len-1] < open[pivot_len-1]
+bool is_pivot_demand = not na(pl) and is_displaced(math.abs(close[pivot_len-1] - open[pivot_len-1])) and close[pivot_len-1] > open[pivot_len-1]
 
-// Detection of Demand
-if not na(pl)
-    float body_size = math.abs(close[pivot_len-1] - open[pivot_len-1])
-    if is_displaced(body_size) and close[pivot_len-1] > open[pivot_len-1]
-        Zone new_zone = Zone.new()
+// 2. Imbalance Detection (FVG)
+// Bullish FVG: low[0] > high[2]
+// Bearish FVG: high[0] < low[2]
+bool is_fvg_demand = low[0] > high[2] and is_displaced(math.abs(close[1] - open[1]))
+bool is_fvg_supply = high[0] < low[2] and is_displaced(math.abs(close[1] - open[1]))
+
+bool supply_detected = detection_mode == "Pivots" ? is_pivot_supply : is_fvg_supply
+bool demand_detected = detection_mode == "Pivots" ? is_pivot_demand : is_fvg_demand
+
+// Handle Supply Detection
+if supply_detected
+    Zone new_zone = Zone.new()
+    if detection_mode == "Pivots"
         new_zone.top = high[pivot_len]
         new_zone.bottom = low[pivot_len]
         new_zone.start_bar = bar_index - pivot_len
-        new_zone.is_supply = false
-        new_zone.box_id = box.new(new_zone.start_bar, new_zone.top, bar_index, new_zone.bottom, bgcolor = demand_color, border_color = color.new(color.green, 40))
-        new_zone.label_id = label.new(bar_index, new_zone.bottom, "Tap: 0", style = label.style_label_up, color = color.green, textcolor = color.white, size = size.tiny)
-        demand_zones.unshift(new_zone)
-        alert("New Demand Zone Detected", alert.freq_once_per_bar)
-        if demand_zones.size() > max_zones
-            Zone removed = demand_zones.pop()
-            box.delete(removed.box_id)
-            label.delete(removed.label_id)
+    else
+        new_zone.top = low[2]
+        new_zone.bottom = high[0]
+        new_zone.start_bar = bar_index - 1
+
+    new_zone.is_supply = true
+    new_zone.box_id = box.new(new_zone.start_bar, new_zone.top, bar_index, new_zone.bottom, bgcolor = supply_color, border_color = color.new(color.red, 40))
+    new_zone.label_id = label.new(bar_index, new_zone.top, "Tap: 0", style = label.style_label_down, color = color.red, textcolor = color.white, size = size.tiny)
+    supply_zones.unshift(new_zone)
+    alert("New Supply Zone Detected (" + detection_mode + ")", alert.freq_once_per_bar)
+    if supply_zones.size() > max_zones
+        Zone removed = supply_zones.pop()
+        box.delete(removed.box_id)
+        label.delete(removed.label_id)
+
+// Handle Demand Detection
+if demand_detected
+    Zone new_zone = Zone.new()
+    if detection_mode == "Pivots"
+        new_zone.top = high[pivot_len]
+        new_zone.bottom = low[pivot_len]
+        new_zone.start_bar = bar_index - pivot_len
+    else
+        new_zone.top = low[0]
+        new_zone.bottom = high[2]
+        new_zone.start_bar = bar_index - 1
+
+    new_zone.is_supply = false
+    new_zone.box_id = box.new(new_zone.start_bar, new_zone.top, bar_index, new_zone.bottom, bgcolor = demand_color, border_color = color.new(color.green, 40))
+    new_zone.label_id = label.new(bar_index, new_zone.bottom, "Tap: 0", style = label.style_label_up, color = color.green, textcolor = color.white, size = size.tiny)
+    demand_zones.unshift(new_zone)
+    alert("New Demand Zone Detected (" + detection_mode + ")", alert.freq_once_per_bar)
+    if demand_zones.size() > max_zones
+        Zone removed = demand_zones.pop()
+        box.delete(removed.box_id)
+        label.delete(removed.label_id)
 
 // --- Lifecycle Management (Taps & Mitigation) ---
 manage_zones(array<Zone> zones) =>
@@ -119,5 +141,5 @@ manage_zones(demand_zones)
 // --- Information Table ---
 var table info_table = table.new(position.top_right, 2, 1, bgcolor = color.new(color.black, 70), border_width = 1)
 if barstate.islast
-    table.cell(info_table, 0, 0, "AMN Style S&D Active Zones:", text_color = color.white, text_size = size.small)
+    table.cell(info_table, 0, 0, "AMN Style [" + detection_mode + "] Active Zones:", text_color = color.white, text_size = size.small)
     table.cell(info_table, 1, 0, str.tostring(supply_zones.size() + demand_zones.size()), text_color = color.yellow, text_size = size.small)
