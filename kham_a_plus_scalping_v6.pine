@@ -1,0 +1,243 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Kham A+ Scalping Strategy [SMC]", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// --- Instructions ---
+// 1. Set timeframe to 1m.
+// 2. Set HTF timeframe in inputs to 15m (default).
+// 3. Strategy: 15m Sweep -> 1m MSS -> 1m FVG Entry.
+
+// --- Colors ---
+color_bull_fvg = input.color(color.new(color.blue, 85), "Bullish FVG", group = "Visuals")
+color_bear_fvg = input.color(color.new(color.red, 85), "Bearish FVG", group = "Visuals")
+color_mss_bull = input.color(color.green, "MSS Bullish", group = "Visuals")
+color_mss_bear = input.color(color.red, "MSS Bearish", group = "Visuals")
+
+// --- Inputs ---
+htf_tf = input.timeframe("15", "Higher Timeframe")
+pivot_len = input.int(3, "Pivot Length", minval = 1)
+fvg_threshold = input.float(0.0, "FVG Min Size (%)", minval = 0.0, step = 0.1) / 100
+show_htf_fvg = input.bool(true, "Show HTF FVGs")
+show_ltf_fvg = input.bool(true, "Show LTF FVGs")
+show_mss = input.bool(true, "Show MSS Levels")
+
+// --- Types ---
+type FVG
+    float top
+    float bottom
+    int   start_bar
+    box   box_id
+    bool  is_bullish
+    bool  is_mitigated
+
+type Pivot
+    float price
+    int   bar_index
+    bool  is_high
+
+// --- Global Variables ---
+var htf_fvgs = array.new<FVG>()
+var ltf_fvgs = array.new<FVG>()
+
+// --- Logic ---
+f_get_htf_data() =>
+    float ph = ta.pivothigh(high, pivot_len, pivot_len)
+    float pl = ta.pivotlow(low, pivot_len, pivot_len)
+
+    // FVG Detection (Structural)
+    bool is_bull_fvg = low[0] > high[2] and (low[0] - high[2]) > close * fvg_threshold
+    bool is_bear_fvg = high[0] < low[2] and (low[2] - high[0]) > close * fvg_threshold
+
+    float fvg_top = is_bull_fvg ? low[0] : is_bear_fvg ? low[2] : na
+    float fvg_bot = is_bull_fvg ? high[2] : is_bear_fvg ? high[0] : na
+
+    // Return values from the previous completed candle to avoid repainting
+    [ph[1], pl[1], is_bull_fvg[1], is_bear_fvg[1], fvg_top[1], fvg_bot[1]]
+
+[htf_ph, htf_pl, htf_bull_fvg, htf_bear_fvg, htf_fvg_t, htf_fvg_b] = request.security(syminfo.tickerid, htf_tf, f_get_htf_data(), lookahead = barmerge.lookahead_on)
+
+// HTF FVG Management
+is_new_htf_bar = ta.change(time(htf_tf)) != 0
+
+if is_new_htf_bar
+    if htf_bull_fvg and show_htf_fvg
+        htf_fvgs.push(FVG.new(htf_fvg_t, htf_fvg_b, bar_index, box.new(bar_index, htf_fvg_t, bar_index + 1, htf_fvg_b, border_color = na, bgcolor = color_bull_fvg), true, false))
+
+    if htf_bear_fvg and show_htf_fvg
+        htf_fvgs.push(FVG.new(htf_fvg_t, htf_fvg_b, bar_index, box.new(bar_index, htf_fvg_t, bar_index + 1, htf_fvg_b, border_color = na, bgcolor = color_bear_fvg), false, false))
+
+    if htf_fvgs.size() > 100
+        FVG old = htf_fvgs.remove(0)
+        box.delete(old.box_id)
+
+// Update HTF Boxes and check Mitigation
+if htf_fvgs.size() > 0
+    for i = htf_fvgs.size() - 1 to 0
+        FVG fvg = htf_fvgs.get(i)
+        if not fvg.is_mitigated
+            box.set_right(fvg.box_id, bar_index)
+
+            // Mitigation check (Close-based)
+            if (fvg.is_bullish and close < fvg.bottom) or (not fvg.is_bullish and close > fvg.top)
+                fvg.is_mitigated := true
+                box.set_bgcolor(fvg.box_id, color.new(color.gray, 95))
+
+// HTF Pivot Management
+var htf_pivots = array.new<Pivot>()
+if is_new_htf_bar
+    if not na(htf_ph)
+        htf_pivots.push(Pivot.new(htf_ph, bar_index, true))
+    if not na(htf_pl)
+        htf_pivots.push(Pivot.new(htf_pl, bar_index, false))
+
+    if htf_pivots.size() > 50
+        htf_pivots.remove(0)
+
+// --- Sweep Logic ---
+var float last_swept_high = na
+var float last_swept_low = na
+var bool bull_sweep_waiting = false
+var bool bear_sweep_waiting = false
+
+// Reset sweep flags on new HTF bar to avoid carryover (optional, but good for A+ setup)
+if is_new_htf_bar
+    bull_sweep_waiting := false
+    bear_sweep_waiting := false
+
+// Check for sweeps of HTF pivots
+bool current_bull_sweep = false
+bool current_bear_sweep = false
+
+if htf_pivots.size() > 0
+    for i = htf_pivots.size() - 1 to 0
+        Pivot p = htf_pivots.get(i)
+        if p.is_high
+            if high > p.price and close < p.price
+                current_bear_sweep := true
+                last_swept_high := high
+        else
+            if low < p.price and close > p.price
+                current_bull_sweep := true
+                last_swept_low := low
+
+// Confluence check: Is the sweep happening in/near an HTF FVG?
+if current_bull_sweep
+    for i = htf_fvgs.size() - 1 to 0
+        FVG f = htf_fvgs.get(i)
+        if f.is_bullish and not f.is_mitigated
+            if low <= f.top and high >= f.bottom
+                bull_sweep_waiting := true
+                break
+
+if current_bear_sweep
+    for i = htf_fvgs.size() - 1 to 0
+        FVG f = htf_fvgs.get(i)
+        if not f.is_bullish and not f.is_mitigated
+            if high >= f.bottom and low <= f.top
+                bear_sweep_waiting := true
+                break
+
+// Invalidate sweep if price violates the extreme of the sweep candle
+if bull_sweep_waiting and low < last_swept_low
+    bull_sweep_waiting := false
+if bear_sweep_waiting and high > last_swept_high
+    bear_sweep_waiting := false
+
+// Visuals for sweeps
+plotshape(current_bull_sweep, "Bull Sweep", shape.triangleup, location.belowbar, color.green, size = size.small)
+plotshape(current_bear_sweep, "Bear Sweep", shape.triangledown, location.abovebar, color.red, size = size.small)
+
+// --- LTF (MSS) Logic ---
+float ltf_ph = ta.pivothigh(high, 1, 1)
+float ltf_pl = ta.pivotlow(low, 1, 1)
+
+var float last_ltf_ph = na
+var float last_ltf_pl = na
+
+if not na(ltf_ph)
+    last_ltf_ph := ltf_ph
+if not na(ltf_pl)
+    last_ltf_pl := ltf_pl
+
+bool bull_mss = false
+bool bear_mss = false
+
+if bull_sweep_waiting
+    if close > last_ltf_ph
+        bull_mss := true
+        bull_sweep_waiting := false
+        if show_mss
+            line.new(bar_index - 1, last_ltf_ph, bar_index, last_ltf_ph, color = color_mss_bull, width = 2)
+            label.new(bar_index, last_ltf_ph, "MSS", color = color.new(color.black, 100), textcolor = color_mss_bull, style = label.style_label_down)
+
+if bear_sweep_waiting
+    if close < last_ltf_pl
+        bear_mss := true
+        bear_sweep_waiting := false
+        if show_mss
+            line.new(bar_index - 1, last_ltf_pl, bar_index, last_ltf_pl, color = color_mss_bear, width = 2)
+            label.new(bar_index, last_ltf_pl, "MSS", color = color.new(color.black, 100), textcolor = color_mss_bear, style = label.style_label_up)
+
+// --- LTF FVG Logic ---
+bool ltf_bull_fvg = low[0] > high[2]
+bool ltf_bear_fvg = high[0] < low[2]
+
+if ltf_bull_fvg and show_ltf_fvg
+    ltf_fvgs.push(FVG.new(low[0], high[2], bar_index, box.new(bar_index, low[0], bar_index + 1, high[2], border_color = na, bgcolor = color.new(color_bull_fvg, 90)), true, false))
+
+if ltf_bear_fvg and show_ltf_fvg
+    ltf_fvgs.push(FVG.new(low[2], high[0], bar_index, box.new(bar_index, low[2], bar_index + 1, high[0], border_color = na, bgcolor = color.new(color_bear_fvg, 90)), false, false))
+
+// Update LTF Boxes and check Mitigation
+if ltf_fvgs.size() > 0
+    for i = ltf_fvgs.size() - 1 to 0
+        FVG fvg = ltf_fvgs.get(i)
+        if not fvg.is_mitigated
+            box.set_right(fvg.box_id, bar_index)
+            if (fvg.is_bullish and low < fvg.bottom) or (not fvg.is_bullish and high > fvg.top)
+                fvg.is_mitigated := true
+                box.set_bgcolor(fvg.box_id, color.new(color.gray, 95))
+
+    if ltf_fvgs.size() > 100
+        FVG old = ltf_fvgs.remove(0)
+        box.delete(old.box_id)
+
+// --- Confluence Engine (A+ Setup) ---
+var bool buy_waiting = false
+var bool sell_waiting = false
+var float stop_loss = na
+
+if bull_mss
+    buy_waiting := true
+    stop_loss := last_swept_low
+if bear_mss
+    sell_waiting := true
+    stop_loss := last_swept_high
+
+// Entry Logic: Price retests the displacement FVG
+if buy_waiting
+    for i = ltf_fvgs.size() - 1 to 0
+        FVG f = ltf_fvgs.get(i)
+        // Check if this FVG was created near the MSS bar (last 5 bars)
+        if f.is_bullish and not f.is_mitigated and bar_index - f.start_bar < 5
+            if low <= f.top
+                label.new(bar_index, low, "BUY A+", color = color.green, textcolor = color.white, style = label.style_label_up, size = size.normal)
+                buy_waiting := false
+                break
+    // Invalidate if price breaks SL
+    if low < stop_loss
+        buy_waiting := false
+
+if sell_waiting
+    for i = ltf_fvgs.size() - 1 to 0
+        FVG f = ltf_fvgs.get(i)
+        if not f.is_bullish and not f.is_mitigated and bar_index - f.start_bar < 5
+            if high >= f.bottom
+                label.new(bar_index, high, "SELL A+", color = color.red, textcolor = color.white, style = label.style_label_down, size = size.normal)
+                sell_waiting := false
+                break
+    // Invalidate if price breaks SL
+    if high > stop_loss
+        sell_waiting := false
