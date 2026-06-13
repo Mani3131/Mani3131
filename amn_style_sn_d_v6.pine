@@ -1,0 +1,123 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Jules (Software Engineer)
+
+//@version=6
+indicator("AMN Style Supply & Demand [6-Tap]", overlay = true, max_boxes_count = 100, max_labels_count = 100)
+
+// --- Inputs ---
+grp_detection = "Zone Detection"
+int pivot_len = input.int(5, "Pivot Strength", minval = 1, group = grp_detection, tooltip = "Number of bars on each side for pivot detection.")
+float displacement_mult = input.float(1.5, "Displacement Multiplier", minval = 0.1, group = grp_detection, tooltip = "Candle body must be X times the ATR for displacement (confirms zone strength).")
+int atr_len = input.int(14, "ATR Length", group = grp_detection)
+
+grp_display = "Display Settings"
+int max_zones = input.int(10, "Max Active Zones (per type)", minval = 1, maxval = 50, group = grp_display)
+bool show_mitigated = input.bool(true, "Show Mitigated Zones", group = grp_display)
+color supply_color = input.color(color.new(color.red, 80), "Supply Color", group = grp_display)
+color demand_color = input.color(color.new(color.green, 80), "Demand Color", group = grp_display)
+
+// --- Types & Variables ---
+type Zone
+    float top
+    float bottom
+    int start_bar
+    int taps = 0
+    bool is_supply
+    bool active = true
+    bool in_tap = false // State to prevent multiple counts for one entry
+    box box_id
+    label label_id
+
+var array<Zone> supply_zones = array.new<Zone>()
+var array<Zone> demand_zones = array.new<Zone>()
+
+// --- Utilities ---
+float atr = ta.atr(atr_len)
+bool is_displaced(float body_size) => body_size > atr * displacement_mult
+
+// --- Detection Logic ---
+float ph = ta.pivothigh(high, pivot_len, pivot_len)
+float pl = ta.pivotlow(low, pivot_len, pivot_len)
+
+// Detection of Supply
+if not na(ph)
+    // Check for displacement in the bar following the pivot high
+    float body_size = math.abs(close[pivot_len-1] - open[pivot_len-1])
+    if is_displaced(body_size) and close[pivot_len-1] < open[pivot_len-1]
+        Zone new_zone = Zone.new()
+        new_zone.top = high[pivot_len]
+        new_zone.bottom = low[pivot_len]
+        new_zone.start_bar = bar_index - pivot_len
+        new_zone.is_supply = true
+        new_zone.box_id = box.new(new_zone.start_bar, new_zone.top, bar_index, new_zone.bottom, bgcolor = supply_color, border_color = color.new(color.red, 40))
+        new_zone.label_id = label.new(bar_index, new_zone.top, "Tap: 0", style = label.style_label_down, color = color.red, textcolor = color.white, size = size.tiny)
+        supply_zones.unshift(new_zone)
+        alert("New Supply Zone Detected", alert.freq_once_per_bar)
+        if supply_zones.size() > max_zones
+            Zone removed = supply_zones.pop()
+            box.delete(removed.box_id)
+            label.delete(removed.label_id)
+
+// Detection of Demand
+if not na(pl)
+    float body_size = math.abs(close[pivot_len-1] - open[pivot_len-1])
+    if is_displaced(body_size) and close[pivot_len-1] > open[pivot_len-1]
+        Zone new_zone = Zone.new()
+        new_zone.top = high[pivot_len]
+        new_zone.bottom = low[pivot_len]
+        new_zone.start_bar = bar_index - pivot_len
+        new_zone.is_supply = false
+        new_zone.box_id = box.new(new_zone.start_bar, new_zone.top, bar_index, new_zone.bottom, bgcolor = demand_color, border_color = color.new(color.green, 40))
+        new_zone.label_id = label.new(bar_index, new_zone.bottom, "Tap: 0", style = label.style_label_up, color = color.green, textcolor = color.white, size = size.tiny)
+        demand_zones.unshift(new_zone)
+        alert("New Demand Zone Detected", alert.freq_once_per_bar)
+        if demand_zones.size() > max_zones
+            Zone removed = demand_zones.pop()
+            box.delete(removed.box_id)
+            label.delete(removed.label_id)
+
+// --- Lifecycle Management (Taps & Mitigation) ---
+manage_zones(array<Zone> zones) =>
+    if zones.size() > 0
+        for i = zones.size() - 1 to 0
+            Zone z = zones.get(i)
+            if z.active
+                bool mitigated = z.is_supply ? close > z.top : close < z.bottom
+                if mitigated
+                    z.active := false
+                    alert("Zone Mitigated: " + (z.is_supply ? "Supply" : "Demand"), alert.freq_once_per_bar)
+                    if show_mitigated
+                        box.set_right(z.box_id, bar_index)
+                        box.set_bgcolor(z.box_id, color.new(color.gray, 90))
+                        box.set_border_color(z.box_id, color.new(color.gray, 50))
+                        label.delete(z.label_id)
+                    else
+                        box.delete(z.box_id)
+                        label.delete(z.label_id)
+                else
+                    bool enters_zone = low < z.top and high > z.bottom
+                    if enters_zone
+                        if not z.in_tap
+                            z.taps += 1
+                            z.in_tap := true
+                            label.set_text(z.label_id, "Tap: " + str.tostring(z.taps))
+                            alert("Zone Tapped: " + (z.is_supply ? "Supply" : "Demand") + " (Tap #" + str.tostring(z.taps) + ")", alert.freq_once_per_bar)
+                            if z.taps == 6
+                                label.set_color(z.label_id, color.orange)
+                                label.set_size(z.label_id, size.small)
+                                label.set_text(z.label_id, "Tap: 6 (MAX)")
+                                alert("Zone reached 6 Taps: " + (z.is_supply ? "Supply" : "Demand"), alert.freq_once_per_bar)
+                    else
+                        z.in_tap := false
+
+                    box.set_right(z.box_id, bar_index)
+                    label.set_x(z.label_id, bar_index)
+
+manage_zones(supply_zones)
+manage_zones(demand_zones)
+
+// --- Information Table ---
+var table info_table = table.new(position.top_right, 2, 1, bgcolor = color.new(color.black, 70), border_width = 1)
+if barstate.islast
+    table.cell(info_table, 0, 0, "AMN Style S&D Active Zones:", text_color = color.white, text_size = size.small)
+    table.cell(info_table, 1, 0, str.tostring(supply_zones.size() + demand_zones.size()), text_color = color.yellow, text_size = size.small)
