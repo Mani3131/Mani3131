@@ -59,9 +59,9 @@ bool sweep_low  = not na(last_pl) and low < last_pl and close > last_pl
 
 // Visualization for Sweeps
 if show_struc and sweep_high
-    label.new(bar_index, high, "X", color=color.new(color.red, 100), style=label.style_text_down, textcolor=color.red, size=size.tiny)
+    label.new(bar_index, high, "X", color=color.new(color.red, 100), style=label.style_label_down, textcolor=color.red, size=size.tiny)
 if show_struc and sweep_low
-    label.new(bar_index, low, "X", color=color.new(color.green, 100), style=label.style_text_up, textcolor=color.green, size=size.tiny)
+    label.new(bar_index, low, "X", color=color.new(color.green, 100), style=label.style_label_up, textcolor=color.green, size=size.tiny)
 
 // Detect CHoCH & BOS (Market Structure)
 var float swing_high = na
@@ -88,9 +88,9 @@ if bearish_break
 
 // Visualization for BOS
 if show_struc and bullish_bos
-    label.new(bar_index, high, "BOS", color=color.new(color.green, 100), style=label.style_text_down, textcolor=color.green, size=size.tiny)
+    label.new(bar_index, high, "BOS", color=color.new(color.green, 100), style=label.style_label_down, textcolor=color.green, size=size.tiny)
 if show_struc and bearish_bos
-    label.new(bar_index, low, "BOS", color=color.new(color.red, 100), style=label.style_text_up, textcolor=color.red, size=size.tiny)
+    label.new(bar_index, low, "BOS", color=color.new(color.red, 100), style=label.style_label_up, textcolor=color.red, size=size.tiny)
 
 // Detect FVG (Fair Value Gap)
 bool bullish_fvg = low[0] > high[2]
