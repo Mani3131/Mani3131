@@ -197,9 +197,9 @@ plot(final_vah, "Current VAH", color=color.new(color.red, 20), style=plot.style_
 plot(final_poc, "Current POC", color=color.new(color.orange, 20), style=plot.style_linebr, linewidth=3, offset=-vp_lookback)
 plot(final_val, "Current VAL", color=color.new(color.blue, 20), style=plot.style_linebr, linewidth=3, offset=-vp_lookback)
 
-plotshape(is_big_trade, "Big Trade", shape.circle, location.abovebar, color.new(color.purple, 30), size=size.tiny, title="Big Trade Indicator")
-plotshape(is_bull_abs, "Bull Absorption", shape.triangleup, location.belowbar, color.new(color.green, 0), size=size.small, title="Bullish Absorption")
-plotshape(is_bear_abs, "Bear Absorption", shape.triangledown, location.abovebar, color.new(color.red, 0), size=size.small, title="Bearish Absorption")
+plotshape(series=is_big_trade, title="Big Trade Indicator", style=shape.circle, location=location.abovebar, color=color.new(color.purple, 30), size=size.tiny)
+plotshape(series=is_bull_abs, title="Bullish Absorption", style=shape.triangleup, location=location.belowbar, color=color.new(color.green, 0), size=size.small)
+plotshape(series=is_bear_abs, title="Bearish Absorption", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.small)
 
 // Alerts
 alertcondition(long_setup, "Long Setup Detected", "Faiz SMC: Bullish Absorption at key level!")
