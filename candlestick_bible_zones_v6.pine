@@ -1,0 +1,133 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Candlestick Bible Zones [S&D + S&R]", overlay = true, max_boxes_count = 500, max_lines_count = 500)
+
+// --- Inputs ---
+grp_zones = "Zone Settings"
+color_supply  = input.color(color.new(color.red, 80), "Supply Zone Color", group = grp_zones)
+color_demand  = input.color(color.new(color.green, 80), "Demand Zone Color", group = grp_zones)
+color_res     = input.color(color.red, "Resistance Line Color", group = grp_zones)
+color_sup     = input.color(color.green, "Support Line Color", group = grp_zones)
+
+grp_patterns = "Candlestick Bible Patterns"
+color_bull_sig = input.color(color.lime, "Bullish Signal Color", group = grp_patterns)
+color_bear_sig = input.color(color.orange, "Bearish Signal Color", group = grp_patterns)
+
+grp_logic = "Detection Logic"
+pivot_len     = input.int(5, "Pivot Length", minval = 2, group = grp_logic)
+disp_mult     = input.float(1.5, "Displacement Multiplier", minval = 1.0, step = 0.1, group = grp_logic, tooltip = "Required move relative to average body size to define a zone")
+
+// --- S&R Detection ---
+var float[] res_levels = array.new_float()
+var float[] sup_levels = array.new_float()
+var line[] res_lines = array.new_line()
+var line[] sup_lines = array.new_line()
+
+ph = ta.pivothigh(high, pivot_len, pivot_len)
+pl = ta.pivotlow(low, pivot_len, pivot_len)
+
+if not na(ph)
+    array.push(res_levels, ph)
+    ln = line.new(bar_index[pivot_len], ph, bar_index, ph, color = color_res, style = line.style_dashed, extend = extend.right)
+    array.push(res_lines, ln)
+    if array.size(res_levels) > 10
+        array.remove(res_levels, 0)
+        line.delete(array.remove(res_lines, 0))
+
+if not na(pl)
+    array.push(sup_levels, pl)
+    ln = line.new(bar_index[pivot_len], pl, bar_index, pl, color = color_sup, style = line.style_dashed, extend = extend.right)
+    array.push(sup_lines, ln)
+    if array.size(sup_levels) > 10
+        array.remove(sup_levels, 0)
+        line.delete(array.remove(sup_lines, 0))
+
+// --- S&D Detection ---
+var box[] supply_boxes = array.new_box()
+var box[] demand_boxes = array.new_box()
+
+avg_body = ta.sma(math.abs(close - open), 20)
+is_displacement_up = (close > open) and (math.abs(close - open) > avg_body * disp_mult)
+is_displacement_down = (close < open) and (math.abs(close - open) > avg_body * disp_mult)
+
+if is_displacement_up
+    bx = box.new(bar_index[1], high[1], bar_index + 10, low[1], bgcolor = color_demand, border_color = na)
+    array.push(demand_boxes, bx)
+    if array.size(demand_boxes) > 10
+        box.delete(array.remove(demand_boxes, 0))
+
+if is_displacement_down
+    bx = box.new(bar_index[1], high[1], bar_index + 10, low[1], bgcolor = color_supply, border_color = na)
+    array.push(supply_boxes, bx)
+    if array.size(supply_boxes) > 10
+        box.delete(array.remove(supply_boxes, 0))
+
+// Function to update boxes to the right
+if barstate.islast
+    for b in demand_boxes
+        box.set_right(b, bar_index + 5)
+    for b in supply_boxes
+        box.set_right(b, bar_index + 5)
+
+// --- Candlestick Bible Patterns ---
+body_size = math.abs(close - open)
+upper_wick = high - math.max(open, close)
+lower_wick = math.min(open, close) - low
+total_range = high - low
+
+// Pin Bar Detection
+is_bull_pin = lower_wick > body_size * 2 and upper_wick < body_size
+is_bear_pin = upper_wick > body_size * 2 and lower_wick < body_size
+
+// Engulfing Bar Detection
+is_bull_engulfing = close[1] < open[1] and close > open and close >= open[1] and open <= close[1]
+is_bear_engulfing = close[1] > open[1] and close < open and close <= open[1] and open >= close[1]
+
+// Inside Bar Detection
+is_inside_bar = high <= high[1] and low >= low[1]
+// --- Integration Logic (Signals in Zones) ---
+bool in_demand_zone = false
+bool in_supply_zone = false
+bool at_support     = false
+bool at_resistance  = false
+
+// Check boxes (S&D)
+if array.size(demand_boxes) > 0
+    for i = 0 to array.size(demand_boxes) - 1
+        b = array.get(demand_boxes, i)
+        if low <= box.get_top(b) and high >= box.get_bottom(b)
+            in_demand_zone := true
+            break
+
+if array.size(supply_boxes) > 0
+    for i = 0 to array.size(supply_boxes) - 1
+        b = array.get(supply_boxes, i)
+        if high >= box.get_bottom(b) and low <= box.get_top(b)
+            in_supply_zone := true
+            break
+
+// Check lines (S&R)
+if array.size(sup_levels) > 0
+    for level in sup_levels
+        if low <= level * 1.001 and high >= level * 0.999 // 0.1% buffer
+            at_support := true
+            break
+
+if array.size(res_levels) > 0
+    for level in res_levels
+        if high >= level * 0.999 and low <= level * 1.001 // 0.1% buffer
+            at_resistance := true
+            break
+
+// --- Signal Generation ---
+bull_signal = (is_bull_pin or is_bull_engulfing or (is_inside_bar and close > open)) and (in_demand_zone or at_support)
+bear_signal = (is_bear_pin or is_bear_engulfing or (is_inside_bar and close < open)) and (in_supply_zone or at_resistance)
+
+plotshape(bull_signal, "Bullish Entry", shape.triangleup, location.belowbar, color_bull_sig, size = size.small, text = "BUY")
+plotshape(bear_signal, "Bearish Entry", shape.triangledown, location.abovebar, color_bear_sig, size = size.small, text = "SELL")
+
+// Alerts
+alertcondition(bull_signal, "Bullish Signal", "Bullish Candlestick Bible Signal at Zone!")
+alertcondition(bear_signal, "Bearish Signal", "Bearish Candlestick Bible Signal at Zone!")
