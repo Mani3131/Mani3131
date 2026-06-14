@@ -1,0 +1,176 @@
+//@version=6
+indicator("ICT Gems: A+ ICT Entry Checklist [URAH ICT]", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// --- Inputs ---
+grp_sessions = "Killzones"
+london_session = input.session("1000-1900", "London Killzone", group = grp_sessions, tooltip = "UTC+3 standard")
+ny_session     = input.session("1500-1900", "New York Killzone", group = grp_sessions, tooltip = "UTC+3 standard")
+timezone       = input.string("GMT+3", "Timezone", group = grp_sessions)
+
+grp_htf = "Higher Timeframe Levels"
+show_pdh_pdl = input.bool(true, "Show PDH/PDL", group = grp_htf)
+show_session_levels = input.bool(true, "Show Session High/Low", group = grp_htf)
+
+// --- Session Logic ---
+is_in_session(sess) =>
+    not na(time(timeframe.period, sess, timezone))
+
+is_london = is_in_session(london_session)
+is_ny     = is_in_session(ny_session)
+is_killzone = is_london or is_ny
+
+// --- HTF Levels (PDH / PDL) ---
+[pdh, pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+
+plot(show_pdh_pdl ? pdh : na, "PDH", color.new(color.gray, 50), style = plot.style_stepline)
+plot(show_pdh_pdl ? pdl : na, "PDL", color.new(color.gray, 50), style = plot.style_stepline)
+
+// --- Session High/Low Tracking ---
+var float session_high = na
+var float session_low  = na
+
+session_changed = (is_killzone and not is_killzone[1])
+
+if session_changed
+    session_high := high
+    session_low  := low
+else if is_killzone
+    session_high := math.max(nz(session_high, -1e10), high)
+    session_low  := math.min(nz(session_low, 1e10), low)
+
+plot(show_session_levels and is_killzone ? session_high : na, "Session High", color.new(color.blue, 50), style = plot.style_linebr)
+plot(show_session_levels and is_killzone ? session_low : na, "Session Low", color.new(color.blue, 50), style = plot.style_linebr)
+
+// --- Liquidity Sweep Detection ---
+sweep_high = (high > pdh or (is_killzone and high > session_high[1])) and close < pdh and close < session_high[1]
+sweep_low  = (low < pdl or (is_killzone and low < session_low[1])) and close > pdl and close > session_low[1]
+
+var float last_sweep_high = na
+var float last_sweep_low  = na
+var int last_sweep_bar    = 0
+
+if sweep_high
+    last_sweep_high := high
+    last_sweep_bar  := bar_index
+if sweep_low
+    last_sweep_low  := low
+    last_sweep_bar  := bar_index
+
+// --- Market Structure Shift (MSS) ---
+pivot_len = input.int(3, "Pivot Length for MSS", minval = 1)
+ph = ta.pivothigh(high, pivot_len, pivot_len)
+pl = ta.pivotlow(low, pivot_len, pivot_len)
+
+var float last_ph = na
+var float last_pl = na
+if not na(ph)
+    last_ph := ph
+if not na(pl)
+    last_pl := pl
+
+mss_bullish = close > last_ph and close[1] <= last_ph and bar_index - last_sweep_bar < 20 // within 20 bars of sweep
+mss_bearish = close < last_pl and close[1] >= last_pl and bar_index - last_sweep_bar < 20
+
+// Displacement filter (MSS candle must be "impulsive")
+atr = ta.atr(14)
+impulsive = (math.abs(close - open) > 0.5 * atr)
+
+mss_bull_confirmed = mss_bullish and impulsive
+mss_bear_confirmed = mss_bearish and impulsive
+
+plotshape(mss_bull_confirmed, "Bullish MSS", shape.triangleup, location.belowbar, color.green, size = size.small)
+plotshape(mss_bear_confirmed, "Bearish MSS", shape.triangledown, location.abovebar, color.red, size = size.small)
+
+// --- Fair Value Gap (FVG) Detection ---
+type FVG
+    float top
+    float bottom
+    int   start_index
+    bool  is_bullish
+    bool  is_mitigated
+
+var FVG[] fvgs = array.new<FVG>()
+
+// Detect new FVGs (only those formed during or right after MSS)
+is_bull_fvg = low > high[2]
+is_bear_fvg = high < low[2]
+
+if (is_bull_fvg or is_bear_fvg) and (mss_bull_confirmed or mss_bull_confirmed[1] or mss_bear_confirmed or mss_bear_confirmed[1])
+    array.push(fvgs, FVG.new(
+         is_bull_fvg ? low : low[2],
+         is_bull_fvg ? high[2] : high,
+         bar_index - 1,
+         is_bull_fvg,
+         false
+     ))
+    if array.size(fvgs) > 50
+        array.remove(fvgs, 0)
+
+// --- Entry Logic & Risk Management ---
+var float entry_price = na
+var float stop_loss   = na
+var float take_profit = na
+var bool  in_trade    = false
+
+rr_ratio = input.float(3.0, "Risk:Reward Ratio", minval = 1.0)
+
+// Check for retests of the most recent FVG
+if not in_trade and array.size(fvgs) > 0
+    last_fvg = array.get(fvgs, array.size(fvgs) - 1)
+    if not last_fvg.is_mitigated
+        if last_fvg.is_bullish and low <= last_fvg.top and close > last_fvg.bottom
+            entry_price := close
+            stop_loss   := last_sweep_low
+            take_profit := entry_price + (entry_price - stop_loss) * rr_ratio
+            in_trade    := true
+            last_fvg.is_mitigated := true
+        else if not last_fvg.is_bullish and high >= last_fvg.bottom and close < last_fvg.top
+            entry_price := close
+            stop_loss   := last_sweep_high
+            take_profit := entry_price - (stop_loss - entry_price) * rr_ratio
+            in_trade    := true
+            last_fvg.is_mitigated := true
+
+// Trade management (Simplified exit)
+if in_trade
+    if (high >= take_profit and take_profit > entry_price) or (low <= take_profit and take_profit < entry_price)
+        in_trade := false
+        entry_price := na
+    else if (low <= stop_loss and stop_loss < entry_price) or (high >= stop_loss and stop_loss > entry_price)
+        in_trade := false
+        entry_price := na
+
+plotshape(not na(entry_price) and not in_trade[1], "Entry Signal", shape.xcross, location.belowbar, color.white, size = size.tiny)
+
+// --- Visual Annotations ---
+var box[] fvg_boxes = array.new<box>()
+
+if (is_bull_fvg or is_bear_fvg) and (mss_bull_confirmed or mss_bull_confirmed[1] or mss_bear_confirmed or mss_bear_confirmed[1])
+    float box_top    = is_bull_fvg ? low : low[2]
+    float box_bottom = is_bull_fvg ? high[2] : high
+    b = box.new(bar_index - 2, box_top, bar_index, box_bottom,
+         bgcolor = is_bull_fvg ? color.new(color.green, 90) : color.new(color.red, 90),
+         border_color = na)
+    array.push(fvg_boxes, b)
+    if array.size(fvg_boxes) > 50
+        box.delete(array.remove(fvg_boxes, 0))
+
+// Update FVG boxes to the right
+if array.size(fvg_boxes) > 0
+    for i = 0 to array.size(fvg_boxes) - 1
+        box.set_right(array.get(fvg_boxes, i), bar_index)
+
+// Labels for Sweeps and MSS
+if sweep_high
+    label.new(bar_index, high, "Liquidity Sweep", style = label.style_label_down, color = color.red, textcolor = color.white, size = size.tiny)
+if sweep_low
+    label.new(bar_index, low, "Liquidity Sweep", style = label.style_label_up, color = color.green, textcolor = color.white, size = size.tiny)
+
+if mss_bull_confirmed
+    label.new(bar_index, low, "MSS", style = label.style_label_up, color = color.teal, textcolor = color.white, size = size.tiny)
+if mss_bear_confirmed
+    label.new(bar_index, high, "MSS", style = label.style_label_down, color = color.maroon, textcolor = color.white, size = size.tiny)
+
+// Alerts
+if not na(entry_price) and not in_trade[1]
+    alert("A+ ICT Entry Signal: " + (close > stop_loss ? "BUY" : "SELL") + " at " + str.tostring(entry_price), alert.freq_once_per_bar_close)
