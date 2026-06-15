@@ -1,0 +1,174 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © TakePropips (Rebuilt by Jules)
+
+//@version=6
+indicator("TakePropips Trade Signals Rebuild", overlay = true, max_labels_count = 500, max_lines_count = 500)
+
+// --- INPUTS ---
+grp_trend = "Trend Settings"
+ema_fast_len = input.int(9, "EMA Fast Length", minval = 1, group = grp_trend)
+ema_med_len  = input.int(21, "EMA Medium Length", minval = 1, group = grp_trend)
+ema_slow_len = input.int(50, "EMA Slow Length", minval = 1, group = grp_trend)
+
+grp_signals = "Signal Settings"
+atr_period = input.int(14, "ATR Period for SL", minval = 1, group = grp_signals)
+atr_mult   = input.float(1.5, "ATR Multiplier for SL", step = 0.1, group = grp_signals)
+
+grp_tp = "Take Profit Settings"
+tp1_rr = input.float(1.0, "TP1 Risk:Reward", step = 0.1, group = grp_tp)
+tp2_rr = input.float(2.0, "TP2 Risk:Reward", step = 0.1, group = grp_tp)
+tp3_rr = input.float(3.0, "TP3 Risk:Reward", step = 0.1, group = grp_tp)
+
+grp_ui = "UI Settings"
+show_dashboard = input.bool(true, "Show Dashboard", group = grp_ui)
+dashboard_pos  = input.string("Top Right", "Dashboard Position", options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group = grp_ui)
+
+// --- CALCULATIONS ---
+ema_fast = ta.ema(close, ema_fast_len)
+ema_med  = ta.ema(close, ema_med_len)
+ema_slow = ta.ema(close, ema_slow_len)
+atr      = ta.atr(atr_period)
+
+// --- SIGNAL LOGIC ---
+is_uptrend   = ema_fast > ema_med and ema_med > ema_slow
+is_downtrend = ema_fast < ema_med and ema_med < ema_slow
+
+long_signal  = is_uptrend and not is_uptrend[1]
+short_signal = is_downtrend and not is_downtrend[1]
+
+// --- TRADE MANAGEMENT ---
+type Trade
+    float entry
+    float sl
+    float tp1
+    float tp2
+    float tp3
+    int   direction // 1 for Long, -1 for Short
+    bool  active
+    int   start_bar
+
+var active_trade = Trade.new(na, na, na, na, na, na, false, na)
+
+if long_signal and not active_trade.active
+    sl_dist = atr * atr_mult
+    active_trade := Trade.new(close, close - sl_dist, close + sl_dist * tp1_rr, close + sl_dist * tp2_rr, close + sl_dist * tp3_rr, 1, true, bar_index)
+
+if short_signal and not active_trade.active
+    sl_dist = atr * atr_mult
+    active_trade := Trade.new(close, close + sl_dist, close - sl_dist * tp1_rr, close - sl_dist * tp2_rr, close - sl_dist * tp3_rr, -1, true, bar_index)
+
+// --- STATISTICS TRACKING ---
+var int total_signals = 0
+var int wins = 0
+var int losses = 0
+var float total_points = 0.0
+var bool tp1_hit = false
+var bool tp2_hit = false
+var bool tp3_hit = false
+
+if active_trade.active
+    if active_trade.direction == 1 // Long
+        if high >= active_trade.tp1 and not tp1_hit
+            tp1_hit := true
+        if high >= active_trade.tp2 and not tp2_hit
+            tp2_hit := true
+        if high >= active_trade.tp3 and not tp3_hit
+            tp3_hit := true
+            total_points += (active_trade.tp3 - active_trade.entry) / syminfo.mintick
+            wins += 1
+            active_trade.active := false
+            total_signals += 1
+        else if low <= active_trade.sl
+            losses += 1
+            total_points -= (active_trade.entry - active_trade.sl) / syminfo.mintick
+            active_trade.active := false
+            total_signals += 1
+    else // Short
+        if low <= active_trade.tp1 and not tp1_hit
+            tp1_hit := true
+        if low <= active_trade.tp2 and not tp2_hit
+            tp2_hit := true
+        if low <= active_trade.tp3 and not tp3_hit
+            tp3_hit := true
+            total_points += (active_trade.entry - active_trade.tp3) / syminfo.mintick
+            wins += 1
+            active_trade.active := false
+            total_signals += 1
+        else if high >= active_trade.sl
+            losses += 1
+            total_points -= (active_trade.sl - active_trade.entry) / syminfo.mintick
+            active_trade.active := false
+            total_signals += 1
+
+// Reset hits when a new trade starts
+if (long_signal or short_signal) and not (active_trade[1]).active
+    tp1_hit := false
+    tp2_hit := false
+    tp3_hit := false
+
+// --- UI DASHBOARDS ---
+var table_pos = dashboard_pos == "Top Right" ? position.top_right :
+  dashboard_pos == "Top Left" ? position.top_left :
+  dashboard_pos == "Bottom Right" ? position.bottom_right : position.bottom_left
+
+var main_table = table.new(table_pos, 10, 15, bgcolor = color.rgb(13, 17, 23), border_width = 1, border_color = color.gray)
+
+if show_dashboard and barstate.islast
+    // Header
+    table.cell(main_table, 0, 0, "Trade Signals", text_color = color.white, text_size = size.large, text_halign = text.align_left)
+    table.cell(main_table, 0, 1, str.format("{0} {1}", syminfo.ticker, timeframe.period), text_color = color.aqua, text_size = size.normal, text_halign = text.align_left)
+
+    // Signal Status
+    sig_text = long_signal ? "BUY" : short_signal ? "SELL" : active_trade.active ? (active_trade.direction == 1 ? "BUY" : "SELL") : "WAIT"
+    sig_color = (sig_text == "BUY") ? color.green : (sig_text == "SELL") ? color.red : color.gray
+    table.cell(main_table, 0, 2, sig_text + ": " + str.tostring(active_trade.active ? active_trade.entry : close, "#.#####"), text_color = sig_color, text_size = size.normal, text_halign = text.align_left)
+
+    // TP/SL Levels
+    tp1_str = not na(active_trade.tp1) ? str.tostring(active_trade.tp1, "#.#####") : "---"
+    tp2_str = not na(active_trade.tp2) ? str.tostring(active_trade.tp2, "#.#####") : "---"
+    tp3_str = not na(active_trade.tp3) ? str.tostring(active_trade.tp3, "#.#####") : "---"
+    sl_str  = not na(active_trade.sl)  ? str.tostring(active_trade.sl, "#.#####")  : "---"
+
+    table.cell(main_table, 0, 3, "TP1:  " + tp1_str + (tp1_hit ? " ✅" : " ⚪"), text_color = color.white, text_size = size.normal, text_halign = text.align_left)
+    table.cell(main_table, 0, 4, "TP2:  " + tp2_str + (tp2_hit ? " ✅" : " ⚪"), text_color = color.white, text_size = size.normal, text_halign = text.align_left)
+    table.cell(main_table, 0, 5, "TP3:  " + tp3_str + (tp3_hit ? " ✅" : " ⚪"), text_color = color.white, text_size = size.normal, text_halign = text.align_left)
+    table.cell(main_table, 0, 6, "SL:   " + sl_str, text_color = color.white, text_size = size.normal, text_halign = text.align_left)
+
+    // Stats
+    success_rate = total_signals > 0 ? (float(wins) / total_signals) * 100 : 0
+    table.cell(main_table, 0, 8, "Total Signals:  " + str.tostring(total_signals), text_color = color.white, text_size = size.normal, text_halign = text.align_left)
+    table.cell(main_table, 0, 9, "Win / Loss:  " + str.tostring(wins) + " / " + str.tostring(losses), text_color = color.white, text_size = size.normal, text_halign = text.align_left)
+    table.cell(main_table, 0, 10, "Profit:  " + str.tostring(total_points, "#") + " Points", text_color = total_points >= 0 ? color.green : color.red, text_size = size.normal, text_halign = text.align_left)
+    table.cell(main_table, 0, 11, "Success Rate:  " + str.tostring(success_rate, "#") + "%", text_color = success_rate >= 70 ? color.green : color.orange, text_size = size.normal, text_halign = text.align_left)
+
+    table.cell(main_table, 0, 13, "© 2021-2024, TakePropips", text_color = color.gray, text_size = size.tiny, text_halign = text.align_left)
+
+// --- ON-CHART VISUALS ---
+plotshape(long_signal,  style = shape.triangleup,   location = location.belowbar, color = color.green, size = size.small, title = "Buy Arrow")
+plotshape(short_signal, style = shape.triangledown, location = location.abovebar, color = color.red,   size = size.small, title = "Sell Arrow")
+
+// Target Lines and Labels
+var line l_tp1 = na
+var line l_tp2 = na
+var line l_tp3 = na
+var line l_sl  = na
+
+if (long_signal or short_signal) and barstate.isconfirmed
+    line.delete(l_tp1)
+    line.delete(l_tp2)
+    line.delete(l_tp3)
+    line.delete(l_sl)
+
+    l_tp1 := line.new(bar_index, active_trade.tp1, bar_index + 10, active_trade.tp1, color = color.new(color.lime, 50), style = line.style_dotted)
+    l_tp2 := line.new(bar_index, active_trade.tp2, bar_index + 10, active_trade.tp2, color = color.new(color.lime, 30), style = line.style_dotted)
+    l_tp3 := line.new(bar_index, active_trade.tp3, bar_index + 10, active_trade.tp3, color = color.new(color.lime, 10), style = line.style_dotted)
+    l_sl  := line.new(bar_index, active_trade.sl,  bar_index + 10, active_trade.sl,  color = color.new(color.red, 30),  style = line.style_dotted)
+
+// Dynamic labels for TP hits (simulating the +105, +211 in image)
+if barstate.isconfirmed
+    if tp1_hit and not tp1_hit[1]
+        label.new(bar_index, active_trade.tp1, "+TP1", color = color.green, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+    if tp2_hit and not tp2_hit[1]
+        label.new(bar_index, active_trade.tp2, "+TP2", color = color.green, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+    if tp3_hit and not tp3_hit[1]
+        label.new(bar_index, active_trade.tp3, "+TP3", color = color.green, textcolor = color.white, style = label.style_label_down, size = size.tiny)
