@@ -1,0 +1,216 @@
+//@version=6
+indicator("Wyckoff Trading Method [MindMathMoney]", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=500)
+
+// --- User Defined Types ---
+type TradingRange
+    float top = na
+    float bottom = na
+    int start_bar = na
+    int sc_bar = na
+    int bc_bar = na
+    int ar_bar = na
+    int st_bar = na
+    box visual_box = na
+    bool active = false
+    bool is_accumulation = false
+
+// --- Inputs ---
+pivot_len = input.int(5, "Pivot Length", minval=1)
+use_vol_filter = input.bool(false, "Use Volume Filter (SC/BC/Spring/UT)")
+vol_ma_len = input.int(20, "Volume MA Length")
+st_threshold = input.float(20.0, "ST Range Threshold (%)", minval=0.0, maxval=100.0) / 100.0
+invalidation_pct = input.float(2.0, "Invalidation Break (%)", minval=0.1) / 100.0
+ema_len = input.int(10, "Signal Confirmation EMA")
+tr_timeout = input.int(200, "TR Completion Timeout (Bars)", minval=10)
+show_events = input.bool(true, "Show Wyckoff Events (SC, BC, AR, etc.)")
+show_pivots = input.bool(false, "Show All Pivots (Debug)")
+
+// --- Global Variables & Initialization ---
+var TradingRange tr = TradingRange.new()
+vol_ma = ta.sma(volume, vol_ma_len)
+
+// Function to reset range
+reset_tr() =>
+    tr.top := na
+    tr.bottom := na
+    tr.start_bar := na
+    tr.sc_bar := na
+    tr.bc_bar := na
+    tr.ar_bar := na
+    tr.st_bar := na
+    tr.active := false
+    tr.is_accumulation := false
+    if not na(tr.visual_box)
+        box.delete(tr.visual_box)
+        tr.visual_box := na
+
+// --- Logic ---
+ph = ta.pivothigh(pivot_len, pivot_len)
+pl = ta.pivotlow(pivot_len, pivot_len)
+
+plotshape(show_pivots and not na(ph), style=shape.diamond, location=location.abovebar, color=color.gray, size=size.tiny, offset=-pivot_len)
+plotshape(show_pivots and not na(pl), style=shape.diamond, location=location.belowbar, color=color.gray, size=size.tiny, offset=-pivot_len)
+
+// Detection State
+var bool waiting_for_ar = false
+var bool waiting_for_st = false
+
+// Volume Condition
+is_high_vol = not use_vol_filter or (na(volume) or volume == 0 ? true : volume > vol_ma)
+
+// Accumulation Start: Selling Climax (SC)
+if not tr.active and not na(pl) and (not use_vol_filter or is_high_vol[pivot_len])
+    reset_tr()
+    tr.bottom := low[pivot_len]
+    tr.sc_bar := bar_index - pivot_len
+    tr.start_bar := tr.sc_bar
+    tr.is_accumulation := true
+    waiting_for_ar := true
+    tr.active := true
+    if show_events
+        label.new(tr.sc_bar, tr.bottom, "SC", style=label.style_label_up, color=color.red, textcolor=color.white)
+    tr.visual_box := box.new(tr.start_bar, low[pivot_len] * 1.05, bar_index, tr.bottom, border_color=color.gray, bgcolor=color.new(color.gray, 90))
+
+// Distribution Start: Buying Climax (BC)
+if not tr.active and not na(ph) and (not use_vol_filter or is_high_vol[pivot_len])
+    reset_tr()
+    tr.top := high[pivot_len]
+    tr.bc_bar := bar_index - pivot_len
+    tr.start_bar := tr.bc_bar
+    tr.is_accumulation := false
+    waiting_for_ar := true
+    tr.active := true
+    if show_events
+        label.new(tr.bc_bar, tr.top, "BC", style=label.style_label_down, color=color.green, textcolor=color.white)
+    tr.visual_box := box.new(tr.start_bar, tr.top, bar_index, high[pivot_len] * 0.95, border_color=color.gray, bgcolor=color.new(color.gray, 90))
+
+// Automatic Rally/Reaction (AR)
+if waiting_for_ar
+    if tr.is_accumulation
+        // Look for the highest point since SC
+        if not na(ph)
+            tr.top := high[pivot_len]
+            tr.ar_bar := bar_index - pivot_len
+            waiting_for_ar := false
+            waiting_for_st := true
+            if show_events
+                label.new(tr.ar_bar, tr.top, "AR", style=label.style_label_down, color=color.blue, textcolor=color.white)
+            box.set_top(tr.visual_box, tr.top)
+    else
+        // Look for the lowest point since BC
+        if not na(pl)
+            tr.bottom := low[pivot_len]
+            tr.ar_bar := bar_index - pivot_len
+            waiting_for_ar := false
+            waiting_for_st := true
+            if show_events
+                label.new(tr.ar_bar, tr.bottom, "AR", style=label.style_label_up, color=color.blue, textcolor=color.white)
+            box.set_bottom(tr.visual_box, tr.bottom)
+
+// Secondary Test (ST)
+if waiting_for_st and tr.active
+    if tr.is_accumulation
+        if not na(pl) and math.abs(low[pivot_len] - tr.bottom) < (tr.top - tr.bottom) * st_threshold
+            tr.st_bar := bar_index - pivot_len
+            waiting_for_st := false
+            if show_events
+                label.new(tr.st_bar, tr.bottom, "ST", style=label.style_label_up, color=color.orange, textcolor=color.white)
+    else
+        if not na(ph) and math.abs(high[pivot_len] - tr.top) < (tr.top - tr.bottom) * st_threshold
+            tr.st_bar := bar_index - pivot_len
+            waiting_for_st := false
+            if show_events
+                label.new(tr.st_bar, tr.top, "ST", style=label.style_label_down, color=color.orange, textcolor=color.white)
+
+// Range Timeout Logic
+if (waiting_for_ar or waiting_for_st) and bar_index - tr.start_bar > tr_timeout
+    reset_tr()
+    waiting_for_ar := false
+    waiting_for_st := false
+
+// Update Box
+if tr.active and not na(tr.visual_box)
+    box.set_right(tr.visual_box, bar_index)
+
+// --- Spring & Upthrust Logic ---
+var bool spring_detected = false
+var bool upthrust_detected = false
+var int spring_bar = na
+var int upthrust_bar = na
+
+// Spring: Liquidity sweep below TR support
+if tr.active and tr.is_accumulation and not spring_detected
+    if low < tr.bottom
+        // Effort vs Result: High volume but failed break OR Low volume (exhaustion)
+        vol_condition = not use_vol_filter or (na(volume) or volume == 0 ? true : volume > vol_ma or volume < vol_ma * 0.5)
+        // Check if it closes back inside or shows rejection
+        if close > tr.bottom and vol_condition
+            spring_detected := true
+            spring_bar := bar_index
+            if show_events
+                label.new(bar_index, low, "Spring", style=label.style_label_up, color=color.lime, textcolor=color.black)
+
+// Upthrust: Liquidity sweep above TR resistance
+if tr.active and not tr.is_accumulation and not upthrust_detected
+    if high > tr.top
+        // Effort vs Result
+        vol_condition = not use_vol_filter or (na(volume) or volume == 0 ? true : volume > vol_ma or volume < vol_ma * 0.5)
+        // Check if it closes back inside
+        if close < tr.top and vol_condition
+            upthrust_detected := true
+            upthrust_bar := bar_index
+            if show_events
+                label.new(bar_index, high, "UT", style=label.style_label_down, color=color.maroon, textcolor=color.white)
+
+// Invalidate TR if broken significantly without rejection
+if tr.active
+    if tr.is_accumulation and not na(tr.bottom) and close < tr.bottom * (1.0 - invalidation_pct)
+        reset_tr()
+        spring_detected := false
+        waiting_for_st := false
+        waiting_for_ar := false
+    else if not tr.is_accumulation and not na(tr.top) and close > tr.top * (1.0 + invalidation_pct)
+        reset_tr()
+        upthrust_detected := false
+        waiting_for_st := false
+        waiting_for_ar := false
+
+// Reset Spring/Upthrust state when range resets
+if not tr.active
+    spring_detected := false
+    upthrust_detected := false
+
+// Signal Generation
+var bool buy_triggered = false
+var bool sell_triggered = false
+
+buy_confirmation = ta.crossover(close, ta.ema(close, ema_len)) or (close > open and close > tr.bottom and low[1] < tr.bottom)
+sell_confirmation = ta.crossunder(close, ta.ema(close, ema_len)) or (close < open and close < tr.top and high[1] > tr.top)
+
+buy_signal = tr.active and tr.is_accumulation and spring_detected and not buy_triggered and close > tr.bottom and buy_confirmation
+sell_signal = tr.active and not tr.is_accumulation and upthrust_detected and not sell_triggered and close < tr.top and sell_confirmation
+
+if buy_signal
+    buy_triggered := true
+if sell_signal
+    sell_triggered := true
+
+if not tr.active
+    buy_triggered := false
+    sell_triggered := false
+
+// Visualization: Plot Signals
+plotshape(buy_signal, title="BUY Signal", text="BUY", style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.small)
+plotshape(sell_signal, title="SELL Signal", text="SELL", style=shape.triangledown, location=location.abovebar, color=color.maroon, size=size.small)
+
+// Alert Logic
+alertcondition(buy_signal, title="Wyckoff Spring BUY", message="Wyckoff Spring detected: Potential Accumulation Breakout")
+alertcondition(sell_signal, title="Wyckoff Upthrust SELL", message="Wyckoff Upthrust detected: Potential Distribution Breakdown")
+
+// Dashboard (Optional but helpful)
+var table dash = table.new(position.top_right, 2, 2, bgcolor=color.new(color.black, 70), border_width=1)
+if barstate.islast
+    table.cell(dash, 0, 0, "Phase", text_color=color.white)
+    table.cell(dash, 1, 0, tr.active ? (tr.is_accumulation ? "Accumulation" : "Distribution") : "Searching...", text_color=color.white)
+    table.cell(dash, 0, 1, "Event", text_color=color.white)
+    table.cell(dash, 1, 1, spring_detected ? "Spring" : (upthrust_detected ? "UT" : "Testing"), text_color=color.white)
