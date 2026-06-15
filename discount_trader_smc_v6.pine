@@ -1,0 +1,228 @@
+//@version=6
+indicator("Discount Trader SMC Strategy [Jules]", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// --- Colors ---
+color EMERALD = color.rgb(0, 201, 167)
+color ROSE    = color.rgb(255, 51, 102)
+color GOLD    = color.rgb(255, 184, 0)
+color GRAY    = color.gray
+
+// --- Inputs ---
+int pivot_len = input.int(5, "Swing Detection Lookback", minval = 1, tooltip = "Number of bars on each side for pivot detection.")
+float displacement_mult = input.float(1.5, "Displacement ATR Multiplier", minval = 0.1, tooltip = "Candle body must be > ATR * this multiplier to be considered displacement.")
+int zone_limit = input.int(10, "Max Active Zones", minval = 1, maxval = 50)
+bool show_pd_zones = input.bool(true, "Show Premium/Discount Zones")
+
+// --- RSI Inputs ---
+int rsi_len = input.int(14, "RSI Length", minval = 1)
+int rsi_overbought = input.int(70, "RSI Overbought Level", minval = 50, maxval = 100)
+int rsi_oversold = input.int(30, "RSI Oversold Level", minval = 0, maxval = 50)
+
+// --- Types ---
+type Swing
+    float price
+    int index
+    bool isHigh
+
+type Zone
+    box b
+    label l
+    float top
+    float bottom
+    bool isSupply
+    bool isMitigated
+    bool isInducement
+
+// --- Global Variables ---
+var Swing last_high = Swing.new(na, na, true)
+var Swing last_low  = Swing.new(na, na, false)
+var box pd_box = na
+var line eq_line = na
+
+var Zone active_long_zone = na
+var Zone active_short_zone = na
+
+var float atr = na
+atr := ta.atr(14)
+
+var array<Zone> supply_zones = array.new<Zone>()
+var array<Zone> demand_zones = array.new<Zone>()
+
+// --- RSI Calculation ---
+float rsi = ta.rsi(close, rsi_len)
+bool rsi_cross_up = ta.crossover(rsi, rsi_oversold)
+bool rsi_cross_down = ta.crossunder(rsi, rsi_overbought)
+
+// --- Swing Detection ---
+float ph = ta.pivothigh(pivot_len, pivot_len)
+float pl = ta.pivotlow(pivot_len, pivot_len)
+
+if not na(ph)
+    last_high := Swing.new(ph, bar_index[pivot_len], true)
+    label.new(bar_index[pivot_len], ph, "PH", color = ROSE, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+
+if not na(pl)
+    last_low := Swing.new(pl, bar_index[pivot_len], false)
+    label.new(bar_index[pivot_len], pl, "PL", color = EMERALD, textcolor = color.white, style = label.style_label_up, size = size.tiny)
+
+// --- P/D Range Logic ---
+float range_high = last_high.price
+float range_low  = last_low.price
+float equilibrium = (range_high + range_low) / 2
+
+if show_pd_zones and barstate.islast and not na(range_high) and not na(range_low) and not na(last_high.index) and not na(last_low.index)
+    int start_index = math.min(last_high.index, last_low.index)
+
+    if na(pd_box)
+        pd_box := box.new(start_index, range_high, bar_index, range_low,
+             border_color = color.new(GRAY, 50), bgcolor = color.new(GRAY, 90))
+        eq_line := line.new(start_index, equilibrium, bar_index, equilibrium,
+             color = color.new(GRAY, 50), style = line.style_dashed)
+    else
+        box.set_lefttop(pd_box, start_index, range_high)
+        box.set_rightbottom(pd_box, bar_index, range_low)
+        line.set_xy1(eq_line, start_index, equilibrium)
+        line.set_xy2(eq_line, bar_index, equilibrium)
+
+// --- Displacement Detection ---
+bool is_displacement = math.abs(close - open) > nz(atr) * displacement_mult
+
+// --- Inducement (IDM) Logic ---
+// IDM is often the first internal pullback.
+// For simplicity in this v1, we track the most recent 'minor' pivot within the current range.
+float minor_ph = ta.pivothigh(3, 3)
+float minor_pl = ta.pivotlow(3, 3)
+var float current_idm = na
+var bool idm_swept = false
+
+if not na(minor_ph) and minor_ph < range_high and minor_ph > equilibrium
+    current_idm := minor_ph
+    idm_swept := false
+
+if not na(minor_pl) and minor_pl > range_low and minor_pl < equilibrium
+    current_idm := minor_pl
+    idm_swept := false
+
+if not na(current_idm)
+    if (high > current_idm and current_idm > equilibrium) or (low < current_idm and current_idm < equilibrium)
+        idm_swept := true
+
+// --- Order Block (OB) Logic ---
+// Bearish OB: Last bullish candle before bearish displacement
+if close < open and is_displacement and high[1] > high
+    if close < low[1] // Confirmation of shift
+        float top = high[1]
+        float bottom = low[1]
+        bool is_in_premium = top > equilibrium
+        if top < range_high
+            bool is_inducement = not is_in_premium or not idm_swept
+            box b = box.new(bar_index[1], top, bar_index + 10, bottom,
+                 border_color = is_inducement ? color.new(ROSE, 70) : ROSE,
+                 bgcolor = is_inducement ? color.new(ROSE, 95) : color.new(ROSE, 90))
+            label l = na
+            if is_inducement
+                l := label.new(bar_index[1], top, "Fake Supply (Inducement)", color = ROSE, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+            else
+                l := label.new(bar_index[1], top, "High Prob Supply", color = EMERALD, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+            array.push(supply_zones, Zone.new(b, l, top, bottom, true, false, is_inducement))
+
+// Bullish OB: Last bearish candle before bullish displacement
+if close > open and is_displacement and low[1] < low
+    if close > high[1]
+        float top = high[1]
+        float bottom = low[1]
+        bool is_in_discount = bottom < equilibrium
+        if bottom > range_low
+            bool is_inducement = not is_in_discount or not idm_swept
+            box b = box.new(bar_index[1], top, bar_index + 10, bottom,
+                 border_color = is_inducement ? color.new(EMERALD, 70) : EMERALD,
+                 bgcolor = is_inducement ? color.new(EMERALD, 95) : color.new(EMERALD, 90))
+            label l = na
+            if is_inducement
+                l := label.new(bar_index[1], bottom, "Fake Demand (Inducement)", color = ROSE, textcolor = color.white, style = label.style_label_up, size = size.tiny)
+            else
+                l := label.new(bar_index[1], bottom, "High Prob Demand", color = EMERALD, textcolor = color.white, style = label.style_label_up, size = size.tiny)
+            array.push(demand_zones, Zone.new(b, l, top, bottom, false, false, is_inducement))
+
+// --- Zone Mitigation & Management ---
+manage_zones(arr) =>
+    if array.size(arr) > 0
+        int i = array.size(arr) - 1
+        while i >= 0
+            Zone z = array.get(arr, i)
+            if not z.isMitigated
+                box.set_right(z.b, bar_index)
+                if (z.isSupply and high > z.top) or (not z.isSupply and low < z.bottom)
+                    z.isMitigated := true
+                    box.set_bgcolor(z.b, color.new(GRAY, 95))
+                    box.set_border_color(z.b, color.new(GRAY, 80))
+            i := i - 1
+
+        // Limit management
+        while array.size(arr) > zone_limit
+            Zone old = array.remove(arr, 0)
+            box.delete(old.b)
+            label.delete(old.l)
+
+manage_zones(supply_zones)
+manage_zones(demand_zones)
+
+// --- Entry Signals (SMC + RSI) ---
+// Find active zone for RSI confirmation
+if array.size(demand_zones) > 0
+    int i = array.size(demand_zones) - 1
+    while i >= 0
+        Zone z = array.get(demand_zones, i)
+        if not z.isMitigated and not z.isInducement and low <= z.top and high >= z.bottom
+            active_long_zone := z
+            break
+        i := i - 1
+
+if array.size(supply_zones) > 0
+    int i = array.size(supply_zones) - 1
+    while i >= 0
+        Zone z = array.get(supply_zones, i)
+        if not z.isMitigated and not z.isInducement and high >= z.bottom and low <= z.top
+            active_short_zone := z
+            break
+        i := i - 1
+
+// Execution
+if not na(active_long_zone) and rsi_cross_up
+    label.new(bar_index, low, "BUY\n(SMC + RSI)", color = EMERALD, textcolor = color.white, style = label.style_label_up)
+    active_long_zone := na // Clear once triggered
+
+if not na(active_short_zone) and rsi_cross_down
+    label.new(bar_index, high, "SELL\n(SMC + RSI)", color = ROSE, textcolor = color.white, style = label.style_label_down)
+    active_short_zone := na
+
+// --- Exit Signals ---
+bool rsi_ob = rsi >= rsi_overbought
+bool rsi_os = rsi <= rsi_oversold
+
+// Track previous states to avoid spamming exit labels
+var bool was_ob = false
+var bool was_os = false
+
+if rsi_ob and not was_ob
+    label.new(bar_index, high, "EXIT LONG (RSI OB)", color = color.new(GOLD, 50), style = label.style_label_down, size = size.tiny)
+
+if rsi_os and not was_os
+    label.new(bar_index, low, "EXIT SHORT (RSI OS)", color = color.new(GOLD, 50), style = label.style_label_up, size = size.tiny)
+
+was_ob := rsi_ob
+was_os := rsi_os
+
+// --- Visualization (Debug) ---
+
+// Plot IDM
+var line idm_line = na
+var label idm_lbl = na
+if not na(current_idm) and barstate.islast
+    if na(idm_line)
+        idm_line := line.new(bar_index - 10, current_idm, bar_index, current_idm, color = GOLD, style = line.style_dotted)
+        idm_lbl  := label.new(bar_index, current_idm, "IDM", color = GOLD, textcolor = color.black, style = label.style_label_left, size = size.tiny)
+    else
+        line.set_xy1(idm_line, bar_index - 10, current_idm)
+        line.set_xy2(idm_line, bar_index, current_idm)
+        label.set_xy(idm_lbl, bar_index, current_idm)
