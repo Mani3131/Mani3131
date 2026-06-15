@@ -1,0 +1,109 @@
+// @version=6
+indicator("FX Telepath - Ultimate Supply & Demand Indicator", overlay = true, max_boxes_count = 500)
+
+// --- Inputs ---
+group_logic = "Zone Logic"
+body_perc_input = input.int(50, "ERC Body Percentage", minval = 10, maxval = 90, group = group_logic, tooltip = "Percentage of candle body relative to its total span to qualify as an 'Exciting' candle (ERC).")
+max_base_input = input.int(6, "Max Base Candles", minval = 1, maxval = 10, group = group_logic, tooltip = "Maximum number of 'Boring' candles allowed in a base.")
+min_legout_atr = input.float(1.0, "Min Leg-Out ATR Multiplier", minval = 0.0, step = 0.1, group = group_logic, tooltip = "Minimum span of the Leg-Out candle relative to ATR.")
+atr_len = input.int(14, "ATR Length", minval = 1, group = group_logic)
+
+group_visual = "Visuals"
+supply_color = input.color(color.new(color.maroon, 80), "Supply Color", group = group_visual)
+supply_border = input.color(color.maroon, "Supply Border", group = group_visual)
+demand_color = input.color(color.new(color.aqua, 80), "Demand Color", group = group_visual)
+demand_border = input.color(color.aqua, "Demand Border", group = group_visual)
+show_dashboard = input.bool(true, "Show Dashboard", group = group_visual)
+
+// --- Types & Storage ---
+type Zone
+    box   id
+    float proximal
+    float distal
+    int   z_type // Use z_type instead of type
+    bool  is_broken = false
+
+var active_zones = array.new<Zone>()
+
+// --- Candle Classification ---
+float candle_span = high - low
+float candle_body = math.abs(close - open)
+float atr_val = ta.atr(atr_len)
+
+bool is_erc = candle_span > 0 and candle_body >= candle_span * (body_perc_input / 100.0) and candle_span >= atr_val * min_legout_atr
+bool is_boring = not is_erc
+
+// --- Detection Logic ---
+if barstate.isconfirmed and is_erc
+    int base_count = 0
+    float base_high = 0.0
+    float base_low = 1e10
+    float base_prox_high = 0.0
+    float base_prox_low = 1e10
+    int base_start_index = 0
+
+    // Look back for base candles
+    for i = 1 to max_base_input
+        if is_boring[i]
+            base_count += 1
+            base_high := math.max(base_high, high[i])
+            base_low := math.min(base_low, low[i])
+            base_prox_high := math.max(base_prox_high, math.max(open[i], close[i]))
+            base_prox_low := math.min(base_prox_low, math.min(open[i], close[i]))
+            base_start_index := bar_index[i]
+        else
+            break
+
+    // Validate base and create zone
+    if base_count >= 1 and base_count <= max_base_input
+        int z_type_val = close > open ? -1 : 1 // -1 for Demand, 1 for Supply
+        float z_prox = z_type_val == 1 ? base_prox_low : base_prox_high
+        float z_dist = z_type_val == 1 ? base_high : base_low
+        color z_color = z_type_val == 1 ? supply_color : demand_color
+        color z_bcolor = z_type_val == 1 ? supply_border : demand_border
+
+        box b = box.new(base_start_index, z_prox, bar_index, z_dist,
+             bgcolor = z_color, border_color = z_bcolor, extend = extend.none)
+
+        active_zones.push(Zone.new(b, z_prox, z_dist, z_type_val))
+
+// --- Management & Mitigation ---
+if active_zones.size() > 0
+    for i = active_zones.size() - 1 to 0
+        Zone z = active_zones.get(i)
+        bool broken = false
+
+        // Mitigation Check
+        if z.z_type == 1 // Supply
+            if close > z.distal
+                broken := true
+        else // Demand
+            if close < z.distal
+                broken := true
+
+        if broken
+            z.id.delete()
+            active_zones.remove(i)
+        else
+            // Extend box to current bar
+            z.id.set_right(bar_index)
+
+// --- Dashboard ---
+var table board = table.new(position.top_right, 2, 3, border_width = 1, border_color = color.gray)
+if show_dashboard and barstate.islast
+    int s_count = 0
+    int d_count = 0
+    for z in active_zones
+        if z.z_type == 1
+            s_count += 1
+        else
+            d_count += 1
+
+    table.cell(board, 0, 0, "Type", bgcolor = color.gray, text_color = color.white, text_halign = text.align_center)
+    table.cell(board, 1, 0, "Count", bgcolor = color.gray, text_color = color.white, text_halign = text.align_center)
+
+    table.cell(board, 0, 1, "Supply", bgcolor = color.new(color.maroon, 50), text_color = color.white, text_halign = text.align_center)
+    table.cell(board, 1, 1, str.tostring(s_count), bgcolor = color.new(color.maroon, 80), text_color = color.white, text_halign = text.align_center)
+
+    table.cell(board, 0, 2, "Demand", bgcolor = color.new(color.aqua, 50), text_color = color.white, text_halign = text.align_center)
+    table.cell(board, 1, 2, str.tostring(d_count), bgcolor = color.new(color.aqua, 80), text_color = color.white, text_halign = text.align_center)
