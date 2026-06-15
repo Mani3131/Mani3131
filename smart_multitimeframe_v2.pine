@@ -108,7 +108,8 @@ if not na(pl)
 
 // --- FVG Mitigation ---
 if array.size(bull_fvgs) > 0
-    for i = array.size(bull_fvgs) - 1 to 0 by -1
+    i = array.size(bull_fvgs) - 1
+    while i >= 0
         b = array.get(bull_fvgs, i)
         if low < box.get_bottom(b)
             if fvg_hide_mitigated
@@ -116,9 +117,11 @@ if array.size(bull_fvgs) > 0
                 array.remove(bull_fvgs, i)
         else
             box.set_right(b, bar_index)
+        i := i - 1
 
 if array.size(bear_fvgs) > 0
-    for i = array.size(bear_fvgs) - 1 to 0 by -1
+    i = array.size(bear_fvgs) - 1
+    while i >= 0
         b = array.get(bear_fvgs, i)
         if high > box.get_top(b)
             if fvg_hide_mitigated
@@ -126,6 +129,7 @@ if array.size(bear_fvgs) > 0
                 array.remove(bear_fvgs, i)
         else
             box.set_right(b, bar_index)
+        i := i - 1
 
 // --- Dashboards Data ---
 // Info Data
