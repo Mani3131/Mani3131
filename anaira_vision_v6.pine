@@ -32,6 +32,10 @@ plot(show_htf_levels ? pdl : na, "Previous Low", color.new(color.gray, 50), styl
 bull_sweep = low < pdl and close > pdl
 bear_sweep = high > pdh and close < pdh
 
+// Markers for sweeps
+plotshape(bull_sweep, title="Bullish Sweep", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+plotshape(bear_sweep, title="Bearish Sweep", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
+
 var int last_bull_sweep_bar = 0
 var int last_bear_sweep_bar = 0
 var float sweep_low = na
@@ -56,8 +60,8 @@ if not na(ph)
 if not na(pl)
     last_pl_price := pl
 
-var bool bull_mss_active = false
-var bool bear_mss_active = false
+bool bull_mss_active = false
+bool bear_mss_active = false
 
 if is_in_session
     if (bar_index - last_bull_sweep_bar <= max_bars_after_sweep) and close > last_ph_price and close[1] <= last_ph_price
@@ -68,14 +72,11 @@ if is_in_session
         bear_mss_active := true
         last_bear_sweep_bar := 0
 
-plotshape(bull_mss_active, "MSS Bullish", shape.labelup, location.belowbar, color.green, text="MSS", textcolor.white, size=size.small)
-plotshape(bear_mss_active, "MSS Bearish", shape.labeldown, location.abovebar, color.red, text="MSS", textcolor.white, size=size.small)
+plotshape(bull_mss_active, title="MSS Bullish", style=shape.labelup, location=location.belowbar, color=color.green, text="MSS", textcolor=color.white, size=size.small)
+plotshape(bear_mss_active, title="MSS Bearish", style=shape.labeldown, location=location.abovebar, color=color.red, text="MSS", textcolor=color.white, size=size.small)
 
 // --- Fair Value Gap (FVG) and Visualization ---
 var box[] fvg_boxes = array.new_box()
-
-is_bull_fvg = low > high[2]
-is_bear_fvg = high < low[2]
 
 var float entry_fvg_top = na
 var float entry_fvg_bottom = na
@@ -93,7 +94,6 @@ if bull_mss_active
                 b = box.new(bar_index[i+2], entry_fvg_top, bar_index, entry_fvg_bottom, bgcolor=color.new(color.green, 85), border_color=na)
                 array.push(fvg_boxes, b)
             break
-    bull_mss_active := false
 
 if bear_mss_active
     for i = 0 to 5
@@ -106,7 +106,6 @@ if bear_mss_active
                 b = box.new(bar_index[i+2], entry_fvg_top, bar_index, entry_fvg_bottom, bgcolor=color.new(color.red, 85), border_color=na)
                 array.push(fvg_boxes, b)
             break
-    bear_mss_active := false
 
 // Manage FVG box count
 if array.size(fvg_boxes) > max_fvg_boxes
