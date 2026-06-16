@@ -1,0 +1,82 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+strategy("Trade with Pat Ultimate Gold Strategy 2026", overlay=true, margin_long=100, margin_short=100)
+
+// --- Inputs ---
+pivot_len = input.int(5, "Pivot Length")
+fvg_min_size = input.float(0.5, "Min FVG Size (Ticks)", minval=0.0)
+max_retest_bars = input.int(5, "Max Bars Since Retest")
+rr_ratio = input.float(2.0, "Risk:Reward Ratio")
+atr_len = input.int(14, "ATR Length for SL")
+atr_mult = input.float(1.5, "ATR Multiplier for SL")
+
+// --- Support & Resistance (Pivots) ---
+ph = ta.pivothigh(high, pivot_len, pivot_len)
+pl = ta.pivotlow(low, pivot_len, pivot_len)
+
+var float last_ph = na
+var float last_pl = na
+
+if not na(ph)
+    last_ph := ph
+if not na(pl)
+    last_pl := pl
+
+// --- Equilibrium (50% Zone) ---
+equilibrium = (last_ph + last_pl) / 2
+is_discount = close < equilibrium
+is_premium = close > equilibrium
+
+// --- FVG Detection ---
+bullish_fvg = low > high[2] and (low - high[2]) > (fvg_min_size * syminfo.mintick)
+bearish_fvg = high < low[2] and (low[2] - high) > (fvg_min_size * syminfo.mintick)
+
+// --- Retest Detection ---
+var int last_support_retest_bar = -1
+var int last_resistance_retest_bar = -1
+
+// A retest is defined as price touching or coming very close to the last pivot level
+support_retest = not na(last_pl) and low <= last_pl
+resistance_retest = not na(last_ph) and high >= last_ph
+
+if support_retest
+    last_support_retest_bar := bar_index
+if resistance_retest
+    last_resistance_retest_bar := bar_index
+
+support_retested_recently = (bar_index - last_support_retest_bar) <= max_retest_bars and last_support_retest_bar != -1
+resistance_retested_recently = (bar_index - last_resistance_retest_bar) <= max_retest_bars and last_resistance_retest_bar != -1
+
+// --- Strategy Entry ---
+long_condition = is_discount and support_retested_recently and bullish_fvg
+short_condition = is_premium and resistance_retested_recently and bearish_fvg
+
+float atr = ta.atr(atr_len)
+
+if long_condition and strategy.position_size == 0
+    float sl = low - (atr * atr_mult)
+    float tp = close + ((close - sl) * rr_ratio)
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Exit Long", "Long", stop=sl, limit=tp)
+
+if short_condition and strategy.position_size == 0
+    float sl = high + (atr * atr_mult)
+    float tp = close - ((sl - close) * rr_ratio)
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Exit Short", "Short", stop=sl, limit=tp)
+
+// --- Visuals ---
+plot(last_ph, "Resistance", color=color.red, style=plot.style_linebr)
+plot(last_pl, "Support", color=color.green, style=plot.style_linebr)
+plot(equilibrium, "Equilibrium", color=color.gray, style=plot.style_linebr)
+
+plotshape(long_condition, "Buy Signal", shape.labelup, location.belowbar, color.green, text="BUY", textcolor=color.white)
+plotshape(short_condition, "Sell Signal", shape.labeldown, location.abovebar, color.red, text="SELL", textcolor=color.white)
+
+// FVG Boxes (Simplified for now)
+if bullish_fvg
+    box.new(bar_index[1], low, bar_index, high[2], bgcolor=color.new(color.green, 80), border_color=na)
+if bearish_fvg
+    box.new(bar_index[1], low[2], bar_index, high, bgcolor=color.new(color.red, 80), border_color=na)
