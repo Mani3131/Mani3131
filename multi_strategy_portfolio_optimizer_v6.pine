@@ -177,7 +177,7 @@ update_table_cell(int row, StrategyData sd, bool active) =>
     string sig_text = sd.signal == 1 ? "BUY" : sd.signal == -1 ? "SELL" : "WAIT"
     string pf_text = na(sd.profit_factor) ? ">99" : str.format("{0,number,#.##}", sd.profit_factor)
 
-    table.cell(port_table, 0, row, sd.name, text_color = color.white, text_halign = text.halign_left)
+    table.cell(port_table, 0, row, sd.name, text_color = color.white, text_halign = text.align_left)
     table.cell(port_table, 1, row, active ? sig_text : "OFF", text_color = active ? sig_col : color.gray)
     table.cell(port_table, 2, row, str.format("{0,number,#.##}", sd.net_profit), text_color = sd.net_profit >= 0 ? LUX_GREEN : LUX_RED)
     table.cell(port_table, 3, row, str.format("{0,number,#.##}%", sd.win_rate), text_color = color.white)
