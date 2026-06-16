@@ -1,0 +1,198 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © user
+
+//@version=6
+indicator("[UAlgo] v6", overlay = true, max_boxes_count = 500, max_labels_count = 500)
+
+// --- Inputs ---
+grp_ms = "Market Structure"
+lookback_left  = input.int(10, "Pivot Lookback Left", minval = 1, group = grp_ms)
+lookback_right = input.int(10, "Pivot Lookback Right", minval = 1, group = grp_ms)
+show_bos       = input.bool(true, "Show BoS", group = grp_ms)
+show_choch     = input.bool(true, "Show CHoCH", group = grp_ms)
+
+grp_ob = "Order Blocks"
+show_ob        = input.bool(true, "Show Order Blocks", group = grp_ob)
+ob_limit       = input.int(10, "Active OB Limit", minval = 1, maxval = 50, group = grp_ob)
+bull_ob_color  = input.color(color.new(color.teal, 80), "Bullish OB Color", group = grp_ob)
+bear_ob_color  = input.color(color.new(color.red, 80), "Bearish OB Color", group = grp_ob)
+
+grp_signals = "Signals"
+show_signals   = input.bool(true, "Show Buy/Sell Signals", group = grp_signals)
+
+grp_lr = "Linear Regression Channel"
+show_lr        = input.bool(true, "Show LR Channel", group = grp_lr)
+lr_length      = input.int(100, "LR Length", minval = 10, group = grp_lr)
+
+// --- Global Variables / Types ---
+type OB
+    box b
+    float level
+    bool active
+    int dir // 1 for Bullish, -1 for Bearish
+
+var bull_obs = array.new<OB>()
+var bear_obs = array.new<OB>()
+
+// --- Market Structure Logic ---
+var float ph_val = na
+var float pl_val = na
+var bool is_bullish = true
+
+// Break levels
+var float top = na
+var float bot = na
+
+ph = ta.pivothigh(high, lookback_left, lookback_right)
+pl = ta.pivotlow(low, lookback_left, lookback_right)
+
+if not na(ph)
+    ph_val := ph
+    top := ph_val
+    label.new(bar_index[lookback_right], na, "▼", yloc = yloc.abovebar, color = color.red, style = label.style_label_down, textcolor = color.white, size = size.small)
+
+if not na(pl)
+    pl_val := pl
+    bot := pl_val
+    label.new(bar_index[lookback_right], na, "▲", yloc = yloc.belowbar, color = color.green, style = label.style_label_up, textcolor = color.white, size = size.small)
+
+// --- Order Block Logic & Signals ---
+var bool buy_signal = false
+var bool sell_signal = false
+buy_signal := false
+sell_signal := false
+
+if not na(top) and close > top and barstate.isconfirmed
+    string txt = is_bullish ? "BoS" : "CHoCH"
+    if (is_bullish and show_bos) or (not is_bullish and show_choch)
+        label.new(bar_index, na, txt, yloc = yloc.abovebar, color = color.new(color.green, 100), textcolor = color.green, style = label.style_label_down)
+
+    // Create Bullish OB (Last red candle before break)
+    if show_ob
+        int last_red = 0
+        for i = 1 to 50
+            if close[i] < open[i]
+                last_red := i
+                break
+        if last_red > 0
+            box b = box.new(bar_index[last_red], high[last_red], bar_index, low[last_red], bgcolor = bull_ob_color, border_color = color.new(color.teal, 50))
+            array.unshift(bull_obs, OB.new(b, low[last_red], true, 1))
+            if array.size(bull_obs) > ob_limit
+                OB old = array.pop(bull_obs)
+                box.delete(old.b)
+
+    is_bullish := true
+    top := na // CONSUME LEVEL to avoid spam
+    if show_signals
+        buy_signal := true
+
+if not na(bot) and close < bot and barstate.isconfirmed
+    string txt = not is_bullish ? "BoS" : "CHoCH"
+    if (not is_bullish and show_bos) or (is_bullish and show_choch)
+        label.new(bar_index, na, txt, yloc = yloc.belowbar, color = color.new(color.red, 100), textcolor = color.red, style = label.style_label_up)
+
+    // Create Bearish OB (Last green candle before break)
+    if show_ob
+        int last_green = 0
+        for i = 1 to 50
+            if close[i] > open[i]
+                last_green := i
+                break
+        if last_green > 0
+            box b = box.new(bar_index[last_green], high[last_green], bar_index, low[last_green], bgcolor = bear_ob_color, border_color = color.new(color.red, 50))
+            array.unshift(bear_obs, OB.new(b, high[last_green], true, -1))
+            if array.size(bear_obs) > ob_limit
+                OB old = array.pop(bear_obs)
+                box.delete(old.b)
+
+    is_bullish := false
+    bot := na // CONSUME LEVEL to avoid spam
+    if show_signals
+        sell_signal := true
+
+// Update OB boxes and detect mitigation signals
+if show_ob
+    if array.size(bull_obs) > 0
+        for i = 0 to array.size(bull_obs) - 1
+            OB item = array.get(bull_obs, i)
+            if item.active
+                box.set_right(item.b, bar_index)
+                // Signal on first touch/mitigation
+                if low <= box.get_top(item.b) and low >= item.level and barstate.isconfirmed
+                    if show_signals and not buy_signal
+                        buy_signal := true
+                if close < item.level
+                    item.active := false
+                    box.set_bgcolor(item.b, color.new(color.teal, 95))
+
+    if array.size(bear_obs) > 0
+        for i = 0 to array.size(bear_obs) - 1
+            OB item = array.get(bear_obs, i)
+            if item.active
+                box.set_right(item.b, bar_index)
+                // Signal on first touch/mitigation
+                if high >= box.get_bottom(item.b) and high <= item.level and barstate.isconfirmed
+                    if show_signals and not sell_signal
+                        sell_signal := true
+                if close > item.level
+                    item.active := false
+                    box.set_bgcolor(item.b, color.new(color.red, 95))
+
+// Draw Signals
+if buy_signal
+    label.new(bar_index, na, "Buy", yloc = yloc.belowbar, color = color.green, textcolor = color.white, style = label.style_label_up, size = size.small)
+if sell_signal
+    label.new(bar_index, na, "Sell", yloc = yloc.abovebar, color = color.red, textcolor = color.white, style = label.style_label_down, size = size.small)
+
+// --- Visualization (LR Channel, Probability Dashboard) ---
+// Linear Regression Calculation
+lr_val = ta.linreg(close, lr_length, 0)
+slope = lr_val - ta.linreg(close, lr_length, 1)
+
+if show_lr
+    var line lr_mid = line.new(na, na, na, na, color = color.gray, style = line.style_dashed)
+    var line lr_upper = line.new(na, na, na, na, color = color.red)
+    var line lr_lower = line.new(na, na, na, na, color = color.green)
+
+    if barstate.islast
+        float start_price = lr_val - slope * (lr_length - 1)
+        float dev = 0.0
+        for i = 0 to lr_length - 1
+            dev += math.pow(close[i] - (lr_val - slope * i), 2)
+        float stddev = math.sqrt(dev / lr_length)
+
+        line.set_xy1(lr_mid, bar_index - lr_length + 1, start_price)
+        line.set_xy2(lr_mid, bar_index, lr_val)
+
+        line.set_xy1(lr_upper, bar_index - lr_length + 1, start_price + 2 * stddev)
+        line.set_xy2(lr_upper, bar_index, lr_val + 2 * stddev)
+
+        line.set_xy1(lr_lower, bar_index - lr_length + 1, start_price - 2 * stddev)
+        line.set_xy2(lr_lower, bar_index, lr_val - 2 * stddev)
+
+// Probability Dashboard (Table)
+var dashboard = table.new(position.top_right, 2, 3, bgcolor = color.new(color.black, 50), border_width = 1)
+if barstate.islast
+    float dev = 0.0
+    for i = 0 to lr_length - 1
+        dev += math.pow(close[i] - (lr_val - slope * i), 2)
+    float stddev = math.sqrt(dev / lr_length)
+
+    float z_score = (close - lr_val) / (stddev == 0 ? 1 : stddev)
+    float prob = 50 + (z_score * 25)
+    // Secure clamp logic
+    if prob > 100
+        prob := 100
+    if prob < 0
+        prob := 0
+
+    color prob_color = prob > 70 ? color.red : prob < 30 ? color.green : color.gray
+
+    table.cell(dashboard, 0, 0, "UAlgo Trend", text_color = color.white)
+    table.cell(dashboard, 1, 0, is_bullish ? "Bullish" : "Bearish", text_color = is_bullish ? color.green : color.red)
+
+    table.cell(dashboard, 0, 1, "Probability", text_color = color.white)
+    table.cell(dashboard, 1, 1, str.tostring(prob, "#.##") + "%", text_color = prob_color)
+
+    table.cell(dashboard, 0, 2, "Bias Strength", text_color = color.white)
+    table.cell(dashboard, 1, 2, str.tostring(math.abs(z_score), "#.##"), text_color = prob_color)
