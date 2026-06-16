@@ -1,0 +1,266 @@
+// @version=6
+indicator("TradeAxis DOL [Draw on Liquidity] - Mani3131", overlay = true, max_boxes_count = 500, max_lines_count = 500)
+
+// --- Colors ---
+var color C_PDHL = color.new(color.gray, 0)
+var color C_PWHL = color.new(color.blue, 0)
+var color C_PMHL = color.new(color.purple, 0)
+
+// --- Inputs ---
+grp_htf = "HTF Liquidity Levels"
+show_pdhl = input.bool(true, "Show Previous Day High/Low", group = grp_htf)
+show_pwhl = input.bool(true, "Show Previous Week High/Low", group = grp_htf)
+show_pmhl = input.bool(true, "Show Previous Month High/Low", group = grp_htf)
+
+// --- HTF Data Fetching ---
+// Using lookahead_on to get the previous period's high and low correctly on intraday charts.
+[pdh, pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[pwh, pwl] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[pmh, pml] = request.security(syminfo.tickerid, "M", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+
+// --- Plotting HTF Levels ---
+// style_linebr prevents unwanted diagonal lines connecting daily/weekly ranges
+plot(show_pdhl ? pdh : na, "PDH", color = C_PDHL, style = plot.style_linebr)
+plot(show_pdhl ? pdl : na, "PDL", color = C_PDHL, style = plot.style_linebr)
+
+plot(show_pwhl ? pwh : na, "PWH", color = C_PWHL, style = plot.style_linebr)
+plot(show_pwhl ? pwl : na, "PWL", color = C_PWHL, style = plot.style_linebr)
+
+plot(show_pmhl ? pmh : na, "PMH", color = C_PMHL, style = plot.style_linebr)
+plot(show_pmhl ? pml : na, "PML", color = C_PMHL, style = plot.style_linebr)
+
+// --- Equal Highs/Lows (EQH/EQL) ---
+grp_eq = "Equal Highs/Lows"
+show_eqhl = input.bool(true, "Show Equal Highs/Lows", group = grp_eq)
+eqhl_threshold = input.float(0.1, "Threshold (%)", minval = 0, step = 0.05, group = grp_eq, tooltip = "Maximum % difference to consider highs/lows 'equal'")
+eqhl_lookback = input.int(10, "Lookback Bars", minval = 2, group = grp_eq)
+
+f_is_equal(p1, p2, threshold) =>
+    math.abs(p1 - p2) <= (p1 * threshold / 100)
+
+var line eqh_line = na
+var line eql_line = na
+
+if show_eqhl
+    // Check for EQH
+    float max_h = high
+    int max_idx = bar_index
+    bool found_eqh = false
+    for i = 1 to eqhl_lookback
+        if high[i] > max_h
+            max_h := high[i]
+            max_idx := bar_index[i]
+
+    for i = 0 to eqhl_lookback
+        if bar_index[i] != max_idx and f_is_equal(high[i], max_h, eqhl_threshold)
+            found_eqh := true
+            break
+
+    if found_eqh
+        line.delete(eqh_line)
+        eqh_line := line.new(max_idx, max_h, bar_index, max_h, color = color.red, width = 2, style = line.style_dotted)
+        label.new(bar_index, max_h, "EQH", color = color.new(color.red, 100), textcolor = color.red, style = label.style_label_down, size = size.small)
+
+    // Check for EQL
+    float min_l = low
+    int min_idx = bar_index
+    bool found_eql = false
+    for i = 1 to eqhl_lookback
+        if low[i] < min_l
+            min_l := low[i]
+            min_idx := bar_index[i]
+
+    for i = 0 to eqhl_lookback
+        if bar_index[i] != min_idx and f_is_equal(low[i], min_l, eqhl_threshold)
+            found_eql := true
+            break
+
+    if found_eql
+        line.delete(eql_line)
+        eql_line := line.new(min_idx, min_l, bar_index, min_l, color = color.green, width = 2, style = line.style_dotted)
+        label.new(bar_index, min_l, "EQL", color = color.new(color.green, 100), textcolor = color.green, style = label.style_label_up, size = size.small)
+
+// --- Session Highs/Lows (ICT Killzones) ---
+grp_ses = "Sessions (UTC+3)"
+show_sessions = input.bool(true, "Show Session Levels", group = grp_ses)
+asia_sess = input.session("0300-1100", "Asia Session", group = grp_ses)
+lon_sess  = input.session("1000-1300", "London Killzone", group = grp_ses)
+ny_sess   = input.session("1500-1800", "NY Killzone", group = grp_ses)
+
+f_get_session_levels(sess_str) =>
+    var float s_h = na
+    var float s_l = na
+    var int s_start = na
+    in_session = not na(time(timeframe.period, sess_str, "GMT+3"))
+    is_new_session = in_session and not in_session[1]
+
+    if is_new_session
+        s_h := high
+        s_l := low
+        s_start := bar_index
+    else if in_session
+        s_h := math.max(s_h, high)
+        s_l := math.min(s_l, low)
+
+    [s_h, s_l, in_session, is_new_session]
+
+[asia_h, asia_l, in_asia, new_asia] = f_get_session_levels(asia_sess)
+[lon_h, lon_l, in_lon, new_lon] = f_get_session_levels(lon_sess)
+[ny_h, ny_l, in_ny, new_ny] = f_get_session_levels(ny_sess)
+
+// Plotting session levels (only when session is over or active)
+var line asia_h_line = na
+var line asia_l_line = na
+if show_sessions and not na(asia_h)
+    line.delete(asia_h_line)
+    line.delete(asia_l_line)
+    asia_h_line := line.new(bar_index - 1, asia_h, bar_index, asia_h, extend = extend.right, color = color.new(color.yellow, 50))
+    asia_l_line := line.new(bar_index - 1, asia_l, bar_index, asia_l, extend = extend.right, color = color.new(color.yellow, 50))
+
+var line lon_h_line = na
+var line lon_l_line = na
+if show_sessions and not na(lon_h)
+    line.delete(lon_h_line)
+    line.delete(lon_l_line)
+    lon_h_line := line.new(bar_index - 1, lon_h, bar_index, lon_h, extend = extend.right, color = color.new(color.blue, 50))
+    lon_l_line := line.new(bar_index - 1, lon_l, bar_index, lon_l, extend = extend.right, color = color.new(color.blue, 50))
+
+var line ny_h_line = na
+var line ny_l_line = na
+if show_sessions and not na(ny_h)
+    line.delete(ny_h_line)
+    line.delete(ny_l_line)
+    ny_h_line := line.new(bar_index - 1, ny_h, bar_index, ny_h, extend = extend.right, color = color.new(color.red, 50))
+    ny_l_line := line.new(bar_index - 1, ny_l, bar_index, ny_l, extend = extend.right, color = color.new(color.red, 50))
+
+// --- Fair Value Gaps (FVG) ---
+grp_fvg = "Fair Value Gaps"
+show_fvg = input.bool(true, "Show FVGs", group = grp_fvg)
+fvg_transp = input.int(85, "Transparency", minval = 0, maxval = 100, group = grp_fvg)
+fvg_extend = input.int(10, "Extend (bars)", minval = 0, group = grp_fvg)
+
+var box[] bullish_fvgs = array.new_box()
+var box[] bearish_fvgs = array.new_box()
+
+if show_fvg
+    // Bullish FVG (low > high[2])
+    if low > high[2]
+        fvg_box = box.new(bar_index[2], low, bar_index + fvg_extend, high[2],
+          bgcolor = color.new(color.green, fvg_transp), border_color = na)
+        array.push(bullish_fvgs, fvg_box)
+        if array.size(bullish_fvgs) > 20
+            box.delete(array.shift(bullish_fvgs))
+
+    // Bearish FVG (high < low[2])
+    if high < low[2]
+        fvg_box = box.new(bar_index[2], low[2], bar_index + fvg_extend, high,
+          bgcolor = color.new(color.red, fvg_transp), border_color = na)
+        array.push(bearish_fvgs, fvg_box)
+        if array.size(bearish_fvgs) > 20
+            box.delete(array.shift(bearish_fvgs))
+
+// --- Market Structure (BOS/MSS) ---
+grp_ms = "Market Structure"
+show_ms = input.bool(true, "Show BOS/MSS", group = grp_ms)
+pivot_len = input.int(3, "Pivot Length", minval = 1, group = grp_ms)
+
+var float last_ph = na
+var float last_pl = na
+var int last_ph_idx = na
+var int last_pl_idx = na
+var string bias = "Neutral"
+
+ph = ta.pivothigh(pivot_len, pivot_len)
+pl = ta.pivotlow(pivot_len, pivot_len)
+
+if not na(ph)
+    last_ph := ph
+    last_ph_idx := bar_index[pivot_len]
+if not na(pl)
+    last_pl := pl
+    last_pl_idx := bar_index[pivot_len]
+
+// BOS/MSS Detection
+if show_ms
+    if close > last_ph and not na(last_ph)
+        label.new(bar_index, high, "BOS", color = color.new(color.green, 100), textcolor = color.green, style = label.style_label_down, size = size.small)
+        bias := "Bullish"
+        last_ph := na // Reset after break
+
+    if close < last_pl and not na(last_pl)
+        label.new(bar_index, low, "BOS", color = color.new(color.red, 100), textcolor = color.red, style = label.style_label_up, size = size.small)
+        bias := "Bearish"
+        last_pl := na // Reset after break
+
+// --- Bias & DOL Engine ---
+grp_dol = "Bias & DOL Engine"
+show_dol = input.bool(true, "Show DOL Target", group = grp_dol)
+
+// Calculate Trend for additional Bias confluence (EMA 50/200)
+ema50 = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+trend_bullish = ema50 > ema200
+trend_bearish = ema50 < ema200
+
+final_bias = bias == "Bullish" and trend_bullish ? "Strong Bullish" :
+             bias == "Bearish" and trend_bearish ? "Strong Bearish" :
+             bias != "Neutral" ? bias :
+             trend_bullish ? "Bullish (Trend)" :
+             trend_bearish ? "Bearish (Trend)" : "Neutral"
+
+// Identify next DOL target
+float dol_target = na
+string dol_label = ""
+
+if final_bias == "Strong Bullish" or final_bias == "Bullish" or final_bias == "Bullish (Trend)"
+    // Bullish target: Nearest major high above price
+    // Priority: EQH > PDH > PWH > PMH
+    if not na(eqh_line) and line.get_y1(eqh_line) > close
+        dol_target := line.get_y1(eqh_line)
+        dol_label := "EQH"
+    else if pdh > close
+        dol_target := pdh
+        dol_label := "PDH"
+    else if pwh > close
+        dol_target := pwh
+        dol_label := "PWH"
+    else if pmh > close
+        dol_target := pmh
+        dol_label := "PMH"
+else if final_bias == "Strong Bearish" or final_bias == "Bearish" or final_bias == "Bearish (Trend)"
+    // Bearish target: Nearest major low below price
+    // Priority: EQL > PDL > PWL > PML
+    if not na(eql_line) and line.get_y1(eql_line) < close
+        dol_target := line.get_y1(eql_line)
+        dol_label := "EQL"
+    else if pdl < close
+        dol_target := pdl
+        dol_label := "PDL"
+    else if pwl < close
+        dol_target := pwl
+        dol_label := "PWL"
+    else if pml < close
+        dol_target := pml
+        dol_label := "PML"
+
+// Visualization of DOL
+var line dol_visual = na
+var label dol_tag = na
+
+if show_dol and not na(dol_target)
+    line.delete(dol_visual)
+    label.delete(dol_tag)
+    dol_color = (final_bias == "Strong Bullish" or final_bias == "Bullish" or final_bias == "Bullish (Trend)") ? color.green : color.red
+    dol_visual := line.new(bar_index, dol_target, bar_index + 20, dol_target, color = dol_color, width = 3, style = line.style_arrow_right)
+    dol_tag := label.new(bar_index + 20, dol_target, "DOL: " + dol_label, color = dol_color, textcolor = color.white, style = label.style_label_left, size = size.normal)
+
+// Dashboard
+var table dashboard = table.new(position.top_right, 2, 2, bgcolor = color.new(color.black, 50), border_width = 1)
+if barstate.islast
+    table.cell(dashboard, 0, 0, "Bias", text_color = color.white)
+    bias_color = (final_bias == "Strong Bullish" or final_bias == "Bullish" or final_bias == "Bullish (Trend)") ? color.green :
+                 (final_bias == "Strong Bearish" or final_bias == "Bearish" or final_bias == "Bearish (Trend)") ? color.red : color.gray
+    table.cell(dashboard, 1, 0, final_bias, text_color = bias_color)
+
+    table.cell(dashboard, 0, 1, "Target (DOL)", text_color = color.white)
+    table.cell(dashboard, 1, 1, dol_label == "" ? "Searching..." : dol_label, text_color = color.yellow)
