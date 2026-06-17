@@ -1,0 +1,190 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Fabio Valentini: IVB & Auction Market Strategy", overlay=true, max_bars_back=5000)
+
+// ==========================================
+// Fabio Valentini Strategy (Auction Market Theory)
+// ==========================================
+// Based on Fabio Valentini's "IVB" (Initial Value Breakout) models.
+// Logic:
+// 1. Initial Balance (IB): The High/Low of the first hour of the session.
+// 2. Previous Day Levels (PDH, PDL, PDPOC): Institutional reference points.
+// 3. CVD (Cumulative Volume Delta): Used for confirmation/divergence.
+// 4. Model 1: Trend Breakout of IB with CVD support.
+// 5. Model 2: Failed Breakout (Fakeout) of IB/Levels with CVD divergence.
+
+// ==========================================
+// INPUTS
+// ==========================================
+grp_session = "Session & Initial Balance"
+sess_input  = input.session("0930-1600", "Trading Session", group=grp_session)
+sess_tz     = input.string("America/New_York", "Timezone", group=grp_session)
+ib_duration = input.int(60, "IB Duration (minutes)", minval=1, group=grp_session)
+
+grp_levels  = "Previous Day Levels"
+show_pd     = input.bool(true, "Show Previous Day Levels", group=grp_levels)
+pd_color    = input.color(color.new(color.gray, 50), "PD Levels Color", group=grp_levels)
+
+grp_cvd     = "Order Flow (CVD Approximation)"
+cvd_mult    = input.float(1.0, "CVD Multiplier", minval=0.1, group=grp_cvd)
+
+// ==========================================
+// SESSION & INITIAL BALANCE (IB)
+// ==========================================
+t_session = time(timeframe.period, sess_input, sess_tz)
+is_new_session = not na(t_session) and na(t_session[1])
+
+var float ib_high = na
+var float ib_low  = na
+var int   ib_start_time = 0
+
+if is_new_session
+    ib_high := high
+    ib_low  := low
+    ib_start_time := time
+else if not na(t_session)
+    // Check if within IB duration
+    if (time - ib_start_time) <= (ib_duration * 60 * 1000)
+        ib_high := math.max(ib_high, high)
+        ib_low  := math.min(ib_low, low)
+
+// Plot IB Levels
+plot_ib_h = plot(not na(t_session) ? ib_high : na, "IB High", color=color.new(#673ab7, 30), style=plot.style_linebr, linewidth=2)
+plot_ib_l = plot(not na(t_session) ? ib_low : na, "IB Low", color=color.new(#673ab7, 30), style=plot.style_linebr, linewidth=2)
+fill(plot_ib_h, plot_ib_l, color=color.new(#673ab7, 95), title="IB Zone")
+
+// ==========================================
+// PREVIOUS DAY LEVELS
+// ==========================================
+// Using [1] index inside request.security ensures we fetch the completed previous day's data
+[pdh, pdl, pdc] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1]])
+
+plot(show_pd ? pdh : na, "PDH", color=pd_color, style=plot.style_linebr)
+plot(show_pd ? pdl : na, "PDL", color=pd_color, style=plot.style_linebr)
+plot(show_pd ? pdc : na, "PD Close", color=color.new(color.orange, 50), style=plot.style_linebr)
+
+// ==========================================
+// CVD APPROXIMATION
+// ==========================================
+// Proxy for Delta: ((Close - Low) - (High - Close)) / (High - Low) * Volume
+// This represents the net aggressive buying/selling pressure within the candle.
+float candle_range = high - low
+float delta = (candle_range != 0 ? ((close - low) - (high - close)) / candle_range * volume : 0) * cvd_mult
+
+var float cvd = 0.0
+if is_new_session
+    cvd := delta
+else if not na(t_session)
+    cvd := cvd + delta
+
+// CVD Plotting (Optional visual check)
+// plot(cvd, "CVD", color=cvd > 0 ? color.green : color.red, display=display.none)
+
+// ==========================================
+// MODEL LOGIC
+// ==========================================
+
+// --- State Tracking ---
+bool is_after_ib = not na(t_session) and (time - ib_start_time) > (ib_duration * 60 * 1000)
+var float ib_break_high = na
+var float ib_break_low  = na
+
+// Reset breakout tracking on new session
+if is_new_session
+    ib_break_high := na
+    ib_break_low  := na
+
+// Detect IB Breakout (Close outside IB)
+bool breakout_high = is_after_ib and close > ib_high and close[1] <= ib_high
+bool breakout_low  = is_after_ib and close < ib_low and close[1] >= ib_low
+
+// Detect Level Rejection (Wick above/below then close inside)
+bool rejected_high = is_after_ib and high > ib_high and close <= ib_high
+bool rejected_low  = is_after_ib and low < ib_low and close >= ib_low
+
+// --- CVD Divergence ---
+// Simple Divergence: Price makes a new high relative to IB, but CVD is not making a new session high.
+var float session_cvd_high = -1e10
+var float session_cvd_low  = 1e10
+
+if is_new_session
+    session_cvd_high := delta
+    session_cvd_low  := delta
+else if not na(t_session)
+    session_cvd_high := math.max(session_cvd_high, cvd)
+    session_cvd_low  := math.min(session_cvd_low, cvd)
+
+bool cvd_bear_div = is_after_ib and high > ib_high and cvd < session_cvd_high[1]
+bool cvd_bull_div = is_after_ib and low < ib_low and cvd > session_cvd_low[1]
+
+// ==========================================
+// FABIO'S MODELS
+// ==========================================
+
+// --- Model 1: Trend Continuation (Breakout) ---
+// Condition: Price breaks out of IB with CVD momentum (CVD making new highs/lows)
+bool model1_buy  = breakout_high and cvd >= session_cvd_high
+bool model1_sell = breakout_low  and cvd <= session_cvd_low
+
+// --- Model 2: Mean Reversion (Failed Breakout) ---
+// Condition: Price wicks outside IB/PDH/PDL but closes back inside with CVD divergence
+bool model2_sell = rejected_high and (cvd_bear_div or close < open)
+bool model2_buy  = rejected_low  and (cvd_bull_div or close > open)
+
+// ==========================================
+// PLOTTING SIGNALS
+// ==========================================
+plotshape(model1_buy,  "Model 1 Buy",  shape.triangleup,   location.belowbar, color.new(color.green, 0), size=size.small, text="M1 BUY")
+plotshape(model1_sell, "Model 1 Sell", shape.triangledown, location.abovebar, color.new(color.red, 0),   size=size.small, text="M1 SELL")
+
+plotshape(model2_buy,  "Model 2 Buy",  shape.labelup,     location.belowbar, color.new(#26a69a, 0),    size=size.small, text="M2 BUY", textcolor=color.white)
+plotshape(model2_sell, "Model 2 Sell", shape.labeldown,   location.abovebar, color.new(#ef5350, 0),    size=size.small, text="M2 SELL", textcolor=color.white)
+
+// --- John Wick Rejections ---
+float body_size = math.abs(close - open)
+float upper_wick = high - math.max(open, close)
+float lower_wick = math.min(open, close) - low
+
+bool john_wick_bear = upper_wick >= body_size * 2 and (high >= ib_high or high >= pdh)
+bool john_wick_bull = lower_wick >= body_size * 2 and (low <= ib_low or low <= pdl)
+
+plotshape(john_wick_bull, "John Wick Rejection (Bull)", shape.diamond, location.belowbar, color.new(#b39ddb, 20), size=size.tiny)
+plotshape(john_wick_bear, "John Wick Rejection (Bear)", shape.diamond, location.abovebar, color.new(#b39ddb, 20), size=size.tiny)
+
+// ==========================================
+// DASHBOARD
+// ==========================================
+var table dash = table.new(position.top_right, 2, 6, bgcolor=color.new(color.black, 70), border_width=1, border_color=color.new(color.gray, 50))
+
+if barstate.islast
+    // Header
+    table.cell(dash, 0, 0, "AUCTION STATE", text_color=color.white, text_size=size.small, text_halign=text.align_left)
+
+    // Session State
+    string session_status = na(t_session) ? "OUT OF SESSION" : (not is_after_ib ? "IB PERIOD" : "POST-IB")
+    table.cell(dash, 0, 1, "Session", text_color=color.gray, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 1, session_status, text_color=color.white, text_size=size.small, text_halign=text.align_right)
+
+    // Auction Balance
+    bool is_balanced = close <= ib_high and close >= ib_low
+    string balance_status = is_balanced ? "BALANCED" : (close > ib_high ? "EXPANDING UP" : "EXPANDING DOWN")
+    color balance_color = is_balanced ? color.orange : (close > ib_high ? color.green : color.red)
+    table.cell(dash, 0, 2, "Market Type", text_color=color.gray, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 2, balance_status, text_color=balance_color, text_size=size.small, text_halign=text.align_right)
+
+    // CVD Bias
+    string cvd_bias = cvd > 0 ? "BULLISH" : "BEARISH"
+    color cvd_color = cvd > 0 ? color.green : color.red
+    table.cell(dash, 0, 3, "CVD Bias", text_color=color.gray, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 3, cvd_bias, text_color=cvd_color, text_size=size.small, text_halign=text.align_right)
+
+    // Level Proximity
+    float dist_ib_h = math.abs(close - ib_high) / syminfo.mintick
+    table.cell(dash, 0, 4, "Dist IB High (Ticks)", text_color=color.gray, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 4, str.tostring(dist_ib_h, "#"), text_color=color.white, text_size=size.small, text_halign=text.align_right)
+
+    float dist_ib_l = math.abs(close - ib_low) / syminfo.mintick
+    table.cell(dash, 0, 5, "Dist IB Low (Ticks)", text_color=color.gray, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 5, str.tostring(dist_ib_l, "#"), text_color=color.white, text_size=size.small, text_halign=text.align_right)
