@@ -100,7 +100,7 @@ var float last_ph = na
 var float last_pl = na
 var int last_ph_idx = na
 var int last_pl_idx = na
-var bool is_bullish = na
+var bool is_bullish = bool(na)
 
 if not na(ph)
     last_ph := ph
