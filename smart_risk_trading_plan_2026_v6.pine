@@ -58,15 +58,16 @@ if htf_new_bar
             array.remove(htf_zones, 0)
 
 // Mitigation Logic
-for i = 0 to (array.size(htf_zones) == 0 ? -1 : array.size(htf_zones) - 1)
-    Zone z = array.get(htf_zones, i)
-    if z.active
-        if z.is_supply
-            if high > z.top // Supply broken
-                z.active := false
-        else
-            if low < z.bottom // Demand broken
-                z.active := false
+if array.size(htf_zones) > 0
+    for i = 0 to array.size(htf_zones) - 1
+        Zone z = array.get(htf_zones, i)
+        if z.active
+            if z.is_supply
+                if high > z.top // Supply broken
+                    z.active := false
+            else
+                if low < z.bottom // Demand broken
+                    z.active := false
 
 // --- Visualizing HTF Zones ---
 var box[] zone_boxes = array.new_box()
@@ -75,13 +76,14 @@ if barstate.islast and show_htf_zones
         box.delete(b)
     array.clear(zone_boxes)
 
-    for i = 0 to (array.size(htf_zones) == 0 ? -1 : array.size(htf_zones) - 1)
-        Zone z = array.get(htf_zones, i)
-        if z.active
-            array.push(zone_boxes, box.new(z.start_bar, z.top, bar_index + 5, z.bottom,
-                 bgcolor = z.is_supply ? color_supply : color_demand,
-                 border_color = z.is_supply ? color_supply_border : color_demand_border,
-                 extend = extend.right))
+    if array.size(htf_zones) > 0
+        for i = 0 to array.size(htf_zones) - 1
+            Zone z = array.get(htf_zones, i)
+            if z.active
+                array.push(zone_boxes, box.new(z.start_bar, z.top, bar_index + 5, z.bottom,
+                     bgcolor = z.is_supply ? color_supply : color_demand,
+                     border_color = z.is_supply ? color_supply_border : color_demand_border,
+                     extend = extend.right))
 
 // --- LTF Structure & CHoCH Logic ---
 float ph = ta.pivothigh(high, ltf_pivot_len, ltf_pivot_len)
@@ -117,13 +119,14 @@ if trend_bias == 0 and not na(last_ph) and not na(last_pl)
 // Detect tapping of HTF Zones
 bool in_demand = false
 bool in_supply = false
-for i = 0 to (array.size(htf_zones) == 0 ? -1 : array.size(htf_zones) - 1)
-    Zone z = array.get(htf_zones, i)
-    if z.active
-        if not z.is_supply and low <= z.top and low >= z.bottom
-            in_demand := true
-        if z.is_supply and high >= z.bottom and high <= z.top
-            in_supply := true
+if array.size(htf_zones) > 0
+    for i = 0 to array.size(htf_zones) - 1
+        Zone z = array.get(htf_zones, i)
+        if z.active
+            if not z.is_supply and low <= z.top and low >= z.bottom
+                in_demand := true
+            if z.is_supply and high >= z.bottom and high <= z.top
+                in_supply := true
 
 // CHoCH Detection
 var bool entry_waiting = false
