@@ -1,0 +1,255 @@
+//@version=6
+indicator("JeaFx Liquidity Inducement Masterclass [Mani3131]", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// --- UDTs ---
+type Zone
+    float top
+    float bottom
+    int   start_bar
+    box   box_id
+    bool  is_supply
+    bool  is_active = true
+
+type FVG
+    float top
+    float bottom
+    int   start_bar
+    box   box_id
+    bool  is_bullish
+    bool  is_active = true
+
+// --- Constants & Inputs ---
+color BULL_COLOR = color.new(color.green, 50)
+color BEAR_COLOR = color.new(color.red, 50)
+color IDM_COLOR  = color.new(color.orange, 50)
+color ZONE_BULL  = color.new(color.green, 90)
+color ZONE_BEAR  = color.new(color.red, 90)
+color FVG_BULL   = color.new(color.green, 95)
+color FVG_BEAR   = color.new(color.red, 95)
+
+int pivot_len = input.int(3, "Swing Pivot Length", minval=1)
+int int_pivot_len = input.int(1, "Internal Pivot Length (IDM)", minval=1)
+int max_zones_count = input.int(10, "Max Zones to Display", minval=1)
+float displacement_mult = input.float(1.2, "Displacement Multiplier", minval=1.0)
+bool show_fvg = input.bool(true, "Show FVGs")
+string table_pos = input.string("Bottom Right", "Dashboard Position", options=["Top Right", "Bottom Right", "Top Left", "Bottom Left"])
+
+// --- Storage ---
+var Zone[] supply_zones = array.new<Zone>()
+var Zone[] demand_zones = array.new<Zone>()
+var FVG[] fvgs = array.new<FVG>()
+
+// --- Functions ---
+add_zone(array<Zone> zones, float t, float b, int s, bool is_s) =>
+    box bx = box.new(s, t, bar_index, b, bgcolor=is_s ? ZONE_BEAR : ZONE_BULL, border_color=is_s ? color.new(color.red, 50) : color.new(color.green, 50), border_style=line.style_dotted)
+    array.push(zones, Zone.new(t, b, s, bx, is_s))
+    if array.size(zones) > max_zones_count
+        Zone old = array.shift(zones)
+        box.delete(old.box_id)
+
+add_fvg(float t, float b, int s, bool is_bull) =>
+    box bx = box.new(s, t, bar_index, b, bgcolor=is_bull ? FVG_BULL : FVG_BEAR, border_color=color.new(is_bull ? color.green : color.red, 80))
+    array.push(fvgs, FVG.new(t, b, s, bx, is_bull))
+    if array.size(fvgs) > max_zones_count * 2
+        FVG old = array.shift(fvgs)
+        box.delete(old.box_id)
+
+update_zones(array<Zone> zones) =>
+    if array.size(zones) > 0
+        for i = array.size(zones) - 1 to 0
+            Zone z = array.get(zones, i)
+            if z.is_active
+                box.set_right(z.box_id, bar_index)
+                if (z.is_supply and high > z.top) or (not z.is_supply and low < z.bottom)
+                    z.is_active := false
+                    box.set_bgcolor(z.box_id, color.new(color.gray, 95))
+                    box.set_border_color(z.box_id, color.new(color.gray, 80))
+
+update_fvgs() =>
+    if array.size(fvgs) > 0
+        for i = array.size(fvgs) - 1 to 0
+            FVG f = array.get(fvgs, i)
+            if f.is_active
+                box.set_right(f.box_id, bar_index)
+                if (f.is_bullish and low < f.bottom) or (not f.is_bullish and high > f.top)
+                    f.is_active := false
+                    box.delete(f.box_id)
+
+get_table_pos(string pos) =>
+    switch pos
+        "Top Right"    => position.top_right
+        "Bottom Right" => position.bottom_right
+        "Top Left"     => position.top_left
+        "Bottom Left"  => position.bottom_left
+        => position.bottom_right
+
+// --- Pivot Detection ---
+float ph = ta.pivothigh(high, pivot_len, pivot_len)
+float pl = ta.pivotlow(low, pivot_len, pivot_len)
+float iph = ta.pivothigh(high, int_pivot_len, int_pivot_len)
+float ipl = ta.pivotlow(low, int_pivot_len, int_pivot_len)
+
+// Track bar indices of pivots for accurate OB searching
+var int last_ph_idx = 0
+var int last_pl_idx = 0
+if not na(ph)
+    last_ph_idx := bar_index[pivot_len]
+if not na(pl)
+    last_pl_idx := bar_index[pivot_len]
+
+// --- Market Structure State ---
+var float swing_high = na
+var float swing_low = na
+var float current_idm = na
+var bool  idm_swept = false
+var bool  is_bullish = na
+var float trend_high = -1.0
+var float trend_low = 1e10
+var bool  signal_fired = false
+
+// FVG Detection
+if show_fvg
+    if low > high[2] and close[1] > high[2] // Bullish FVG
+        add_fvg(low, high[2], bar_index[2], true)
+    if high < low[2] and close[1] < low[2] // Bearish FVG
+        add_fvg(low[2], high, bar_index[2], false)
+
+// Trend and BOS Logic
+if not na(swing_high) and close > swing_high
+    bool is_ch = na(is_bullish) or not is_bullish
+    label.new(bar_index, high, is_ch ? "CHoCH" : "BOS", style=label.style_label_down, color=BULL_COLOR, textcolor=color.white)
+
+    // Find OB: search back to the last swing low
+    int search_limit = math.max(0, last_pl_idx)
+    int ob_bar = bar_index
+    float lowest_p = low
+    for i = 0 to (bar_index - search_limit)
+        if i > 50 then break // Safety limit
+        if low[i] < lowest_p
+            lowest_p := low[i]
+            ob_bar := bar_index[i]
+    add_zone(demand_zones, high[bar_index-ob_bar], low[bar_index-ob_bar], ob_bar, false)
+
+    is_bullish := true
+    swing_low := trend_low
+    swing_high := na
+    current_idm := na
+    idm_swept := false
+    signal_fired := false
+    trend_high := high
+
+if not na(swing_low) and close < swing_low
+    bool is_ch = na(is_bullish) or is_bullish
+    label.new(bar_index, low, is_ch ? "CHoCH" : "BOS", style=label.style_label_up, color=BEAR_COLOR, textcolor=color.white)
+
+    // Find OB: search back to the last swing high
+    int search_limit = math.max(0, last_ph_idx)
+    int ob_bar = bar_index
+    float highest_p = high
+    for i = 0 to (bar_index - search_limit)
+        if i > 50 then break // Safety limit
+        if high[i] > highest_p
+            highest_p := high[i]
+            ob_bar := bar_index[i]
+    add_zone(supply_zones, high[bar_index-ob_bar], low[bar_index-ob_bar], ob_bar, true)
+
+    is_bullish := false
+    swing_high := trend_high
+    swing_low := na
+    current_idm := na
+    idm_swept := false
+    signal_fired := false
+    trend_low := low
+
+trend_high := math.max(trend_high, high)
+trend_low := math.min(trend_low, low)
+
+// Inducement Detection
+if is_bullish and not idm_swept
+    if not na(ipl)
+        current_idm := ipl
+if not is_bullish and not idm_swept
+    if not na(iph)
+        current_idm := iph
+
+// IDM Sweep Check
+if not na(current_idm) and not idm_swept
+    if is_bullish and low < current_idm
+        idm_swept := true
+        swing_high := trend_high
+        label.new(bar_index, low, "IDM", style=label.style_label_up, color=IDM_COLOR, textcolor=color.white)
+    else if not is_bullish and high > current_idm
+        idm_swept := true
+        swing_low := trend_low
+        label.new(bar_index, high, "IDM", style=label.style_label_down, color=IDM_COLOR, textcolor=color.white)
+
+// Entry Signals
+bool buy_signal = false
+bool sell_signal = false
+
+if idm_swept and not signal_fired
+    if is_bullish
+        bool in_zone = false
+        for z in demand_zones
+            if z.is_active and low <= z.top and close > z.bottom
+                in_zone := true
+                break
+        if in_zone
+            buy_signal := true
+            signal_fired := true
+    else
+        bool in_zone = false
+        for z in supply_zones
+            if z.is_active and high >= z.bottom and close < z.top
+                in_zone := true
+                break
+        if in_zone
+            sell_signal := true
+            signal_fired := true
+
+plotshape(buy_signal, "Buy Signal", shape.triangleup, location.belowbar, color.green, size=size.small, text="BUY")
+plotshape(sell_signal, "Sell Signal", shape.triangledown, location.abovebar, color.red, size=size.small, text="SELL")
+
+// Update Visuals
+update_zones(demand_zones)
+update_zones(supply_zones)
+update_fvgs()
+
+var line idm_line = na
+if not na(current_idm) and not idm_swept
+    if na(idm_line)
+        idm_line := line.new(bar_index - 5, current_idm, bar_index, current_idm, color=IDM_COLOR, style=line.style_dashed, extend=extend.right)
+    else
+        line.set_xy1(idm_line, bar_index - 5, current_idm)
+        line.set_xy2(idm_line, bar_index, current_idm)
+else
+    line.delete(idm_line)
+    idm_line := na
+
+plot(swing_high, "Swing High", color=color.red, style=plot.style_linebr, linewidth=2)
+plot(swing_low, "Swing Low", color=color.green, style=plot.style_linebr, linewidth=2)
+
+// --- Dashboard ---
+var table dash = table.new(get_table_pos(table_pos), 2, 5, bgcolor=color.new(color.black, 20), border_color=color.gray, border_width=1)
+if barstate.islast
+    table.cell(dash, 0, 0, "JeaFx Dashboard", text_color=color.white, text_size=size.normal)
+    table.cell(dash, 1, 0, "Mani3131", text_color=color.yellow, text_size=size.small)
+
+    table.cell(dash, 0, 1, "Bias", text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 1, 1, is_bullish ? "BULLISH" : "BEARISH", text_color=is_bullish ? color.green : color.red)
+
+    table.cell(dash, 0, 2, "IDM Swept", text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 1, 2, idm_swept ? "YES" : "NO", text_color=idm_swept ? color.green : color.red)
+
+    table.cell(dash, 0, 3, "IDM Level", text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 1, 3, str.tostring(current_idm, "#.#####"), text_color=color.orange)
+
+    table.cell(dash, 0, 4, "Zones Active", text_color=color.white, text_halign=text.align_left)
+    int active_z = 0
+    for z in demand_zones
+        if z.is_active
+            active_z += 1
+    for z in supply_zones
+        if z.is_active
+            active_z += 1
+    table.cell(dash, 1, 4, str.tostring(active_z), text_color=color.white)
