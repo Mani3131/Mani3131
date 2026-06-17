@@ -2,7 +2,7 @@
 // © Mani3131
 
 //@version=6
-indicator("Smart Risk Trading Plan 2026", overlay = true, max_boxes_count = 500, max_labels_count = 500, max_lines_count = 500)
+indicator("Smart Risk Trading Plan 2026", overlay = true, max_boxes_count = 500, max_labels_count = 500, max_lines_count = 500, max_bars_back = 5000)
 
 // --- Inputs ---
 grp_htf = "Higher Timeframe Settings"
@@ -142,11 +142,11 @@ if in_demand and trend_bias == -1
         entry_waiting := true
         setup_type := "BUY"
         setup_bar := bar_index
-        sl_price := ta.lowest(low, bar_index - last_ph_idx + 1)
+        sl_price := ta.lowest(low, math.max(1, math.min(500, bar_index - last_ph_idx + 1)))
         entry_price := high[1]
         tp_price := entry_price + (entry_price - sl_price) * rr_ratio
 
-        box.new(bar_index[1], high[1], bar_index, low[1], bgcolor = color.new(color.green, 90), border_color = color.new(color.green, 50), text = "OB", text_size = size.tiny)
+        box.new(bar_index - 1, high[1], bar_index, low[1], bgcolor = color.new(color.green, 90), border_color = color.new(color.green, 50), text = "OB", text_size = size.tiny)
         label.new(bar_index, high, "CHoCH (Bullish Setup)", color = color_choch, textcolor = color.white, style = label.style_label_down)
 
 if in_supply and trend_bias == 1
@@ -155,11 +155,11 @@ if in_supply and trend_bias == 1
         entry_waiting := true
         setup_type := "SELL"
         setup_bar := bar_index
-        sl_price := ta.highest(high, bar_index - last_pl_idx + 1)
+        sl_price := ta.highest(high, math.max(1, math.min(500, bar_index - last_pl_idx + 1)))
         entry_price := low[1]
         tp_price := entry_price - (sl_price - entry_price) * rr_ratio
 
-        box.new(bar_index[1], high[1], bar_index, low[1], bgcolor = color.new(color.red, 90), border_color = color.new(color.red, 50), text = "OB", text_size = size.tiny)
+        box.new(bar_index - 1, high[1], bar_index, low[1], bgcolor = color.new(color.red, 90), border_color = color.new(color.red, 50), text = "OB", text_size = size.tiny)
         label.new(bar_index, low, "CHoCH (Bearish Setup)", color = color_choch, textcolor = color.white, style = label.style_label_up)
 
 // Entry Execution
