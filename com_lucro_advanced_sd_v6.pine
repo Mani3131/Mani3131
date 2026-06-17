@@ -69,7 +69,7 @@ if not na(pl)
     last_pl_index := bar_index - pivot_len
 
 // Market Structure Shift (CHoCH/BOS)
-var bool is_bullish = na
+var int is_bullish = 0 // 0: Neutral, 1: Bullish, -1: Bearish
 var float highest_high = high
 var float lowest_low = low
 
@@ -85,17 +85,17 @@ bool choch_bull = false
 bool choch_bear = false
 
 if not na(last_ph_price) and close > last_ph_price
-    if na(is_bullish) or is_bullish == false
+    if is_bullish <= 0
         choch_bull := true
-        is_bullish := true
+        is_bullish := 1
     else
         bos_bull := true
     last_ph_price := na // Reset to avoid multiple triggers for same pivot
 
 if not na(last_pl_price) and close < last_pl_price
-    if na(is_bullish) or is_bullish == true
+    if is_bullish >= 0
         choch_bear := true
-        is_bullish := false
+        is_bullish := -1
     else
         bos_bear := true
     last_pl_price := na
@@ -281,7 +281,7 @@ if show_dashboard and barstate.islast
     table.cell(dash, 1, 0, "Value", bgcolor=color.new(color.gray, 80), text_color=color.white, text_halign=text.align_center)
 
     table.cell(dash, 0, 1, "Trend Bias", text_halign=text.align_left)
-    table.cell(dash, 1, 1, na(is_bullish) ? "NEUTRAL" : (is_bullish ? "BULLISH" : "BEARISH"), bgcolor=na(is_bullish) ? color.gray : (is_bullish ? color.green : color.red), text_color=color.white)
+    table.cell(dash, 1, 1, is_bullish == 0 ? "NEUTRAL" : (is_bullish == 1 ? "BULLISH" : "BEARISH"), bgcolor=is_bullish == 0 ? color.gray : (is_bullish == 1 ? color.green : color.red), text_color=color.white)
 
     table.cell(dash, 0, 2, "EMA Filter", text_halign=text.align_left)
     table.cell(dash, 1, 2, not use_ema ? "OFF" : (close > ema_filter ? "ABOVE" : "BELOW"), bgcolor=close > ema_filter ? color.green : color.red, text_color=color.white)
