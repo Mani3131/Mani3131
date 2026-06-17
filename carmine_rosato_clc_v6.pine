@@ -1,5 +1,5 @@
 // @version=6
-indicator("Carmine Rosato CLC Strategy [Chart Fanatics]", overlay=true, max_boxes_count=100, max_labels_count=100, force_overlay=true)
+indicator("Carmine Rosato CLC Strategy [Chart Fanatics]", overlay=true, max_boxes_count=100, max_labels_count=100)
 
 // ==========================================
 // TOU: This script is based on Carmine Rosato's
