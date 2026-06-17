@@ -56,7 +56,7 @@ add_fvg(float t, float b, int s, bool is_bull) =>
 
 update_zones(array<Zone> zones) =>
     if array.size(zones) > 0
-        for i = array.size(zones) - 1 to 0
+        for i = array.size(zones) - 1 to 0 by -1
             Zone z = array.get(zones, i)
             if z.is_active
                 box.set_right(z.box_id, bar_index)
@@ -67,7 +67,7 @@ update_zones(array<Zone> zones) =>
 
 update_fvgs() =>
     if array.size(fvgs) > 0
-        for i = array.size(fvgs) - 1 to 0
+        for i = array.size(fvgs) - 1 to 0 by -1
             FVG f = array.get(fvgs, i)
             if f.is_active
                 box.set_right(f.box_id, bar_index)
@@ -107,12 +107,26 @@ var float trend_high = -1.0
 var float trend_low = 1e10
 var bool  signal_fired = false
 
+// Initial Bias
+if na(is_bullish)
+    if not na(ph)
+        is_bullish := false
+        swing_high := ph
+    else if not na(pl)
+        is_bullish := true
+        swing_low := pl
+
 // FVG Detection
 if show_fvg
     if low > high[2] and close[1] > high[2] // Bullish FVG
         add_fvg(low, high[2], bar_index[2], true)
     if high < low[2] and close[1] < low[2] // Bearish FVG
         add_fvg(low[2], high, bar_index[2], false)
+
+// Displacement Check
+float body_size = math.abs(close - open)
+float avg_body = ta.sma(body_size, 20)
+bool is_displaced = body_size > avg_body * displacement_mult
 
 // Trend and BOS Logic
 if not na(swing_high) and close > swing_high
@@ -124,10 +138,11 @@ if not na(swing_high) and close > swing_high
     int ob_bar = bar_index
     float lowest_p = low
     for i = 0 to (bar_index - search_limit)
-        if i > 50 then break // Safety limit
+        if i > 50
+            break // Safety limit
         if low[i] < lowest_p
             lowest_p := low[i]
-            ob_bar := bar_index[i]
+            ob_bar := bar_index - i
     add_zone(demand_zones, high[bar_index-ob_bar], low[bar_index-ob_bar], ob_bar, false)
 
     is_bullish := true
@@ -147,10 +162,11 @@ if not na(swing_low) and close < swing_low
     int ob_bar = bar_index
     float highest_p = high
     for i = 0 to (bar_index - search_limit)
-        if i > 50 then break // Safety limit
+        if i > 50
+            break // Safety limit
         if high[i] > highest_p
             highest_p := high[i]
-            ob_bar := bar_index[i]
+            ob_bar := bar_index - i
     add_zone(supply_zones, high[bar_index-ob_bar], low[bar_index-ob_bar], ob_bar, true)
 
     is_bullish := false
@@ -236,7 +252,7 @@ if barstate.islast
     table.cell(dash, 1, 0, "Mani3131", text_color=color.yellow, text_size=size.small)
 
     table.cell(dash, 0, 1, "Bias", text_color=color.white, text_halign=text.align_left)
-    table.cell(dash, 1, 1, is_bullish ? "BULLISH" : "BEARISH", text_color=is_bullish ? color.green : color.red)
+    table.cell(dash, 1, 1, na(is_bullish) ? "WAITING" : (is_bullish ? "BULLISH" : "BEARISH"), text_color=na(is_bullish) ? color.gray : (is_bullish ? color.green : color.red))
 
     table.cell(dash, 0, 2, "IDM Swept", text_color=color.white, text_halign=text.align_left)
     table.cell(dash, 1, 2, idm_swept ? "YES" : "NO", text_color=idm_swept ? color.green : color.red)
