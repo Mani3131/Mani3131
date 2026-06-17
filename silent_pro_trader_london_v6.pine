@@ -32,12 +32,10 @@ london_start = is_london and not is_london[1]
 // Memory: Explicitly cast na when initializing var variables
 var float asia_h = float(na)
 var float asia_l = float(na)
-var int asia_start_idx = int(na)
 
 if asia_start
     asia_h := high
     asia_l := low
-    asia_start_idx := bar_index
 else if is_asia
     asia_h := math.max(asia_h, high)
     asia_l := math.min(asia_l, low)
@@ -47,7 +45,8 @@ var box asia_box = box(na)
 if asia_start and show_asia_box
     asia_box := box.new(bar_index, asia_h, bar_index, asia_l, border_color=color.gray, bgcolor=asia_box_col)
 else if is_asia and show_asia_box
-    box.set_righttop(asia_box, bar_index, asia_h)
+    box.set_right(asia_box, bar_index)
+    box.set_top(asia_box, asia_h)
     box.set_bottom(asia_box, asia_l)
 
 // --- Sweep Detection (London Open) ---
