@@ -37,8 +37,8 @@ if not na(pl)
     last_pl := pl
 
 // Visualize Liquidity Levels
-plot(last_ph, "Liquidity High", color.new(color.red, 70), 1, plot.style_linebr)
-plot(last_pl, "Liquidity Low", color.new(color.green, 70), 1, plot.style_linebr)
+plot(last_ph, "Liquidity High", color.new(color.red, 70), 1, plot.style_linebr, display = show_pivots ? display.all : display.none)
+plot(last_pl, "Liquidity Low", color.new(color.green, 70), 1, plot.style_linebr, display = show_pivots ? display.all : display.none)
 
 // ==========================================
 // Sweep Detection Logic
@@ -83,8 +83,8 @@ if short_condition and strategy.position_size == 0
 // ==========================================
 // Visuals & Debugging
 // ==========================================
-plotshape(long_condition, "Long Sweep", shape.labelup, location.belowbar, color.green, text="SWEEP", textcolor.white, size=size.small)
-plotshape(short_condition, "Short Sweep", shape.labeldown, location.abovebar, color.red, text="SWEEP", textcolor.white, size=size.small)
+plotshape(long_condition, "Long Sweep", shape.labelup, location.belowbar, color.green, text="SWEEP", textcolor=color.white, size=size.small, display = show_labels ? display.all : display.none)
+plotshape(short_condition, "Short Sweep", shape.labeldown, location.abovebar, color.red, text="SWEEP", textcolor=color.white, size=size.small, display = show_labels ? display.all : display.none)
 
 // Draw boxes for liquidity levels for better visualization
 var box liquidity_box_h = na
