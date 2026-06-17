@@ -96,11 +96,12 @@ if fvg_up
 if fvg_down
     box.new(bar_index - 2, high, bar_index, low[2], bgcolor = color.new(color.red, 95), border_color = na, text = "FVG", text_size = size.tiny, text_color = color.new(color.red, 50))
 
-var float last_ph = na
-var float last_pl = na
-var int last_ph_idx = na
-var int last_pl_idx = na
-var bool is_bullish = bool(na)
+var float last_ph = float(na)
+var float last_pl = float(na)
+var int last_ph_idx = int(na)
+var int last_pl_idx = int(na)
+// CE10173 Fix: Use int for trend bias (0: na, 1: bullish, -1: bearish)
+var int trend_bias = 0
 
 if not na(ph)
     last_ph := ph
@@ -110,8 +111,8 @@ if not na(pl)
     last_pl_idx := bar_index - ltf_pivot_len
 
 // Initializing bias if not set
-if na(is_bullish) and not na(last_ph) and not na(last_pl)
-    is_bullish := close > (last_ph + last_pl) / 2
+if trend_bias == 0 and not na(last_ph) and not na(last_pl)
+    trend_bias := close > (last_ph + last_pl) / 2 ? 1 : -1
 
 // Detect tapping of HTF Zones
 bool in_demand = false
@@ -127,33 +128,30 @@ for i = 0 to (array.size(htf_zones) == 0 ? -1 : array.size(htf_zones) - 1)
 // CHoCH Detection
 var bool entry_waiting = false
 var string setup_type = "" // "BUY" or "SELL"
-var float entry_price = na
-var float sl_price = na
-var float tp_price = na
+var float entry_price = float(na)
+var float sl_price = float(na)
+var float tp_price = float(na)
 var int setup_bar = 0
 
-if in_demand and not is_bullish
+if in_demand and trend_bias == -1
     if high > last_ph
-        is_bullish := true
+        trend_bias := 1
         entry_waiting := true
         setup_type := "BUY"
         setup_bar := bar_index
-        // SL at the low of the sweep (lowest point in recent candles)
         sl_price := ta.lowest(low, bar_index - last_ph_idx + 1)
-        // Entry at the high of the candle before displacement (approx OB) or FVG
         entry_price := high[1]
         tp_price := entry_price + (entry_price - sl_price) * rr_ratio
 
         box.new(bar_index[1], high[1], bar_index, low[1], bgcolor = color.new(color.green, 90), border_color = color.new(color.green, 50), text = "OB", text_size = size.tiny)
         label.new(bar_index, high, "CHoCH (Bullish Setup)", color = color_choch, textcolor = color.white, style = label.style_label_down)
 
-if in_supply and is_bullish
+if in_supply and trend_bias == 1
     if low < last_pl
-        is_bullish := false
+        trend_bias := -1
         entry_waiting := true
         setup_type := "SELL"
         setup_bar := bar_index
-        // SL at the high of the sweep
         sl_price := ta.highest(high, bar_index - last_pl_idx + 1)
         entry_price := low[1]
         tp_price := entry_price - (sl_price - entry_price) * rr_ratio
@@ -189,7 +187,7 @@ if barstate.islast and show_dashboard
     table.cell(dashboard, 1, 0, "Value", text_color = color.white, text_size = size.small)
 
     table.cell(dashboard, 0, 1, "HTF Bias", text_color = color.white, text_size = size.small)
-    table.cell(dashboard, 1, 1, is_bullish ? "BULLISH" : "BEARISH", text_color = is_bullish ? color.green : color.red, text_size = size.small)
+    table.cell(dashboard, 1, 1, trend_bias == 1 ? "BULLISH" : trend_bias == -1 ? "BEARISH" : "NEUTRAL", text_color = trend_bias == 1 ? color.green : trend_bias == -1 ? color.red : color.white, text_size = size.small)
 
     table.cell(dashboard, 0, 2, "Setup Status", text_color = color.white, text_size = size.small)
     table.cell(dashboard, 1, 2, entry_waiting ? "WAITING FOR RETEST" : "MONITORING", text_color = entry_waiting ? color.orange : color.white, text_size = size.small)
@@ -200,5 +198,5 @@ if barstate.islast and show_dashboard
     table.cell(dashboard, 0, 4, "Script", text_color = color.white, text_size = size.small)
     table.cell(dashboard, 1, 4, "Smart Risk 2026", text_color = color.white, text_size = size.small)
 
-// Placeholder for logic in next steps
+// Placeholder
 plot(close, color = color.new(color.white, 100))
