@@ -58,7 +58,8 @@ fill(plot_ib_h, plot_ib_l, color=color.new(#673ab7, 95), title="IB Zone")
 // ==========================================
 // PREVIOUS DAY LEVELS
 // ==========================================
-[pdh, pdl, pdc] = request.security(syminfo.tickerid, "D", [high, low, close], lookahead=barmerge.lookahead_on)
+// Using [1] index inside request.security ensures we fetch the completed previous day's data
+[pdh, pdl, pdc] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1]])
 
 plot(show_pd ? pdh : na, "PDH", color=pd_color, style=plot.style_linebr)
 plot(show_pd ? pdl : na, "PDL", color=pd_color, style=plot.style_linebr)
@@ -149,8 +150,8 @@ float lower_wick = math.min(open, close) - low
 bool john_wick_bear = upper_wick >= body_size * 2 and (high >= ib_high or high >= pdh)
 bool john_wick_bull = lower_wick >= body_size * 2 and (low <= ib_low or low <= pdl)
 
-plotshape(john_wick_bull, "John Wick Bull", shape.diamond, location.belowbar, color.new(#b39ddb, 20), size=size.tiny, title="John Wick Rejection")
-plotshape(john_wick_bear, "John Wick Bear", shape.diamond, location.abovebar, color.new(#b39ddb, 20), size=size.tiny, title="John Wick Rejection")
+plotshape(john_wick_bull, "John Wick Rejection (Bull)", shape.diamond, location.belowbar, color.new(#b39ddb, 20), size=size.tiny)
+plotshape(john_wick_bear, "John Wick Rejection (Bear)", shape.diamond, location.abovebar, color.new(#b39ddb, 20), size=size.tiny)
 
 // ==========================================
 // DASHBOARD
