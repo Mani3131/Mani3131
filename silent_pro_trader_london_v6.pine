@@ -82,8 +82,8 @@ long_signal  = sweep_low and is_bullish
 short_signal = sweep_high and is_bearish
 
 // --- Visual Signals ---
-plotshape(long_signal,  "BBS Long",  style = shape.triangleup,   location = location.belowbar, color = color.green, size = size.small, title = "BBS Long Signal")
-plotshape(short_signal, "BBS Short", style = shape.triangledown, location = location.abovebar, color = color.red,   size = size.small, title = "BBS Short Signal")
+plotshape(long_signal,  "BBS Long",  style = shape.triangleup,   location = location.belowbar, color = color.green, size = size.small)
+plotshape(short_signal, "BBS Short", style = shape.triangledown, location = location.abovebar, color = color.red,   size = size.small)
 
 // Alerting
 alertcondition(long_signal,  "BBS Long Signal",  "BBS Long Entry at {{close}}")
