@@ -55,7 +55,7 @@ add_fvg(float t, float b, int s, bool is_bull) =>
 
 update_zones(array<Zone> zones) =>
     if array.size(zones) > 0
-        for i = array.size(zones) - 1 to 0 by -1
+        for i = 0 to array.size(zones) - 1
             Zone z = array.get(zones, i)
             if z.is_active
                 box.set_right(z.box_id, bar_index)
@@ -66,7 +66,7 @@ update_zones(array<Zone> zones) =>
 
 update_fvgs() =>
     if array.size(fvgs) > 0
-        for i = array.size(fvgs) - 1 to 0 by -1
+        for i = 0 to array.size(fvgs) - 1
             FVG f = array.get(fvgs, i)
             if f.is_active
                 box.set_right(f.box_id, bar_index)
@@ -202,19 +202,23 @@ bool sell_signal = false
 if idm_swept and not signal_fired
     if market_bias == 1
         bool in_zone = false
-        for z in demand_zones
-            if z.is_active and low <= z.top and close > z.bottom
-                in_zone := true
-                break
+        if array.size(demand_zones) > 0
+            for i = 0 to array.size(demand_zones) - 1
+                Zone z = array.get(demand_zones, i)
+                if z.is_active and low <= z.top and close > z.bottom
+                    in_zone := true
+                    break
         if in_zone
             buy_signal := true
             signal_fired := true
     else if market_bias == -1
         bool in_zone = false
-        for z in supply_zones
-            if z.is_active and high >= z.bottom and close < z.top
-                in_zone := true
-                break
+        if array.size(supply_zones) > 0
+            for i = 0 to array.size(supply_zones) - 1
+                Zone z = array.get(supply_zones, i)
+                if z.is_active and high >= z.bottom and close < z.top
+                    in_zone := true
+                    break
         if in_zone
             sell_signal := true
             signal_fired := true
@@ -260,10 +264,14 @@ if barstate.islast
 
     table.cell(dash, 0, 4, "Zones Active", text_color=color.white, text_halign=text.align_left)
     int active_z = 0
-    for z in demand_zones
-        if z.is_active
-            active_z += 1
-    for z in supply_zones
-        if z.is_active
-            active_z += 1
+    if array.size(demand_zones) > 0
+        for i = 0 to array.size(demand_zones) - 1
+            Zone z = array.get(demand_zones, i)
+            if z.is_active
+                active_z += 1
+    if array.size(supply_zones) > 0
+        for i = 0 to array.size(supply_zones) - 1
+            Zone z = array.get(supply_zones, i)
+            if z.is_active
+                active_z += 1
     table.cell(dash, 1, 4, str.tostring(active_z), text_color=color.white)
