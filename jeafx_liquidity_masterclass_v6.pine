@@ -30,7 +30,6 @@ color FVG_BEAR   = color.new(color.red, 95)
 int pivot_len = input.int(3, "Swing Pivot Length", minval=1)
 int int_pivot_len = input.int(1, "Internal Pivot Length (IDM)", minval=1)
 int max_zones_count = input.int(10, "Max Zones to Display", minval=1)
-float displacement_mult = input.float(1.2, "Displacement Multiplier", minval=1.0)
 bool show_fvg = input.bool(true, "Show FVGs")
 string table_pos = input.string("Bottom Right", "Dashboard Position", options=["Top Right", "Bottom Right", "Top Left", "Bottom Left"])
 
@@ -102,18 +101,20 @@ var float swing_high = na
 var float swing_low = na
 var float current_idm = na
 var bool  idm_swept = false
-var bool  is_bullish = na
 var float trend_high = -1.0
 var float trend_low = 1e10
 var bool  signal_fired = false
 
+// Use 0 for na, 1 for bullish, -1 for bearish
+var int   market_bias = 0
+
 // Initial Bias
-if na(is_bullish)
+if market_bias == 0
     if not na(ph)
-        is_bullish := false
+        market_bias := -1
         swing_high := ph
     else if not na(pl)
-        is_bullish := true
+        market_bias := 1
         swing_low := pl
 
 // FVG Detection
@@ -123,14 +124,9 @@ if show_fvg
     if high < low[2] and close[1] < low[2] // Bearish FVG
         add_fvg(low[2], high, bar_index[2], false)
 
-// Displacement Check
-float body_size = math.abs(close - open)
-float avg_body = ta.sma(body_size, 20)
-bool is_displaced = body_size > avg_body * displacement_mult
-
 // Trend and BOS Logic
 if not na(swing_high) and close > swing_high
-    bool is_ch = na(is_bullish) or not is_bullish
+    bool is_ch = market_bias != 1
     label.new(bar_index, high, is_ch ? "CHoCH" : "BOS", style=label.style_label_down, color=BULL_COLOR, textcolor=color.white)
 
     // Find OB: search back to the last swing low
@@ -145,7 +141,7 @@ if not na(swing_high) and close > swing_high
             ob_bar := bar_index - i
     add_zone(demand_zones, high[bar_index-ob_bar], low[bar_index-ob_bar], ob_bar, false)
 
-    is_bullish := true
+    market_bias := 1
     swing_low := trend_low
     swing_high := na
     current_idm := na
@@ -154,7 +150,7 @@ if not na(swing_high) and close > swing_high
     trend_high := high
 
 if not na(swing_low) and close < swing_low
-    bool is_ch = na(is_bullish) or is_bullish
+    bool is_ch = market_bias != -1
     label.new(bar_index, low, is_ch ? "CHoCH" : "BOS", style=label.style_label_up, color=BEAR_COLOR, textcolor=color.white)
 
     // Find OB: search back to the last swing high
@@ -169,7 +165,7 @@ if not na(swing_low) and close < swing_low
             ob_bar := bar_index - i
     add_zone(supply_zones, high[bar_index-ob_bar], low[bar_index-ob_bar], ob_bar, true)
 
-    is_bullish := false
+    market_bias := -1
     swing_high := trend_high
     swing_low := na
     current_idm := na
@@ -181,20 +177,20 @@ trend_high := math.max(trend_high, high)
 trend_low := math.min(trend_low, low)
 
 // Inducement Detection
-if is_bullish and not idm_swept
+if market_bias == 1 and not idm_swept
     if not na(ipl)
         current_idm := ipl
-if not is_bullish and not idm_swept
+if market_bias == -1 and not idm_swept
     if not na(iph)
         current_idm := iph
 
 // IDM Sweep Check
 if not na(current_idm) and not idm_swept
-    if is_bullish and low < current_idm
+    if market_bias == 1 and low < current_idm
         idm_swept := true
         swing_high := trend_high
         label.new(bar_index, low, "IDM", style=label.style_label_up, color=IDM_COLOR, textcolor=color.white)
-    else if not is_bullish and high > current_idm
+    else if market_bias == -1 and high > current_idm
         idm_swept := true
         swing_low := trend_low
         label.new(bar_index, high, "IDM", style=label.style_label_down, color=IDM_COLOR, textcolor=color.white)
@@ -204,7 +200,7 @@ bool buy_signal = false
 bool sell_signal = false
 
 if idm_swept and not signal_fired
-    if is_bullish
+    if market_bias == 1
         bool in_zone = false
         for z in demand_zones
             if z.is_active and low <= z.top and close > z.bottom
@@ -213,7 +209,7 @@ if idm_swept and not signal_fired
         if in_zone
             buy_signal := true
             signal_fired := true
-    else
+    else if market_bias == -1
         bool in_zone = false
         for z in supply_zones
             if z.is_active and high >= z.bottom and close < z.top
@@ -252,7 +248,9 @@ if barstate.islast
     table.cell(dash, 1, 0, "Mani3131", text_color=color.yellow, text_size=size.small)
 
     table.cell(dash, 0, 1, "Bias", text_color=color.white, text_halign=text.align_left)
-    table.cell(dash, 1, 1, na(is_bullish) ? "WAITING" : (is_bullish ? "BULLISH" : "BEARISH"), text_color=na(is_bullish) ? color.gray : (is_bullish ? color.green : color.red))
+    string bias_str = market_bias == 0 ? "WAITING" : (market_bias == 1 ? "BULLISH" : "BEARISH")
+    color bias_col = market_bias == 0 ? color.gray : (market_bias == 1 ? color.green : color.red)
+    table.cell(dash, 1, 1, bias_str, text_color=bias_col)
 
     table.cell(dash, 0, 2, "IDM Swept", text_color=color.white, text_halign=text.align_left)
     table.cell(dash, 1, 2, idm_swept ? "YES" : "NO", text_color=idm_swept ? color.green : color.red)
