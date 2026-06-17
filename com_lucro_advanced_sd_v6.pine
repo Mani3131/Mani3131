@@ -1,0 +1,299 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Com Lucro Advanced Supply & Demand [v6]", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=500)
+
+// ==========================================
+// User Inputs
+// ==========================================
+grp_structure = "Market Structure Settings"
+pivot_len     = input.int(3, "Pivot Lookback", minval=1, group=grp_structure)
+show_bos      = input.bool(true, "Show BOS/CHoCH", group=grp_structure)
+
+grp_zones     = "Supply & Demand Settings"
+zone_type     = input.string("Extended", "Zone Style", options=["Box", "Extended"], group=grp_zones)
+min_displacement = input.float(1.5, "Min Displacement (ATR Multiplier)", minval=0.1, step=0.1, group=grp_zones)
+show_breakers = input.bool(true, "Show Breaker Blocks", group=grp_zones)
+show_mitigation = input.bool(true, "Show Mitigation Blocks", group=grp_zones)
+show_flips    = input.bool(true, "Show Flip Zones", group=grp_zones)
+
+grp_filters   = "Trend & Filters"
+use_ema       = input.bool(true, "Use 200 EMA Filter", group=grp_filters)
+ema_len       = input.int(200, "EMA Length", group=grp_filters)
+
+grp_visuals   = "Visuals & Colors"
+color_demand  = input.color(color.new(#26a69a, 80), "Demand Color", group=grp_visuals)
+color_supply  = input.color(color.new(#ef5350, 80), "Supply Color", group=grp_visuals)
+color_breaker = input.color(color.new(#673ab7, 80), "Breaker Color", group=grp_visuals)
+color_flip    = input.color(color.new(#ff9800, 80), "Flip Zone Color", group=grp_visuals)
+show_dashboard = input.bool(true, "Show Dashboard", group=grp_visuals)
+
+// ==========================================
+// Types & Variables
+// ==========================================
+type Zone
+    float top
+    float bottom
+    int   start_bar
+    bool  is_demand
+    bool  is_active = true
+    string zone_type = "SD" // "SD", "Breaker", "Mitigation", "Flip"
+    box   display_box
+
+var zones = array.new<Zone>()
+
+// ==========================================
+// Calculations
+// ==========================================
+ema_filter = ta.ema(close, ema_len)
+plot(use_ema ? ema_filter : na, "Trend EMA", color.new(color.gray, 50))
+
+// ATR for displacement check
+atr = ta.atr(14)
+
+// Pivot Detection
+ph = ta.pivothigh(high, pivot_len, pivot_len)
+pl = ta.pivotlow(low, pivot_len, pivot_len)
+
+var float last_ph_price = na
+var int   last_ph_index = na
+var float last_pl_price = na
+var int   last_pl_index = na
+
+if not na(ph)
+    last_ph_price := ph
+    last_ph_index := bar_index - pivot_len
+if not na(pl)
+    last_pl_price := pl
+    last_pl_index := bar_index - pivot_len
+
+// Market Structure Shift (CHoCH/BOS)
+var bool is_bullish = na
+var float highest_high = high
+var float lowest_low = low
+
+if high > highest_high
+    highest_high := high
+if low < lowest_low
+    lowest_low := low
+
+// Simple Structure Break Logic
+bool bos_bull = false
+bool bos_bear = false
+bool choch_bull = false
+bool choch_bear = false
+
+if not na(last_ph_price) and close > last_ph_price
+    if na(is_bullish) or is_bullish == false
+        choch_bull := true
+        is_bullish := true
+    else
+        bos_bull := true
+    last_ph_price := na // Reset to avoid multiple triggers for same pivot
+
+if not na(last_pl_price) and close < last_pl_price
+    if na(is_bullish) or is_bullish == true
+        choch_bear := true
+        is_bullish := false
+    else
+        bos_bear := true
+    last_pl_price := na
+
+// Visual Structure Labels
+plotshape(show_bos and choch_bull, "CHoCH Bull", shape.labelup, location.belowbar, color.green, size=size.tiny, text="CHoCH", textcolor=color.white)
+plotshape(show_bos and bos_bull, "BOS Bull", shape.labelup, location.belowbar, color.green, size=size.tiny, text="BOS", textcolor=color.white)
+plotshape(show_bos and choch_bear, "CHoCH Bear", shape.labeldown, location.abovebar, color.red, size=size.tiny, text="CHoCH", textcolor=color.white)
+plotshape(show_bos and bos_bear, "BOS Bear", shape.labeldown, location.abovebar, color.red, size=size.tiny, text="BOS", textcolor=color.white)
+
+// ==========================================
+// Zone Detection Logic
+// ==========================================
+float displacement_thresh = atr * min_displacement
+
+// Check for Bullish Displacement (Demand)
+bull_disp = (close - open) > displacement_thresh and close > high[1]
+if bull_disp
+    // Find the base candle (last red or small candle)
+    float zone_top = high[1]
+    float zone_bot = low[1]
+    for i = 1 to 5
+        if close[i] < open[i] or (high[i] - low[i]) < atr[i] * 0.5
+            zone_top := high[i]
+            zone_bot := low[i]
+            break
+
+    // Check if it's a Flip Zone (reaction at a Supply zone)
+    bool is_flip = false
+    if show_flips
+        for z in zones
+            if not z.is_demand and z.is_active and high > z.bottom and low < z.top
+                is_flip := true
+                break
+
+    new_zone = Zone.new(
+      top = zone_top,
+      bottom = zone_bot,
+      start_bar = bar_index[1],
+      is_demand = true,
+      zone_type = is_flip ? "Flip" : "SD"
+    )
+
+    c = is_flip ? color_flip : color_demand
+    new_zone.display_box := box.new(
+      left = bar_index[1],
+      top = zone_top,
+      right = bar_index,
+      bottom = zone_bot,
+      border_color = color.new(c, 50),
+      bgcolor = c,
+      extend = zone_type == "Extended" ? extend.right : extend.none
+    )
+    zones.push(new_zone)
+    if zones.size() > 50
+        zones.remove(0)
+
+// Check for Bearish Displacement (Supply)
+bear_disp = (open - close) > displacement_thresh and close < low[1]
+if bear_disp
+    float zone_top = high[1]
+    float zone_bot = low[1]
+    for i = 1 to 5
+        if close[i] > open[i] or (high[i] - low[i]) < atr[i] * 0.5
+            zone_top := high[i]
+            zone_bot := low[i]
+            break
+
+    bool is_flip = false
+    if show_flips
+        for z in zones
+            if z.is_demand and z.is_active and low < z.top and high > z.bottom
+                is_flip := true
+                break
+
+    new_zone = Zone.new(
+      top = zone_top,
+      bottom = zone_bot,
+      start_bar = bar_index[1],
+      is_demand = false,
+      zone_type = is_flip ? "Flip" : "SD"
+    )
+
+    c = is_flip ? color_flip : color_supply
+    new_zone.display_box := box.new(
+      left = bar_index[1],
+      top = zone_top,
+      right = bar_index,
+      bottom = zone_bot,
+      border_color = color.new(c, 50),
+      bgcolor = c,
+      extend = zone_type == "Extended" ? extend.right : extend.none
+    )
+    zones.push(new_zone)
+    if zones.size() > 50
+        zones.remove(0)
+
+// Update Zones (Mitigation and Breaker Logic)
+if zones.size() > 0
+    for i = 0 to zones.size() - 1
+        z = zones.get(i)
+        if z.is_active
+            // Extend box to current bar if not extended
+            if zone_type == "Box"
+                z.display_box.set_right(bar_index)
+
+            // Mitigation check (price taps the zone)
+            bool tapped = false
+            if z.is_demand
+                if low <= z.top and low >= z.bottom
+                    tapped := true
+            else
+                if high >= z.bottom and high <= z.top
+                    tapped := true
+
+            // Break check (zone failed)
+            bool broken = false
+            if z.is_demand
+                if close < z.bottom
+                    broken := true
+            else
+                if close > z.top
+                    broken := true
+
+            if broken
+                z.is_active := false
+                if show_breakers
+                    z.zone_type := "Breaker"
+                    z.display_box.set_bgcolor(color_breaker)
+                    z.display_box.set_border_color(color.new(color_breaker, 50))
+                else if show_mitigation
+                    z.zone_type := "Mitigation"
+
+                if zone_type == "Extended"
+                    z.display_box.set_extend(extend.none)
+                    z.display_box.set_right(bar_index)
+
+// ==========================================
+// Entry Signals & Visuals
+// ==========================================
+bool long_signal  = false
+bool short_signal = false
+string current_signal = ""
+var string last_signal_name = "None"
+
+if zones.size() > 0
+    for i = 0 to zones.size() - 1
+        z = zones.get(i)
+        if z.is_active
+            // Trend filter check
+            bool trend_ok = not use_ema or (z.is_demand ? close > ema_filter : close < ema_filter)
+
+            if trend_ok
+                if z.is_demand
+                    // Price action confirmation (rejection or bullish engulfing at zone)
+                    if low <= z.top and low >= z.bottom and close > open
+                        long_signal := true
+                        current_signal := z.zone_type + " Retest"
+                else
+                    if high >= z.bottom and high <= z.top and close < open
+                        short_signal := true
+                        current_signal := z.zone_type + " Retest"
+
+if current_signal != ""
+    last_signal_name := current_signal
+
+plotshape(long_signal, "Long Entry", shape.triangleup, location.belowbar, color.green, size=size.small, text="BUY", textcolor=color.white)
+plotshape(short_signal, "Short Entry", shape.triangledown, location.abovebar, color.red, size=size.small, text="SELL", textcolor=color.white)
+
+// ==========================================
+// Dashboard & Alerts
+// ==========================================
+// Alerts
+if long_signal
+    alert("Bullish " + current_signal + " Signal on " + syminfo.ticker, alert.freq_once_per_bar_close)
+if short_signal
+    alert("Bearish " + current_signal + " Signal on " + syminfo.ticker, alert.freq_once_per_bar_close)
+
+// Dashboard Table
+var table dash = table.new(position.top_right, 2, 5, border_width=1, border_color=color.gray)
+if show_dashboard and barstate.islast
+    table.cell(dash, 0, 0, "Metric", bgcolor=color.new(color.gray, 80), text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 1, 0, "Value", bgcolor=color.new(color.gray, 80), text_color=color.white, text_halign=text.align_center)
+
+    table.cell(dash, 0, 1, "Trend Bias", text_halign=text.align_left)
+    table.cell(dash, 1, 1, na(is_bullish) ? "NEUTRAL" : (is_bullish ? "BULLISH" : "BEARISH"), bgcolor=na(is_bullish) ? color.gray : (is_bullish ? color.green : color.red), text_color=color.white)
+
+    table.cell(dash, 0, 2, "EMA Filter", text_halign=text.align_left)
+    table.cell(dash, 1, 2, not use_ema ? "OFF" : (close > ema_filter ? "ABOVE" : "BELOW"), bgcolor=close > ema_filter ? color.green : color.red, text_color=color.white)
+
+    active_zones = 0
+    if zones.size() > 0
+        for i = 0 to zones.size() - 1
+            if zones.get(i).is_active
+                active_zones += 1
+
+    table.cell(dash, 0, 3, "Active Zones", text_halign=text.align_left)
+    table.cell(dash, 1, 3, str.tostring(active_zones), text_halign=text.align_center)
+
+    table.cell(dash, 0, 4, "Last Signal", text_halign=text.align_left)
+    table.cell(dash, 1, 4, last_signal_name, text_halign=text.align_center)
