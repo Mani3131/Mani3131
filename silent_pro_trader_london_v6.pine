@@ -89,15 +89,15 @@ if show_dashboard and barstate.islast
     table.cell(table_id = status_table, column = 1, row = 0, text = "Status",           text_color = color.white, text_halign = text.align_center)
 
     curr_session = is_asia ? "Asian" : is_london ? "London" : is_ny ? "New York" : "Outside"
-    table.cell(table_id = status_table, column = 0, row = 1, text = "Current Session", text_color = color.lightgray, text_halign = text.align_left)
+    table.cell(table_id = status_table, column = 0, row = 1, text = "Current Session", text_color = color.gray, text_halign = text.align_left)
     table.cell(table_id = status_table, column = 1, row = 1, text = curr_session,      text_color = is_asia ? color.purple : is_london ? color.teal : is_ny ? color.red : color.gray, text_halign = text.align_center)
 
     bias_text = is_bullish ? "BULLISH" : "BEARISH"
-    table.cell(table_id = status_table, column = 0, row = 2, text = "Trend Bias",      text_color = color.lightgray, text_halign = text.align_left)
+    table.cell(table_id = status_table, column = 0, row = 2, text = "Trend Bias",      text_color = color.gray, text_halign = text.align_left)
     table.cell(table_id = status_table, column = 1, row = 2, text = bias_text,        text_color = is_bullish ? color.green : color.red, text_halign = text.align_center)
 
-    table.cell(table_id = status_table, column = 0, row = 3, text = "Asian High",      text_color = color.lightgray, text_halign = text.align_left)
+    table.cell(table_id = status_table, column = 0, row = 3, text = "Asian High",      text_color = color.gray, text_halign = text.align_left)
     table.cell(table_id = status_table, column = 1, row = 3, text = str.tostring(asia_high, "#.#####"), text_color = color.white, text_halign = text.align_center)
 
-    table.cell(table_id = status_table, column = 0, row = 4, text = "Asian Low",       text_color = color.lightgray, text_halign = text.align_left)
+    table.cell(table_id = status_table, column = 0, row = 4, text = "Asian Low",       text_color = color.gray, text_halign = text.align_left)
     table.cell(table_id = status_table, column = 1, row = 4, text = str.tostring(asia_low, "#.#####"),  text_color = color.white, text_halign = text.align_center)
