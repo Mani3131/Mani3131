@@ -1,11 +1,13 @@
 //@version=6
-indicator("The Silent Pro Trader: 15m London Strategy", overlay=true, max_bars_back=5000)
+indicator("The Silent Pro Trader: Multi-Session Strategy", overlay=true, max_bars_back=5000)
 
 // --- Inputs ---
 grp_ses = "Session Settings"
-asia_session   = input.session("0000-0500", "Asian Session (UTC)", group=grp_ses)
-london_session = input.session("0700-1000", "London Open (UTC)", group=grp_ses)
-time_zone      = input.string("UTC", "Timezone", options=["UTC", "America/New_York", "Europe/London"], group=grp_ses)
+// Requested: Asian 0300-1200, London 1000-1900, NY 1500-2359 (UTC+3)
+asia_session   = input.session("0300-1200", "Asian Session", group=grp_ses)
+london_session = input.session("1000-1900", "London Session", group=grp_ses)
+ny_session     = input.session("1500-2359", "New York Session", group=grp_ses)
+time_zone      = input.string("GMT+3", "Timezone", options=["GMT+3", "UTC", "America/New_York", "Europe/London"], group=grp_ses)
 
 grp_vis = "Visual Settings"
 show_asia_box  = input.bool(true, "Show Asian Range Box", group=grp_vis)
@@ -20,16 +22,18 @@ dash_pos       = input.string("top_right", "Position", options=["top_right", "bo
 // --- Session Logic ---
 t_asia   = time(timeframe.period, asia_session, time_zone)
 t_london = time(timeframe.period, london_session, time_zone)
+t_ny     = time(timeframe.period, ny_session, time_zone)
 
 is_asia   = not na(t_asia)
 is_london = not na(t_london)
+is_ny     = not na(t_ny)
 
-// Detect Start of Session (Memory: not na(t) and na(t[1]))
+// Detect Start of Session
 asia_start   = is_asia and not is_asia[1]
 london_start = is_london and not is_london[1]
+ny_start     = is_ny and not is_ny[1]
 
 // --- Capture Asian Range ---
-// Memory: Explicitly cast na when initializing var variables
 var float asia_h = float(na)
 var float asia_l = float(na)
 
@@ -49,17 +53,19 @@ else if is_asia and show_asia_box
     box.set_top(asia_box, asia_h)
     box.set_bottom(asia_box, asia_l)
 
-// --- Sweep Detection (London Open) ---
+// --- Sweep Detection (London/NY) ---
 var bool sweep_h_detected = false
 var bool sweep_l_detected = false
 
-if london_start
+// Reset sweep detection at the start of the trading day (usually when Asian starts)
+if asia_start
     sweep_h_detected := false
     sweep_l_detected := false
 
-// Logic: Price wicks through Asia High/Low and closes back inside (BBS logic)
-bool bear_sweep = is_london and high > asia_h and close <= asia_h and not sweep_h_detected
-bool bull_sweep = is_london and low < asia_l and close >= asia_l and not sweep_l_detected
+// Logic: Price wicks through Asia High/Low and closes back inside during London or NY
+bool is_trading_session = is_london or is_ny
+bool bear_sweep = is_trading_session and high > asia_h and close <= asia_h and not sweep_h_detected
+bool bull_sweep = is_trading_session and low < asia_l and close >= asia_l and not sweep_l_detected
 
 if bear_sweep
     sweep_h_detected := true
@@ -79,14 +85,14 @@ plotshape(bull_sweep and is_displaced, "Bull Entry", shape.arrowup, location.bel
 
 // --- Dashboard ---
 var table_pos = dash_pos == "top_right" ? position.top_right : dash_pos == "bottom_right" ? position.bottom_right : dash_pos == "top_left" ? position.top_left : position.bottom_left
-var table dash = table.new(table_pos, 2, 4, border_width=1, border_color=color.gray, bgcolor=color.new(color.black, 20))
+var table dash = table.new(table_pos, 2, 5, border_width=1, border_color=color.gray, bgcolor=color.new(color.black, 20))
 
 if show_dash and barstate.islast
     table.cell(dash, 0, 0, "Silent Pro Trader", text_color=color.white, text_halign=text.align_center)
     table.merge_cells(dash, 0, 0, 1, 0)
 
     table.cell(dash, 0, 1, "Phase", text_color=color.gray)
-    table.cell(dash, 1, 1, is_asia ? "Asian Range" : is_london ? "London Open" : "Waiting", text_color=color.white)
+    table.cell(dash, 1, 1, is_ny ? "New York" : is_london ? "London" : is_asia ? "Asian" : "Waiting", text_color=color.white)
 
     table.cell(dash, 0, 2, "Asia High", text_color=color.gray)
     table.cell(dash, 1, 2, str.tostring(asia_h, "#.#####"), text_color=color.white)
@@ -94,6 +100,9 @@ if show_dash and barstate.islast
     table.cell(dash, 0, 3, "Asia Low", text_color=color.gray)
     table.cell(dash, 1, 3, str.tostring(asia_l, "#.#####"), text_color=color.white)
 
-// --- Plotting Levels (Memory: plot.style_linebr for HTF) ---
+    table.cell(dash, 0, 4, "Timezone", text_color=color.gray)
+    table.cell(dash, 1, 4, time_zone, text_color=color.white)
+
+// --- Plotting Levels ---
 plot(asia_h, "Asia High Level", color=color.new(color.gray, 50), style=plot.style_linebr)
 plot(asia_l, "Asia Low Level", color=color.new(color.gray, 50), style=plot.style_linebr)
