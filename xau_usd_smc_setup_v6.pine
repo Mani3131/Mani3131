@@ -1,0 +1,164 @@
+//@version=6
+indicator("XAU/USD Buy Entry Confirmation Workflow [SMC]", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// --- Inputs ---
+htf_tf           = input.timeframe("240", "HTF Timeframe (Daily/4H)")
+lookback_pivots  = input.int(10, "Pivot Lookback", minval = 1)
+show_dashboard   = input.bool(true, "Show Checklist Dashboard")
+show_projections = input.bool(true, "Show TP/SL Projections")
+london_session   = input.session("1000-1859", "London Session (UTC+3)")
+ny_session       = input.session("1500-1900", "New York Session (UTC+3)")
+
+// --- Colors & Styling (Standardized Palette) ---
+color_bull  = color.rgb(0, 201, 167) // Emerald
+color_bear  = color.rgb(255, 51, 102) // Rose
+color_gold  = color.rgb(255, 184, 0)   // Gold
+color_sweep = color_gold
+color_zone  = color.new(color_bull, 85)
+
+// --- Types ---
+type POI
+    float top
+    float bottom
+    int   start_bar
+    string type_label
+
+// --- Global State ---
+var bool sweep_occurred = false
+var bool mss_occurred   = false
+var bool retest_occurred = false
+var float sweep_low     = na
+
+// Reset logic at the start of a new HTF candle
+bool new_htf_bar = ta.change(time(htf_tf)) != 0
+if new_htf_bar
+    sweep_occurred  := false
+    mss_occurred    := false
+    retest_occurred := false
+    sweep_low       := na
+
+// --- 1. HTF Bias ---
+[htf_high, htf_low, htf_close] = request.security(syminfo.tickerid, htf_tf, [high, low, close], lookahead = barmerge.lookahead_on)
+htf_hh = ta.highest(htf_high, lookback_pivots)
+htf_hl = ta.lowest(htf_low, lookback_pivots)
+bool htf_bullish = htf_close > htf_hl and htf_high >= htf_hh[1]
+
+// --- 2. Liquidity Sweep ---
+ltf_pivot_low = ta.pivotlow(low, 3, 3)
+if not na(ltf_pivot_low) and htf_bullish
+    if low < ltf_pivot_low and close > ltf_pivot_low
+        sweep_occurred := true
+        sweep_low      := ltf_pivot_low
+        label.new(bar_index, low, "$$$", color=color_sweep, style=label.style_label_up, textcolor=color.black, size=size.tiny)
+
+// --- 3. CHoCH Confirmation ---
+ltf_pivot_high = ta.pivothigh(high, 3, 3)
+if sweep_occurred and not mss_occurred
+    float p_high = ta.valuewhen(not na(ltf_pivot_high), ltf_pivot_high, 0)
+    if ta.crossover(close, p_high)
+        mss_occurred := true
+        label.new(bar_index, high, "CHoCH", color=color_bull, style=label.style_label_down, textcolor=color.white, size=size.tiny)
+
+// --- 4. POI (OB/FVG) Identification ---
+var POI[] active_pois = array.new<POI>()
+
+// Limit array size to maintain performance
+if array.size(active_pois) > 50
+    array.remove(active_pois, 0)
+
+// FVG Detection
+if mss_occurred and low[0] > high[2] and close[1] > high[2]
+    array.push(active_pois, POI.new(low[0], high[2], bar_index - 1, "FVG"))
+    box.new(bar_index - 2, low[0], bar_index, high[2], bgcolor=color_zone, border_color=color_bull)
+
+// OB Detection
+if mss_occurred and close > open and close[1] < open[1] and close > high[1]
+    array.push(active_pois, POI.new(high[1], low[1], bar_index - 1, "OB"))
+    box.new(bar_index - 1, high[1], bar_index, low[1], bgcolor=color_zone, border_color=color_bull)
+
+// Retest Check
+if mss_occurred
+    for poi in active_pois
+        if low <= poi.top and high >= poi.bottom
+            retest_occurred := true
+            break
+
+// --- 5. Session Filter ---
+in_session = not na(time(timeframe.period, london_session, "GMT+3")) or not na(time(timeframe.period, ny_session, "GMT+3"))
+
+// --- 6. Confirmation Candle Detection ---
+float c_range = high - low
+bool is_engulfing = c_range > 0 and close > open and close[1] < open[1] and close > high[1]
+bool is_hammer = c_range > 0 and (close - low) / c_range > 0.6 and (math.abs(close - open) / c_range) < 0.4
+bool is_pinbar = c_range > 0 and (high - close) / c_range > 0.6 and (math.abs(close - open) / c_range) < 0.3
+bool bullish_confirmation = is_engulfing or is_hammer or is_pinbar
+
+// --- Final Entry Signal ---
+bool entry_signal = htf_bullish and sweep_occurred and mss_occurred and retest_occurred and in_session and bullish_confirmation
+
+// --- UI: Projections ---
+if entry_signal and show_projections
+    float sl = math.min(low, nz(sweep_low, low))
+    float entry_price = close
+    float risk = entry_price - sl
+    if risk > 0
+        float tp1 = entry_price + risk * 1
+        float tp2 = entry_price + risk * 2
+        float tp3 = entry_price + risk * 3
+
+        // Entry Line
+        line.new(bar_index, entry_price, bar_index + 15, entry_price, color=color_bull, style=line.style_dashed)
+        label.new(bar_index + 15, entry_price, "ENTRY", color=color_bull, style=label.style_label_left, size=size.tiny, textcolor=color.white)
+
+        // Stop Loss Line
+        line.new(bar_index, sl, bar_index + 15, sl, color=color_bear, style=line.style_solid)
+        label.new(bar_index + 15, sl, "SL", color=color_bear, style=label.style_label_left, size=size.tiny, textcolor=color.white)
+
+        // Take Profit Lines
+        line.new(bar_index, tp1, bar_index + 15, tp1, color=color_gold, style=line.style_dashed)
+        label.new(bar_index + 15, tp1, "TP1", color=color_gold, style=label.style_label_left, size=size.tiny, textcolor=color.black)
+
+        line.new(bar_index, tp2, bar_index + 15, tp2, color=color_gold, style=line.style_dashed)
+        label.new(bar_index + 15, tp2, "TP2", color=color_gold, style=label.style_label_left, size=size.tiny, textcolor=color.black)
+
+        line.new(bar_index, tp3, bar_index + 15, tp3, color=color_gold, style=line.style_dashed)
+        label.new(bar_index + 15, tp3, "TP3", color=color_gold, style=label.style_label_left, size=size.tiny, textcolor=color.black)
+
+// --- UI: Checklist Dashboard ---
+var table checklist = table.new(position.top_right, 2, 11, border_width = 1, frame_color = color.gray, border_color = color.gray)
+
+if show_dashboard and barstate.islast
+    table.cell(checklist, 0, 0, "XAU/USD BUY CHECKLIST", bgcolor = color.gray, text_color = color.white)
+    table.cell(checklist, 1, 0, "STATUS", bgcolor = color.gray, text_color = color.white)
+
+    table.cell(checklist, 0, 1, "1. HTF Bias Bullish")
+    table.cell(checklist, 1, 1, htf_bullish ? "✅" : "❌", text_color = htf_bullish ? color_bull : color_bear)
+
+    table.cell(checklist, 0, 2, "2. Liquidity Sweep Done")
+    table.cell(checklist, 1, 2, sweep_occurred ? "✅" : "⏳", text_color = sweep_occurred ? color_bull : color.orange)
+
+    table.cell(checklist, 0, 3, "3. CHoCH Confirmed")
+    table.cell(checklist, 1, 3, mss_occurred ? "✅" : "⏳", text_color = mss_occurred ? color_bull : color.orange)
+
+    table.cell(checklist, 0, 4, "4. Retest of OB / FVG")
+    table.cell(checklist, 1, 4, retest_occurred ? "✅" : "⏳", text_color = retest_occurred ? color_bull : color.orange)
+
+    table.cell(checklist, 0, 5, "5. In Good Session")
+    table.cell(checklist, 1, 5, in_session ? "✅" : "❌", text_color = in_session ? color_bull : color_bear)
+
+    table.cell(checklist, 0, 6, "6. Bullish Confirmation Candle")
+    table.cell(checklist, 1, 6, (retest_occurred and bullish_confirmation) ? "✅" : "⏳", text_color = (retest_occurred and bullish_confirmation) ? color_bull : color.orange)
+
+    table.cell(checklist, 0, 7, "7. SL in Logical Place")
+    table.cell(checklist, 1, 7, entry_signal ? "✅" : "⏳", text_color = entry_signal ? color_bull : color.orange)
+
+    table.cell(checklist, 0, 8, "8. R:R Favorable (1:3+)")
+    table.cell(checklist, 1, 8, entry_signal ? "✅" : "⏳", text_color = entry_signal ? color_bull : color.orange)
+
+    table.cell(checklist, 0, 9, "9. Risk Managed (1-2%)")
+    table.cell(checklist, 1, 9, "CHECK", text_color = color_gold)
+
+// --- Plotting & Alerts ---
+plotshape(entry_signal, title="Institutional Buy Entry", style=shape.triangleup, location=location.belowbar, color=color_bull, size=size.small)
+if entry_signal
+    alert("XAU/USD Institutional Buy Entry Confirmed!", alert.freq_once_per_bar)
