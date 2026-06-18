@@ -95,7 +95,7 @@ bool long_signal = false
 bool short_signal = false
 
 // Check for Long PA in Demand Zone
-if is_rejection_long
+if is_rejection_long and demand_zones.size() > 0
     for i = 0 to demand_zones.size() - 1
         Zone z = demand_zones.get(i)
         if z.active and low <= z.top and low >= z.bottom
@@ -103,7 +103,7 @@ if is_rejection_long
             break
 
 // Check for Short PA in Supply Zone
-if is_rejection_short
+if is_rejection_short and supply_zones.size() > 0
     for i = 0 to supply_zones.size() - 1
         Zone z = supply_zones.get(i)
         if z.active and high >= z.bottom and high <= z.top
