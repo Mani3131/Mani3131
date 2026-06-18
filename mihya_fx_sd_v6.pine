@@ -2,7 +2,7 @@
 // © Mani3131
 
 //@version=6
-indicator("MihyaFX Supply & Demand + Price Action", overlay = true, max_boxes_count = 500, max_labels_count = 500)
+indicator("MihyaFX Supply & Demand + Price Action", overlay = true, max_boxes_count = 500, max_labels_count = 500, max_lines_count = 500)
 
 // --- Inputs ---
 grp_sd = "Supply & Demand Settings"
@@ -93,10 +93,10 @@ if is_displacement_up
              bgcolor = demand_color, border_color = demand_color,
              extend = extend.none)
 
-    line l10 = show_sd_projections ? line.new(bar_index - 1, top + h * 1.0, bar_index, top + h * 1.0, color = demand_color, style = line.style_dashed) : line(na)
-    line l20 = show_sd_projections ? line.new(bar_index - 1, top + h * 2.0, bar_index, top + h * 2.0, color = demand_color, style = line.style_dashed) : line(na)
-    line l25 = show_sd_projections ? line.new(bar_index - 1, top + h * 2.5, bar_index, top + h * 2.5, color = demand_color, style = line.style_dotted) : line(na)
-    line l40 = show_sd_projections ? line.new(bar_index - 1, top + h * 4.0, bar_index, top + h * 4.0, color = demand_color, style = line.style_solid) : line(na)
+    line l10 = show_sd_projections ? line.new(bar_index - 1, top + h * 1.0, bar_index, top + h * 1.0, color = demand_color, style = line.style_dashed) : na
+    line l20 = show_sd_projections ? line.new(bar_index - 1, top + h * 2.0, bar_index, top + h * 2.0, color = demand_color, style = line.style_dashed) : na
+    line l25 = show_sd_projections ? line.new(bar_index - 1, top + h * 2.5, bar_index, top + h * 2.5, color = demand_color, style = line.style_dotted) : na
+    line l40 = show_sd_projections ? line.new(bar_index - 1, top + h * 4.0, bar_index, top + h * 4.0, color = demand_color, style = line.style_solid) : na
 
     demand_zones.push(Zone.new(b, top, bottom, false, true, l10, l20, l25, l40))
     if demand_zones.size() > max_zones
@@ -111,10 +111,10 @@ if is_displacement_down
              bgcolor = supply_color, border_color = supply_color,
              extend = extend.none)
 
-    line l10 = show_sd_projections ? line.new(bar_index - 1, bottom - h * 1.0, bar_index, bottom - h * 1.0, color = supply_color, style = line.style_dashed) : line(na)
-    line l20 = show_sd_projections ? line.new(bar_index - 1, bottom - h * 2.0, bar_index, bottom - h * 2.0, color = supply_color, style = line.style_dashed) : line(na)
-    line l25 = show_sd_projections ? line.new(bar_index - 1, bottom - h * 2.5, bar_index, bottom - h * 2.5, color = supply_color, style = line.style_dotted) : line(na)
-    line l40 = show_sd_projections ? line.new(bar_index - 1, bottom - h * 4.0, bar_index, bottom - h * 4.0, color = supply_color, style = line.style_solid) : line(na)
+    line l10 = show_sd_projections ? line.new(bar_index - 1, bottom - h * 1.0, bar_index, bottom - h * 1.0, color = supply_color, style = line.style_dashed) : na
+    line l20 = show_sd_projections ? line.new(bar_index - 1, bottom - h * 2.0, bar_index, bottom - h * 2.0, color = supply_color, style = line.style_dashed) : na
+    line l25 = show_sd_projections ? line.new(bar_index - 1, bottom - h * 2.5, bar_index, bottom - h * 2.5, color = supply_color, style = line.style_dotted) : na
+    line l40 = show_sd_projections ? line.new(bar_index - 1, bottom - h * 4.0, bar_index, bottom - h * 4.0, color = supply_color, style = line.style_solid) : na
 
     supply_zones.push(Zone.new(b, top, bottom, true, true, l10, l20, l25, l40))
     if supply_zones.size() > max_zones
@@ -159,6 +159,7 @@ if short_signal
 
 // --- Quarterly Theory Highlights ---
 var string qt_phase = "None"
+color qt_color = na
 if qt_enabled
     t = time(timeframe.period, "0000-2359", qt_tz)
     if not na(t)
@@ -181,13 +182,13 @@ if qt_enabled
             3 => "Distribution"
             4 => "Reversal"
 
-        qt_color = switch quarter_num
+        qt_color := switch quarter_num
             1 => color.new(color.blue, 90)
             2 => color.new(color.red, 90)
             3 => color.new(color.green, 90)
             4 => color.new(color.orange, 90)
 
-        bgcolor(qt_color, title = "Quarterly Phase Highlight")
+bgcolor(qt_color, title = "Quarterly Phase Highlight")
 
 // --- Dashboard ---
 var table status_table = table.new(position.top_right, 2, 5, border_width = 1, frame_color = color.gray, frame_width = 1)
