@@ -1,7 +1,7 @@
 //@version=6
 // Big Boss Market Algorithm - Updated with custom math
 // Formulas:
-// Daily Code (DC) = Last digit of Month + Last digit of Day + Sum of last two digits of Year
+// Daily Code (DC) = Last digit of Month + Last digit of Day + Last digit of Year
 // 4H Range = High - Low of the 4H candle
 // Estimated Range (ER) = (Month / Day) * 4H Range
 // Target Price = Close - ER
@@ -21,11 +21,10 @@ int yr = year(time, timezone)
 int mt = month(time, timezone)
 int dy = dayofmonth(time, timezone)
 
-// Daily Code (DC) calculation based on example: 06/18/2026 -> 6, 8, 8 (2+6) -> 22
+// Daily Code (DC) calculation based on example: 06/18/2026 -> 6, 8, 6 -> 20
 int dc_month = mt % 10
 int dc_day   = dy % 10
-int yr_last2 = yr % 100
-int dc_year  = int(yr_last2 / 10) + (yr_last2 % 10)
+int dc_year  = yr % 10
 int daily_code = dc_month + dc_day + dc_year
 
 // 2. 4H Range
