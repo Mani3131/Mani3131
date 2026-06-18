@@ -1,0 +1,174 @@
+//@version=6
+indicator("AI SMC Strategy [v6]", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=500)
+
+// --- Inputs ---
+// Market Structure
+pivot_len = input.int(3, "Pivot Lookback", minval=1)
+show_ms = input.bool(true, "Show Market Structure (BOS/CHoCH)")
+
+// Trend Ribbon
+ribbon_fast = input.int(20, "Ribbon Fast Length")
+ribbon_slow = input.int(50, "Ribbon Slow Length")
+ribbon_smooth = input.int(5, "Ribbon Smoothing")
+
+// FVG & Liquidity
+show_fvg = input.bool(true, "Show Fair Value Gaps")
+show_liq = input.bool(true, "Show Liquidity (BSL/SSL)")
+
+// Trading Range
+show_range = input.bool(true, "Show Premium/Discount Zones")
+
+// Signals
+show_signals = input.bool(true, "Show Signals (START/Long/Short)")
+
+// Colors
+color_bull = input.color(color.rgb(0, 188, 212), "Bullish Color")
+color_bear = input.color(color.rgb(244, 67, 54), "Bearish Color")
+color_start = input.color(color.rgb(233, 30, 99), "START Label Color")
+
+// --- Trend Ribbon ---
+fast_ma = ta.ema(close, ribbon_fast)
+slow_ma = ta.ema(close, ribbon_slow)
+smooth_fast = ta.sma(fast_ma, ribbon_smooth)
+smooth_slow = ta.sma(slow_ma, ribbon_smooth)
+
+ribbon_color = smooth_fast > smooth_slow ? color.new(color_bull, 60) : color.new(color_bear, 60)
+p1 = plot(smooth_fast, "Ribbon Fast", color=ribbon_color)
+p2 = plot(smooth_slow, "Ribbon Slow", color=ribbon_color)
+fill(p1, p2, color=ribbon_color, title="Trend Ribbon")
+
+// --- Market Structure ---
+atr = ta.atr(14)
+var float last_hi = na
+var float last_lo = na
+var bool hi_broken = false
+var bool lo_broken = false
+
+ph = ta.pivothigh(high, pivot_len, pivot_len)
+pl = ta.pivotlow(low, pivot_len, pivot_len)
+
+if not na(ph)
+    is_eqh = math.abs(ph - last_hi) < (atr * 0.2)
+    last_hi := ph
+    hi_broken := false
+    if show_ms
+        label.new(bar_index - pivot_len, ph, is_eqh ? "EQH" : "LO.H", color=color.new(color.gray, 100), textcolor=color.gray, style=label.style_label_down, size=size.small)
+
+if not na(pl)
+    is_eql = math.abs(pl - last_lo) < (atr * 0.2)
+    last_lo := pl
+    lo_broken := false
+    if show_ms
+        label.new(bar_index - pivot_len, pl, is_eql ? "EQL" : "LO.L", color=color.new(color.gray, 100), textcolor=color.gray, style=label.style_label_up, size=size.small)
+
+// BOS / CHoCH Detection
+var string trend = "none"
+
+if not hi_broken and not na(last_hi) and close > last_hi
+    hi_broken := true
+    label_text = trend == "bear" ? "CHoCH" : "BOS"
+    if show_ms
+        label.new(bar_index, high, label_text, color=color.new(color_bull, 80), textcolor=color_bull, style=label.style_label_down, size=size.small)
+    trend := "bull"
+
+if not lo_broken and not na(last_lo) and close < last_lo
+    lo_broken := true
+    label_text = trend == "bull" ? "CHoCH" : "BOS"
+    if show_ms
+        label.new(bar_index, low, label_text, color=color.new(color_bear, 80), textcolor=color_bear, style=label.style_label_up, size=size.small)
+    trend := "bear"
+
+// --- Fair Value Gaps (FVG) ---
+if show_fvg
+    // Bullish FVG
+    if low > high[2]
+        box.new(bar_index - 1, low, bar_index + 5, high[2], border_color=na, bgcolor=color.new(color_bull, 90), text="FVG", text_size=size.tiny, text_color=color_bull)
+    // Bearish FVG
+    if high < low[2]
+        box.new(bar_index - 1, high, bar_index + 5, low[2], border_color=na, bgcolor=color.new(color_bear, 90), text="FVG", text_size=size.tiny, text_color=color_bear)
+
+// --- Liquidity (BSL/SSL) ---
+var float bsl_level = na
+var float ssl_level = na
+var bool bsl_swept = false
+var bool ssl_swept = false
+
+if not na(ph)
+    bsl_level := ph
+    bsl_swept := false
+    if show_liq
+        label.new(bar_index - pivot_len, ph + (atr * 0.5), "BSL", color=color.new(color_bear, 100), textcolor=color_bear, style=label.style_label_down, size=size.tiny)
+
+if not na(pl)
+    ssl_level := pl
+    ssl_swept := false
+    if show_liq
+        label.new(bar_index - pivot_len, pl - (atr * 0.5), "SSL", color=color.new(color_bull, 100), textcolor=color_bull, style=label.style_label_up, size=size.tiny)
+
+if not bsl_swept and not na(bsl_level) and high > bsl_level
+    bsl_swept := true
+    if show_liq
+        label.new(bar_index, high, "Swept BSL", color=color.new(color_bear, 80), textcolor=color_bear, style=label.style_label_down, size=size.small)
+
+if not ssl_swept and not na(ssl_level) and low < ssl_level
+    ssl_swept := true
+    if show_liq
+        label.new(bar_index, low, "Swept SSL", color=color.new(color_bull, 80), textcolor=color_bull, style=label.style_label_up, size=size.small)
+
+// --- Trading Range (Premium/Discount) ---
+if show_range and not na(last_hi) and not na(last_lo)
+    mid = (last_hi + last_lo) / 2
+    // We update the range boxes every bar to simulate a real-time extension (in practice, we'd use 'var box' and 'box.set_right')
+    // For simplicity and to match the visual style of SMC indicators:
+    var box prem_box = box.new(bar_index, last_hi, bar_index, mid, border_color=na, bgcolor=color.new(color_bear, 95), text="Premium", text_color=color_bear, text_size=size.tiny, text_halign=text.align_right)
+    var box disc_box = box.new(bar_index, mid, bar_index, last_lo, border_color=na, bgcolor=color.new(color_bull, 95), text="Discount", text_color=color_bull, text_size=size.tiny, text_halign=text.align_right)
+    var line eq_line = line.new(bar_index, mid, bar_index, mid, color=color.new(color.gray, 50), style=line.style_dashed)
+
+    box.set_lefttop(prem_box, bar_index - 50, last_hi)
+    box.set_rightbottom(prem_box, bar_index, mid)
+    box.set_lefttop(disc_box, bar_index - 50, mid)
+    box.set_rightbottom(disc_box, bar_index, last_lo)
+    line.set_xy1(eq_line, bar_index - 50, mid)
+    line.set_xy2(eq_line, bar_index, mid)
+
+// --- Session Levels (PDH/PDL/Monday) ---
+t_pdh = request.security(syminfo.tickerid, "D", high[1])
+t_pdl = request.security(syminfo.tickerid, "D", low[1])
+
+plot(t_pdh, "PDH", color=color.new(color.blue, 50), style=plot.style_stepline)
+plot(t_pdl, "PDL", color=color.new(color.blue, 50), style=plot.style_stepline)
+
+// Monday labels
+is_monday = dayofweek == dayofweek.monday
+if is_monday and not is_monday[1]
+    label.new(bar_index, low, "MONDAY", color=color.new(color.blue, 100), textcolor=color.blue, style=label.style_label_up, size=size.small, yloc=yloc.belowbar)
+
+// --- Signal Logic (START / Long / Short) ---
+if show_signals
+    // START signal: CHoCH aligned with Trend Ribbon
+    start_bull = trend == "bull" and trend[1] != "bull" and smooth_fast > smooth_slow
+    start_bear = trend == "bear" and trend[1] != "bear" and smooth_fast < smooth_slow
+
+    if start_bull
+        label.new(bar_index, low, "START", color=color_start, textcolor=color.white, style=label.style_label_up, size=size.small)
+    if start_bear
+        label.new(bar_index, high, "START", color=color_start, textcolor=color.white, style=label.style_label_down, size=size.small)
+
+    // Long / Short signals: Confirmation of trend after structural break
+    long_signal = trend == "bull" and smooth_fast > smooth_slow and low <= (last_lo + (last_hi - last_lo) * 0.5) // Entry in discount
+    short_signal = trend == "bear" and smooth_fast < smooth_slow and high >= (last_hi - (last_hi - last_lo) * 0.5) // Entry in premium
+
+    // To avoid spamming, we trigger once per trend confirmation
+    var bool long_triggered = false
+    var bool short_triggered = false
+
+    if trend != trend[1]
+        long_triggered := false
+        short_triggered := false
+
+    if long_signal and not long_triggered
+        label.new(bar_index, low, "Long", color=color.green, textcolor=color.white, style=label.style_label_up, size=size.small)
+        long_triggered := true
+    if short_signal and not short_triggered
+        label.new(bar_index, high, "Short", color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small)
+        short_triggered := true
