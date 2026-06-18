@@ -1,0 +1,131 @@
+//@version=6
+indicator("Advanced Institutional Orderflow & Liquidity Suite", shorttitle="AI Orderflow v6", overlay=true, max_labels_count=500, max_boxes_count=500, max_lines_count=500)
+
+// Fix Historical Buffer Error
+max_bars_back(high, 500)
+max_bars_back(low, 500)
+max_bars_back(volume, 500)
+
+// --- INPUTS ---
+// Liquidity Sweep Settings
+grp_liq = "Liquidity Sweep Settings"
+p_len = input.int(20, "Pivot Lookback Period", minval=5, group=grp_liq)
+sweep_threshold = input.float(0.1, "Sweep Deviation %", minval=0.01, step=0.01, group=grp_liq)
+show_sweeps = input.bool(true, "Show Liquidity Sweeps", group=grp_liq)
+
+// Volume Profile & POC Settings
+grp_vp = "Volume Profile & POC Settings"
+vp_lookback = input.int(200, "VP Lookback Bars", minval=50, group=grp_vp)
+show_poc = input.bool(true, "Show Point of Control (POC)", group=grp_vp)
+poc_color = input.color(color.new(color.orange, 20), "POC Color", group=grp_vp)
+
+// Session Settings
+grp_sessions = "Institutional Session Settings"
+london_sess = input.string("1000-1900", "London Session", group=grp_sessions)
+ny_sess = input.string("1500-2359", "NY Session", group=grp_sessions)
+sess_tz = input.string("UTC+3", "Session Timezone", group=grp_sessions)
+
+// Dashboard Settings
+grp_dash = "Institutional Dashboard"
+show_dash = input.bool(true, "Show Analysis Dashboard", group=grp_dash)
+
+// --- LIQUIDITY SWEEP LOGIC ---
+ph = ta.pivothigh(p_len, p_len)
+pl = ta.pivotlow(p_len, p_len)
+
+var float last_ph = na
+var float last_pl = na
+
+if not na(ph)
+    last_ph := ph
+if not na(pl)
+    last_pl := pl
+
+// Detection
+sweep_high = not na(last_ph) and high > last_ph and close < last_ph
+sweep_low = not na(last_pl) and low < last_pl and close > last_pl
+
+if show_sweeps
+    if sweep_high
+        label.new(bar_index, high, "Liq Sweep ✗", color=color.new(color.red, 100), textcolor=color.red, style=label.style_label_down, size=size.small)
+        box.new(bar_index[1], last_ph, bar_index, high, bgcolor=color.new(color.red, 80), border_color=na)
+
+    if sweep_low
+        label.new(bar_index, low, "Liq Sweep ✓", color=color.new(color.teal, 100), textcolor=color.teal, style=label.style_label_up, size=size.small)
+        box.new(bar_index[1], last_pl, bar_index, low, bgcolor=color.new(color.teal, 80), border_color=na)
+
+// --- VOLUME PROFILE & POC ---
+var float poc_price = na
+var line poc_l = line.new(na, na, na, na, color=poc_color, width=2, style=line.style_dashed)
+var label poc_lab = label.new(na, na, "POC", color=color.new(color.orange, 100), textcolor=color.orange, style=label.style_label_left, size=size.tiny)
+
+if show_poc and barstate.islast
+    float max_v = 0.0
+    float best_p = 0.0
+
+    // We sample price levels within the lookback range
+    float hi = ta.highest(high, vp_lookback)
+    float lo = ta.lowest(low, vp_lookback)
+    int rows = 50
+    float step = (hi - lo) / rows
+
+    for i = 0 to rows - 1
+        float p_level = lo + (i * step)
+        float v_sum = 0.0
+
+        for j = 0 to vp_lookback - 1
+            if high[j] >= p_level and low[j] <= p_level
+                v_sum += volume[j]
+
+        if v_sum > max_v
+            max_v := v_sum
+            best_p := p_level
+
+    poc_price := best_p
+    line.set_xy1(poc_l, bar_index - vp_lookback, poc_price)
+    line.set_xy2(poc_l, bar_index + 20, poc_price)
+    label.set_xy(poc_lab, bar_index + 20, poc_price)
+
+// --- SIMULATED DELTA & SESSION NODES ---
+// Simulated Delta: (Close - Low) - (High - Close) / (High - Low) * Volume
+delta_calc = ((close - low) - (high - close)) / (high - low == 0 ? 1 : high - low) * volume
+var float delta_cum = 0.0
+delta_cum += delta_calc
+
+plotshape(math.abs(delta_calc) > ta.sma(volume, 20) * 0.5, "Delta Signal", shape.circle, location.bottom, color=delta_calc > 0 ? color.teal : color.red, size=size.tiny)
+
+// Session Detection
+in_london = not na(time(timeframe.period, london_sess, sess_tz))
+in_ny = not na(time(timeframe.period, ny_sess, sess_tz))
+
+// Session High Volume Nodes
+var float lon_poc = na
+var float ny_poc = na
+
+if in_london and not in_london[1]
+    lon_poc := close
+if in_ny and not in_ny[1]
+    ny_poc := close
+
+bgcolor(in_ny ? color.new(color.blue, 95) : in_london ? color.new(color.orange, 95) : na)
+
+// --- DASHBOARD ---
+if show_dash and barstate.islast
+    var table dash = table.new(position.top_right, 2, 6, bgcolor=color.new(color.black, 20), border_width=1, border_color=color.gray)
+
+    table.cell(dash, 0, 0, "Institutional Analysis", text_color=color.white, text_size=size.small)
+    table.merge_cells(dash, 0, 0, 1, 0)
+
+    table.cell(dash, 0, 1, "POC Level", text_color=color.gray, text_halign=text.align_left)
+    table.cell(dash, 1, 1, str.tostring(poc_price, "#.##"), text_color=color.orange)
+
+    table.cell(dash, 0, 2, "Cumulative Delta", text_color=color.gray, text_halign=text.align_left)
+    table.cell(dash, 1, 2, delta_cum > 0 ? "BULLISH" : "BEARISH", text_color=delta_cum > 0 ? color.teal : color.red)
+
+    liq_bias = sweep_low ? "SWEEP BULL" : sweep_high ? "SWEEP BEAR" : "NEUTRAL"
+    table.cell(dash, 0, 3, "Liquidity Bias", text_color=color.gray, text_halign=text.align_left)
+    table.cell(dash, 1, 3, liq_bias, text_color=liq_bias == "NEUTRAL" ? color.white : liq_bias == "SWEEP BULL" ? color.teal : color.red)
+
+    curr_sess = in_ny ? "NEW YORK" : in_london ? "LONDON" : "ASIAN/OFF"
+    table.cell(dash, 0, 4, "Current Session", text_color=color.gray, text_halign=text.align_left)
+    table.cell(dash, 1, 4, curr_sess, text_color=color.white)
