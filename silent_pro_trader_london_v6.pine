@@ -1,0 +1,103 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator(title = "Silent Pro Trader - BBS Strategy", overlay = true)
+
+// --- Inputs ---
+group_sessions = "Sessions (UTC+3)"
+group_logic    = "Strategy Logic"
+
+asia_sess      = input.session(defval = "0300-1200", title = "Asian Session", group = group_sessions)
+london_sess    = input.session(defval = "1000-1900", title = "London Session", group = group_sessions)
+ny_sess        = input.session(defval = "1500-2359", title = "New York Session", group = group_sessions)
+timezone       = input.string(defval = "UTC+3", title = "Timezone", group = group_sessions)
+
+ema_len        = input.int(defval = 200, title = "Trend Filter EMA Length", minval = 1, group = group_logic)
+show_dashboard = input.bool(defval = true, title = "Show Status Dashboard", group = group_logic)
+
+// --- Settings ---
+max_bars_back(time, 5000)
+max_bars_back(high, 5000)
+max_bars_back(low, 5000)
+
+// --- Colors ---
+color_asia   = color.new(#673ab7, 80) // Purple
+color_london = color.new(#26a69a, 80) // Green
+color_ny     = color.new(#ef5350, 80) // Red
+
+// --- Session Logic ---
+t_asia   = time(timeframe.period, asia_sess, timezone)
+t_london = time(timeframe.period, london_sess, timezone)
+t_ny     = time(timeframe.period, ny_sess, timezone)
+
+is_asia   = not na(t_asia)
+is_london = not na(t_london)
+is_ny     = not na(t_ny)
+
+// Start of session detection
+asia_start   = is_asia and na(t_asia[1])
+
+// --- Asian Range Tracking ---
+var float asia_high = na
+var float asia_low  = na
+
+// Captured levels from the PREVIOUS bar to prevent logic overlap during London open
+float current_asia_high = asia_high
+float current_asia_low  = asia_low
+
+if asia_start
+    asia_high := high
+    asia_low  := low
+else if is_asia
+    asia_high := math.max(asia_high, high)
+    asia_low  := math.min(asia_low, low)
+
+// Plot Asian Range
+plot_asia_high = plot(series = is_asia or is_london or is_ny ? asia_high : na, title = "Asian High", color = color.new(color.purple, 50), style = plot.style_linebr)
+plot_asia_low  = plot(series = is_asia or is_london or is_ny ? asia_low : na, title = "Asian Low", color = color.new(color.purple, 50), style = plot.style_linebr)
+fill(plot1 = plot_asia_high, plot2 = plot_asia_low, color = is_asia ? color_asia : na, title = "Asian Range Fill")
+
+// --- Trend Filter ---
+ema_filter = ta.ema(close, ema_len)
+plot(series = ema_filter, title = "Trend Filter EMA", color = color.gray)
+is_bullish = close > ema_filter
+is_bearish = close < ema_filter
+
+// --- BBS (Break-Block-Sweep) Logic ---
+sweep_high = (is_london or is_ny) and high > current_asia_high and close < current_asia_high
+sweep_low  = (is_london or is_ny) and low < current_asia_low and close > current_asia_low
+
+long_signal  = sweep_low and is_bullish
+short_signal = sweep_high and is_bearish
+
+// --- Visual Signals ---
+plotshape(series = long_signal, title = "BBS Long", style = shape.triangleup, location = location.belowbar, color = color.green, size = size.small)
+plotshape(series = short_signal, title = "BBS Short", style = shape.triangledown, location = location.abovebar, color = color.red, size = size.small)
+
+// Alerting
+if long_signal
+    alert(message = "BBS Long Entry at " + str.tostring(close), freq = alert.freq_once_per_bar)
+if short_signal
+    alert(message = "BBS Short Entry at " + str.tostring(close), freq = alert.freq_once_per_bar)
+
+// --- Dashboard ---
+if show_dashboard and barstate.islast
+    var table status_table = table.new(position = position.top_right, columns = 2, rows = 5, bgcolor = color.new(color.black, 10), border_width = 1, border_color = color.gray)
+
+    table.cell(table_id = status_table, column = 0, row = 0, text = "Silent Pro - BBS", text_color = color.white, text_halign = text.align_center)
+    table.cell(table_id = status_table, column = 1, row = 0, text = "Status",           text_color = color.white, text_halign = text.align_center)
+
+    curr_session = is_asia ? "Asian" : is_london ? "London" : is_ny ? "New York" : "Outside"
+    table.cell(table_id = status_table, column = 0, row = 1, text = "Current Session", text_color = color.gray, text_halign = text.align_left)
+    table.cell(table_id = status_table, column = 1, row = 1, text = curr_session,      text_color = is_asia ? color.purple : is_london ? color.teal : is_ny ? color.red : color.gray, text_halign = text.align_center)
+
+    bias_text = is_bullish ? "BULLISH" : "BEARISH"
+    table.cell(table_id = status_table, column = 0, row = 2, text = "Trend Bias",      text_color = color.gray, text_halign = text.align_left)
+    table.cell(table_id = status_table, column = 1, row = 2, text = bias_text,        text_color = is_bullish ? color.green : color.red, text_halign = text.align_center)
+
+    table.cell(table_id = status_table, column = 0, row = 3, text = "Asian High",      text_color = color.gray, text_halign = text.align_left)
+    table.cell(table_id = status_table, column = 1, row = 3, text = str.tostring(asia_high, "#.#####"), text_color = color.white, text_halign = text.align_center)
+
+    table.cell(table_id = status_table, column = 0, row = 4, text = "Asian Low",       text_color = color.gray, text_halign = text.align_left)
+    table.cell(table_id = status_table, column = 1, row = 4, text = str.tostring(asia_low, "#.#####"),  text_color = color.white, text_halign = text.align_center)
