@@ -1,0 +1,99 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+strategy("Com Lucro Liquidity Sweep Reversal Strategy", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, currency=currency.USD)
+
+// ==========================================
+// User Inputs
+// ==========================================
+// Strategy Settings
+pivot_len       = input.int(5, "Pivot Length for Liquidity", minval=1)
+trend_ema_len   = input.int(200, "HTF Trend EMA Length", minval=1)
+rr_ratio        = input.float(2.0, "Risk:Reward Ratio", minval=0.1, step=0.1)
+
+// Visual Settings
+show_pivots     = input.bool(true, "Show Liquidity Levels")
+show_labels     = input.bool(true, "Show Sweep Labels")
+
+// ==========================================
+// Calculations
+// ==========================================
+// HTF Trend Filter
+ema_filter = ta.ema(close, trend_ema_len)
+plot(ema_filter, "Trend EMA", color.new(color.gray, 50))
+
+// Identify Liquidity Levels (Pivots)
+ph = ta.pivothigh(high, pivot_len, pivot_len)
+pl = ta.pivotlow(low, pivot_len, pivot_len)
+
+// Track the most recent confirmed liquidity levels
+var float last_ph = na
+var float last_pl = na
+
+if not na(ph)
+    last_ph := ph
+if not na(pl)
+    last_pl := pl
+
+// Visualize Liquidity Levels
+plot(last_ph, "Liquidity High", color.new(color.red, 70), 1, plot.style_linebr, display = show_pivots ? display.all : display.none)
+plot(last_pl, "Liquidity Low", color.new(color.green, 70), 1, plot.style_linebr, display = show_pivots ? display.all : display.none)
+
+// ==========================================
+// Sweep Detection Logic
+// ==========================================
+// A Sweep occurs when price goes beyond the liquidity level but closes back within it.
+// We also add a small check to ensure the sweep candle has some rejection (wick).
+
+is_sweep_high = high > last_ph and close < last_ph and low < last_ph
+is_sweep_low  = low < last_pl and close > last_pl and high > last_pl
+
+// Trend Filters
+bullish_trend = close > ema_filter
+bearish_trend = close < ema_filter
+
+// Entry Conditions
+long_condition  = is_sweep_low and bullish_trend
+short_condition = is_sweep_high and bearish_trend
+
+// ==========================================
+// Strategy Execution
+// ==========================================
+// Track trade states to manage Stop Loss and Take Profit
+var float sl_price = na
+var float tp_price = na
+
+if long_condition and strategy.position_size == 0
+    sl_price := low
+    risk = close - sl_price
+    tp_price := close + (risk * rr_ratio)
+
+    strategy.entry("Long", strategy.long, comment="Sweep Low")
+    strategy.exit("Exit Long", "Long", stop=sl_price, limit=tp_price, comment_loss="SL", comment_profit="TP")
+
+if short_condition and strategy.position_size == 0
+    sl_price := high
+    risk = sl_price - close
+    tp_price := close - (risk * rr_ratio)
+
+    strategy.entry("Short", strategy.short, comment="Sweep High")
+    strategy.exit("Exit Short", "Short", stop=sl_price, limit=tp_price, comment_loss="SL", comment_profit="TP")
+
+// ==========================================
+// Visuals & Debugging
+// ==========================================
+plotshape(long_condition, "Long Sweep", shape.labelup, location.belowbar, color.green, text="SWEEP", textcolor=color.white, size=size.small, display = show_labels ? display.all : display.none)
+plotshape(short_condition, "Short Sweep", shape.labeldown, location.abovebar, color.red, text="SWEEP", textcolor=color.white, size=size.small, display = show_labels ? display.all : display.none)
+
+// Draw boxes for liquidity levels for better visualization
+var box liquidity_box_h = na
+var box liquidity_box_l = na
+
+if not na(ph)
+    box.delete(liquidity_box_h)
+    liquidity_box_h := box.new(bar_index - pivot_len, ph, bar_index, ph, color.red, 1, line.style_dashed, extend.right)
+
+if not na(pl)
+    box.delete(liquidity_box_l)
+    liquidity_box_l := box.new(bar_index - pivot_len, pl, bar_index, pl, color.green, 1, line.style_dashed, extend.right)
