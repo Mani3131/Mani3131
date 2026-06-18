@@ -1,0 +1,129 @@
+//@version=6
+indicator("ICEKID SA Sniper", overlay=true, max_boxes_count=500, max_labels_count=500)
+
+// This script is inspired by the ICEKID SA strategy as seen in the reference image.
+// It includes MTF Trend Analysis, Supply & Demand Zones with Volume, and Signal Confluence.
+
+// --- MTF Trend Logic ---
+get_trend(tf) =>
+    float ema20 = request.security(syminfo.tickerid, tf, ta.ema(close, 20)[1], lookahead=barmerge.lookahead_on)
+    float ema50 = request.security(syminfo.tickerid, tf, ta.ema(close, 50)[1], lookahead=barmerge.lookahead_on)
+    float c     = request.security(syminfo.tickerid, tf, close[1], lookahead=barmerge.lookahead_on)
+    int trend = 0 // 1: UP, -1: DOWN
+    if c > ema50 and ema20 > ema50
+        trend := 1
+    else if c < ema50 and ema20 < ema50
+        trend := -1
+    trend
+
+trend_m1   = get_trend("1")
+trend_m5   = get_trend("5")
+trend_m15  = get_trend("15")
+trend_m30  = get_trend("30")
+trend_h1   = get_trend("60")
+trend_h4   = get_trend("240")
+trend_d    = get_trend("D")
+
+// Overall Trend Calculation
+int total_trend = trend_m1 + trend_m5 + trend_m15 + trend_m30 + trend_h1 + trend_h4 + trend_d
+string overall_status = total_trend > 3 ? "STRONG BUY" : total_trend > 0 ? "BUY" : total_trend < -3 ? "STRONG SELL" : total_trend < 0 ? "SELL" : "NEUTRAL"
+
+// --- Dashboard Visualization ---
+var table trend_table = table.new(position.top_right, 2, 9, bgcolor=color.new(color.black, 20), border_width=1, border_color=color.gray)
+
+f_set_cell(r, tf_name, trend_val) =>
+    color txt_color = trend_val == 1 ? color.green : trend_val == -1 ? color.red : color.gray
+    string trend_txt = trend_val == 1 ? "UP" : trend_val == -1 ? "DOWN" : "NEUTRAL"
+    table.cell(trend_table, 0, r, tf_name, text_color=color.white, text_size=size.small)
+    table.cell(trend_table, 1, r, trend_txt, text_color=txt_color, text_size=size.small)
+
+if barstate.islast
+    table.cell(trend_table, 0, 0, "Timeframe", text_color=color.white, text_size=size.small)
+    table.cell(trend_table, 1, 0, "Trend", text_color=color.white, text_size=size.small)
+    f_set_cell(1, "M1", trend_m1)
+    f_set_cell(2, "M5", trend_m5)
+    f_set_cell(3, "M15", trend_m15)
+    f_set_cell(4, "M30", trend_m30)
+    f_set_cell(5, "H1", trend_h1)
+    f_set_cell(6, "H4", trend_h4)
+    f_set_cell(7, "DAILY", trend_d)
+
+    color overall_color = (overall_status == "STRONG BUY" or overall_status == "BUY") ? color.green : (overall_status == "STRONG SELL" or overall_status == "SELL") ? color.red : color.gray
+    table.cell(trend_table, 0, 8, "OVERALL", text_color=color.white, text_size=size.small)
+    table.cell(trend_table, 1, 8, overall_status, bgcolor=color.new(overall_color, 80), text_color=overall_color, text_size=size.small)
+
+// --- Supply & Demand Zones ---
+// Simplified Order Block / Zone Logic
+float ph = ta.pivothigh(high, 5, 5)
+float pl = ta.pivotlow(low, 5, 5)
+
+var box[] supply_boxes = array.new<box>()
+var label[] supply_labels = array.new<label>()
+var box[] demand_boxes = array.new<box>()
+var label[] demand_labels = array.new<label>()
+
+// Simulated volume for labels (percentage of 20-period average)
+float avg_vol = ta.sma(volume, 20)
+float vol_ratio = (volume / avg_vol) * 5 // Scaling for visual effect as seen in image
+
+if barstate.isconfirmed
+    if not na(ph)
+        box b = box.new(bar_index - 10, ph, bar_index, low[5], border_color=color.new(color.red, 50), bgcolor=color.new(color.red, 80))
+        array.push(supply_boxes, b)
+        label l = label.new(bar_index, ph, text=str.format("{0,number,#.###}K ({1,number,#}%)", volume/1000, vol_ratio*10), style=label.style_label_down, color=color.new(color.red, 50), textcolor=color.white, size=size.tiny)
+        array.push(supply_labels, l)
+        if array.size(supply_boxes) > 10
+            box.delete(array.shift(supply_boxes))
+            label.delete(array.shift(supply_labels))
+
+    if not na(pl)
+        box b = box.new(bar_index - 10, high[5], bar_index, pl, border_color=color.new(color.blue, 50), bgcolor=color.new(color.blue, 80))
+        array.push(demand_boxes, b)
+        label l = label.new(bar_index, pl, text=str.format("{0,number,#.###}K ({1,number,#}%)", volume/1000, vol_ratio*10), style=label.style_label_up, color=color.new(color.blue, 50), textcolor=color.white, size=size.tiny)
+        array.push(demand_labels, l)
+        if array.size(demand_boxes) > 10
+            box.delete(array.shift(demand_boxes))
+            label.delete(array.shift(demand_labels))
+
+// --- Signals & Trade Levels ---
+bool sell_signal = (overall_status == "STRONG SELL" or overall_status == "SELL") and ta.crossunder(close, ta.ema(close, 20)) and high > ta.ema(close, 50)
+bool buy_signal = (overall_status == "STRONG BUY" or overall_status == "BUY") and ta.crossover(close, ta.ema(close, 20)) and low < ta.ema(close, 50)
+
+float atr = ta.atr(14)
+
+if barstate.isconfirmed
+    if sell_signal
+        label.new(bar_index, high, "SELL", style=label.style_label_down, color=color.black, textcolor=color.white)
+        float entry = close
+        float sl = high + atr * 2
+        float tp1 = entry - (sl - entry) * 1.5
+        float tp2 = entry - (sl - entry) * 3.0
+        float tp3 = entry - (sl - entry) * 4.5
+        float tp4 = entry - (sl - entry) * 6.0
+        float tp5 = entry - (sl - entry) * 7.5
+
+        label.new(bar_index + 2, sl, "STOP LOSS: " + str.tostring(sl, "#.##"), style=label.style_label_left, color=color.red, textcolor=color.white)
+        label.new(bar_index + 2, entry, "ENTRY: " + str.tostring(entry, "#.##"), style=label.style_label_left, color=color.blue, textcolor=color.white)
+        label.new(bar_index + 5, tp1, "TP 1: " + str.tostring(tp1, "#.##"), style=label.style_label_left, color=color.green, textcolor=color.white)
+        label.new(bar_index + 5, tp2, "TP 2: " + str.tostring(tp2, "#.##"), style=label.style_label_left, color=color.green, textcolor=color.white)
+        label.new(bar_index + 5, tp3, "TP 3: " + str.tostring(tp3, "#.##"), style=label.style_label_left, color=color.green, textcolor=color.white)
+        label.new(bar_index + 5, tp4, "TP 4: " + str.tostring(tp4, "#.##"), style=label.style_label_left, color=color.green, textcolor=color.white)
+        label.new(bar_index + 5, tp5, "TP 5: " + str.tostring(tp5, "#.##"), style=label.style_label_left, color=color.green, textcolor=color.white)
+
+    if buy_signal
+        label.new(bar_index, low, "BUY", style=label.style_label_up, color=color.black, textcolor=color.white)
+        float entry = close
+        float sl = low - atr * 2
+        float tp1 = entry + (entry - sl) * 1.5
+        float tp2 = entry + (entry - sl) * 3.0
+        float tp3 = entry + (entry - sl) * 4.5
+        float tp4 = entry + (entry - sl) * 6.0
+        float tp5 = entry + (entry - sl) * 7.5
+
+        label.new(bar_index + 2, sl, "STOP LOSS: " + str.tostring(sl, "#.##"), style=label.style_label_left, color=color.red, textcolor=color.white)
+        label.new(bar_index + 2, entry, "ENTRY: " + str.tostring(entry, "#.##"), style=label.style_label_left, color=color.blue, textcolor=color.white)
+        label.new(bar_index + 5, tp1, "TP 1: " + str.tostring(tp1, "#.##"), style=label.style_label_left, color=color.green, textcolor=color.white)
+        label.new(bar_index + 5, tp2, "TP 2: " + str.tostring(tp2, "#.##"), style=label.style_label_left, color=color.green, textcolor=color.white)
+        label.new(bar_index + 5, tp3, "TP 3: " + str.tostring(tp3, "#.##"), style=label.style_label_left, color=color.green, textcolor=color.white)
+        label.new(bar_index + 5, tp4, "TP 4: " + str.tostring(tp4, "#.##"), style=label.style_label_left, color=color.green, textcolor=color.white)
+        label.new(bar_index + 5, tp5, "TP 5: " + str.tostring(tp5, "#.##"), style=label.style_label_left, color=color.green, textcolor=color.white)
