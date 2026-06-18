@@ -172,19 +172,16 @@ anchor_mn = hr_anchor * 60 + mn_anchor
 offset_mn = (total_mn - anchor_mn + 1440) % 1440
 quarter_num = (offset_mn / 90) % 4 + 1
 
-qt_phase = switch quarter_num
-    1 => "Accumulation"
-    2 => "Manipulation"
-    3 => "Distribution"
-    4 => "Reversal"
-    => "None"
+qt_phase = quarter_num == 1 ? "Accumulation" :
+           quarter_num == 2 ? "Manipulation" :
+           quarter_num == 3 ? "Distribution" :
+           quarter_num == 4 ? "Reversal" : "None"
 
-qt_color = not qt_enabled or na(t) ? na : switch quarter_num
-    1 => color.new(color.blue, 90)
-    2 => color.new(color.red, 90)
-    3 => color.new(color.green, 90)
-    4 => color.new(color.orange, 90)
-    => na
+qt_color = not qt_enabled or na(t) ? color(na) :
+           quarter_num == 1 ? color.new(color.blue, 90) :
+           quarter_num == 2 ? color.new(color.red, 90) :
+           quarter_num == 3 ? color.new(color.green, 90) :
+           quarter_num == 4 ? color.new(color.orange, 90) : color(na)
 
 bgcolor(qt_color, title = "Quarterly Phase Highlight")
 
