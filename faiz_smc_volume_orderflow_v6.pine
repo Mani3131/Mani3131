@@ -1,0 +1,207 @@
+//@version=6
+strategy("Faiz SMC: Volume Profile + Orderflow Strategy", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// ==========================================
+// Inputs
+// ==========================================
+grp_vp = "Volume Profile Settings"
+vp_lookback = input.int(100, "VP Lookback Bars", minval=10, group=grp_vp)
+vp_rows = input.int(30, "VP Rows", minval=5, maxval=100, group=grp_vp)
+va_percent = input.float(70.0, "Value Area Percent", minval=10, maxval=100, group=grp_vp)
+
+grp_of = "Orderflow Settings"
+big_trade_mult = input.float(2.0, "Big Trade Volume Multiplier", minval=1.0, group=grp_of)
+abs_wick_mult = input.float(1.5, "Absorption Wick/Body Ratio", minval=0.1, group=grp_of)
+vol_ma_len = input.int(20, "Volume MA Length", minval=1, group=grp_of)
+
+grp_setup = "Setup Settings"
+setup_wait_bars = input.int(5, "Max Bars for Follow-through", minval=1, group=grp_setup)
+level_proximity = input.float(0.5, "Level Proximity (ATR Multiplier)", minval=0.1, group=grp_setup)
+
+grp_session = "Session Settings"
+use_session = input.bool(true, "Use Session Filter", group=grp_session)
+session_london = input.session("1000-1900:23456", "London Session (UTC+3)", group=grp_session)
+session_ny = input.session("1500-1900:23456", "NY Session (UTC+3)", group=grp_session)
+timezone = input.string("GMT+3", "Timezone", group=grp_session)
+
+grp_risk = "Risk Management"
+sl_type = input.string("Swing", "Stop Loss Type", options=["Swing", "ATR", "Fixed"], group=grp_risk)
+sl_lookback = input.int(3, "Swing SL Lookback", minval=1, group=grp_risk)
+tp_ratio = input.float(2.0, "Take Profit R:R", minval=0.1, group=grp_risk)
+atr_len = input.int(14, "ATR Length", minval=1, group=grp_risk)
+atr_mult = input.float(2.0, "ATR Multiplier", minval=0.1, group=grp_risk)
+fixed_sl_perc = input.float(1.0, "Fixed SL %", minval=0.1, group=grp_risk)
+
+// ==========================================
+// Volume Profile Engine (Simplified for Strategy)
+// ==========================================
+// We calculate the VP over the last 'vp_lookback' bars.
+
+float high_range = ta.highest(high, vp_lookback)
+float low_range = ta.lowest(low, vp_lookback)
+float price_step = (high_range - low_range) / vp_rows
+
+var float[] bin_vol = array.new_float(vp_rows, 0.0)
+var float[] bin_price = array.new_float(vp_rows, 0.0)
+
+if barstate.islast
+    array.fill(bin_vol, 0.0)
+    for i = 0 to vp_rows - 1
+        array.set(bin_price, i, low_range + (i * price_step) + (price_step / 2))
+
+    for j = 0 to vp_lookback - 1
+        float bar_vol = volume[j]
+        float bar_close = close[j]
+        int bin_idx = math.min(vp_rows - 1, math.floor((bar_close - low_range) / price_step))
+        if bin_idx >= 0
+            array.set(bin_vol, bin_idx, array.get(bin_vol, bin_idx) + bar_vol)
+
+// Find POC
+float max_vol = 0.0
+int poc_idx = 0
+float total_vol = 0.0
+
+if barstate.islast
+    for i = 0 to vp_rows - 1
+        float v = array.get(bin_vol, i)
+        total_vol += v
+        if v > max_vol
+            max_vol := v
+            poc_idx := i
+
+float poc_price = barstate.islast ? array.get(bin_price, poc_idx) : na
+
+// Simplified Value Area (VAH, VAL)
+// We'll use a simpler approximation for the strategy to avoid complex VA sorting in Pine.
+var float vah = na
+var float val = na
+var float poc = na
+
+if barstate.islast
+    float va_target = total_vol * (va_percent / 100.0)
+    float current_va_vol = max_vol
+    int up_idx = poc_idx
+    int down_idx = poc_idx
+
+    while current_va_vol < va_target and (up_idx < vp_rows - 1 or down_idx > 0)
+        float up_vol = up_idx < vp_rows - 1 ? array.get(bin_vol, up_idx + 1) : 0.0
+        float down_vol = down_idx > 0 ? array.get(bin_vol, down_idx - 1) : 0.0
+
+        if up_vol >= down_vol and up_idx < vp_rows - 1
+            up_idx += 1
+            current_va_vol += up_vol
+        else if down_idx > 0
+            down_idx -= 1
+            current_va_vol += down_vol
+        else
+            break
+
+    vah := array.get(bin_price, up_idx)
+    val := array.get(bin_price, down_idx)
+    poc := poc_price
+
+// Persist levels
+var float final_poc = na
+var float final_vah = na
+var float final_val = na
+
+if barstate.islast
+    final_poc := poc
+    final_vah := vah
+    final_val := val
+
+// Use historical levels (approximation for backtesting)
+// In a real indicator, these update every bar. Here we want them to be somewhat stable.
+// For the strategy, we'll use a rolling VP or a session VP.
+// Let's use a simpler approach for historical bars: Pivot-based VP approximation.
+
+// ==========================================
+// Orderflow & Absorption Logic
+// ==========================================
+vol_ma = ta.sma(volume, vol_ma_len)
+// Big Trade: High volume candle relative to average
+is_big_trade = volume > vol_ma * big_trade_mult
+
+// Absorption: High volume with a long wick and small body, indicating rejection
+body_size = math.abs(close - open)
+upper_wick = high - math.max(open, close)
+lower_wick = math.min(open, close) - low
+
+// Bullish Absorption (Demand): Price tries to go lower but gets absorbed/bought back
+is_bull_abs = volume > vol_ma * 1.1 and lower_wick > body_size * abs_wick_mult and close > low + (high - low) * 0.25
+// Bearish Absorption (Supply): Price tries to go higher but gets absorbed/sold back
+is_bear_abs = volume > vol_ma * 1.1 and upper_wick > body_size * abs_wick_mult and close < high - (high - low) * 0.25
+
+// ==========================================
+// Strategy Logic
+// ==========================================
+// Session Filter
+is_in_session = not use_session or (not na(time(timeframe.period, session_london, timezone)) or not na(time(timeframe.period, session_ny, timezone)))
+
+// Levels interaction (using PREVIOUS day's levels to avoid lookahead bias)
+// Previous Day High/Low/Mid are used as robust proxies for Value Area boundaries and POC.
+[pdh, pdl, pdm] = request.security(syminfo.tickerid, "D", [high[1], low[1], hl2[1]])
+
+s_vah = pdh
+s_val = pdl
+s_poc = pdm
+
+atr_val = ta.atr(14)
+near_vah = math.abs(close - s_vah) < atr_val * level_proximity
+near_val = math.abs(close - s_val) < atr_val * level_proximity
+near_poc = math.abs(close - s_poc) < atr_val * level_proximity
+
+near_any_level = near_vah or near_val or near_poc
+
+long_setup = is_in_session and near_any_level and is_bull_abs
+short_setup = is_in_session and near_any_level and is_bear_abs
+
+// Entry Confirmation (Big Trade Follow Through)
+var int long_setup_bar = 0
+var int short_setup_bar = 0
+
+if long_setup
+    long_setup_bar := bar_index
+if short_setup
+    short_setup_bar := bar_index
+
+can_enter_long = (bar_index - long_setup_bar) <= setup_wait_bars and (bar_index - long_setup_bar) >= 0
+can_enter_short = (bar_index - short_setup_bar) <= setup_wait_bars and (bar_index - short_setup_bar) >= 0
+
+if can_enter_long and is_big_trade and close > open and strategy.position_size == 0
+    float sl = sl_type == "Swing" ? ta.lowest(low, sl_lookback) : (sl_type == "ATR" ? close - ta.atr(atr_len) * atr_mult : close * (1 - fixed_sl_perc / 100))
+    float tp = close + (close - sl) * tp_ratio
+    strategy.entry("Long", strategy.long, comment="Bull Abs + Big Trade")
+    strategy.exit("Exit Long", "Long", stop=sl, limit=tp)
+    long_setup_bar := 0
+    short_setup_bar := 0 // Cancel opposite setup
+
+if can_enter_short and is_big_trade and close < open and strategy.position_size == 0
+    float sl = sl_type == "Swing" ? ta.highest(high, sl_lookback) : (sl_type == "ATR" ? close + ta.atr(atr_len) * atr_mult : close * (1 + fixed_sl_perc / 100))
+    float tp = close - (sl - close) * tp_ratio
+    strategy.entry("Short", strategy.short, comment="Bear Abs + Big Trade")
+    strategy.exit("Exit Short", "Short", stop=sl, limit=tp)
+    short_setup_bar := 0
+    long_setup_bar := 0 // Cancel opposite setup
+
+// ==========================================
+// Visualization
+// ==========================================
+// Plot Session VP Proxies (Historical)
+plot(s_vah, "VAH Proxy (PDH)", color=color.new(color.red, 50), style=plot.style_linebr, linewidth=1)
+plot(s_poc, "POC Proxy (PDM)", color=color.new(color.orange, 50), style=plot.style_linebr, linewidth=1)
+plot(s_val, "VAL Proxy (PDL)", color=color.new(color.blue, 50), style=plot.style_linebr, linewidth=1)
+
+// Plot Real-time VP (Last bar only)
+plot(final_vah, "Current VAH", color=color.new(color.red, 20), style=plot.style_linebr, linewidth=3, offset=-vp_lookback)
+plot(final_poc, "Current POC", color=color.new(color.orange, 20), style=plot.style_linebr, linewidth=3, offset=-vp_lookback)
+plot(final_val, "Current VAL", color=color.new(color.blue, 20), style=plot.style_linebr, linewidth=3, offset=-vp_lookback)
+
+plotshape(series=is_big_trade, title="Big Trade Indicator", style=shape.circle, location=location.abovebar, color=color.new(color.purple, 30), size=size.tiny)
+plotshape(series=is_bull_abs, title="Bullish Absorption", style=shape.triangleup, location=location.belowbar, color=color.new(color.green, 0), size=size.small)
+plotshape(series=is_bear_abs, title="Bearish Absorption", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.small)
+
+// Alerts
+alertcondition(long_setup, "Long Setup Detected", "Faiz SMC: Bullish Absorption at key level!")
+alertcondition(short_setup, "Short Setup Detected", "Faiz SMC: Bearish Absorption at key level!")
+alertcondition(is_big_trade, "Big Trade Detected", "High volume 'Big Trade' candle detected.")
