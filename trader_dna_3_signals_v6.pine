@@ -1,0 +1,225 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © TraderDNA
+
+//@version=6
+indicator("Trader DNA - 3 Best SCALPING Signals", overlay = true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500)
+
+// ==========================================
+// --- CONSTANTS & INPUTS ---
+// ==========================================
+grp_ema = "EMA Settings"
+ema_fast_len   = input.int(5, "Fast EMA Length", minval = 1, group = grp_ema)
+ema_med_len    = input.int(13, "Medium EMA Length", minval = 1, group = grp_ema)
+ema_slow_len   = input.int(50, "Trend EMA Length", minval = 1, group = grp_ema)
+
+grp_visual = "Visual Settings"
+show_ema_cloud = input.bool(true, "Show EMA Cloud (5-13)", group = grp_visual)
+color_up       = input.color(color.rgb(0, 201, 167), "Bullish Color", group = grp_visual)
+color_dn       = input.color(color.rgb(255, 51, 102), "Bearish Color", group = grp_visual)
+color_trend    = input.color(color.rgb(255, 184, 0), "Trend EMA Color", group = grp_visual)
+
+// ==========================================
+// --- CALCULATIONS ---
+// ==========================================
+ema_fast = ta.ema(close, ema_fast_len)
+ema_med  = ta.ema(close, ema_med_len)
+ema_slow = ta.ema(close, ema_slow_len)
+
+// ==========================================
+// --- PLOTTING ---
+// ==========================================
+p_fast = plot(ema_fast, "Fast EMA", color = color.new(color_up, 10), linewidth = 1)
+p_med  = plot(ema_med, "Medium EMA", color = color.new(color_dn, 10), linewidth = 1)
+plot(ema_slow, "Trend EMA", color = color_trend, linewidth = 2)
+
+// Cloud logic
+cloud_color = show_ema_cloud ? (ema_fast > ema_med ? color.new(color_up, 80) : color.new(color_dn, 80)) : na
+fill(p_fast, p_med, cloud_color, "EMA Cloud")
+
+// Trend identification
+is_bull_trend = close > ema_slow and ema_fast > ema_med
+is_bear_trend = close < ema_slow and ema_fast < ema_med
+
+// ==========================================
+// --- CANDLESTICK PATTERNS ---
+// ==========================================
+body_size = math.abs(close - open)
+candle_range = high - low
+upper_wick = high - math.max(open, close)
+lower_wick = math.min(open, close) - low
+
+// Pin Bar Detection
+is_pin_bar_bull = candle_range > 0 and lower_wick >= candle_range * 0.66 and body_size <= candle_range * 0.33
+is_pin_bar_bear = candle_range > 0 and upper_wick >= candle_range * 0.66 and body_size <= candle_range * 0.33
+
+// Engulfing Detection
+is_engulf_bull = close > open and close[1] < open[1] and close >= open[1] and open <= close[1]
+is_engulf_bear = close < open and close[1] > open[1] and close <= open[1] and open >= close[1]
+
+// Rejection signals (Pin bar or Engulfing)
+is_rejection_bull = is_pin_bar_bull or is_engulf_bull
+is_rejection_bear = is_pin_bar_bear or is_engulf_bear
+
+// ==========================================
+// --- TRADING SIGNALS ---
+// ==========================================
+
+// Signal 1: Fast EMA Crossover (5 crossing 13) aligned with Trend (50)
+sig1_bull = ta.crossover(ema_fast, ema_med) and close > ema_slow
+sig1_bear = ta.crossunder(ema_fast, ema_med) and close < ema_slow
+
+// Signal 2: Pullback to Medium EMA (13) with Rejection
+sig2_bull = is_rejection_bull and low <= ema_med + (ta.atr(14) * 0.2) and low >= ema_med - (ta.atr(14) * 1.0) and is_bull_trend
+sig2_bear = is_rejection_bear and high >= ema_med - (ta.atr(14) * 0.2) and high <= ema_med + (ta.atr(14) * 1.0) and is_bear_trend
+
+// Signal 3: Pullback to Trend EMA (50) with Rejection
+sig3_bull = is_rejection_bull and low <= ema_slow + (ta.atr(14) * 0.5) and low >= ema_slow - (ta.atr(14) * 1.5) and close > ema_slow
+sig3_bear = is_rejection_bear and high >= ema_slow - (ta.atr(14) * 0.5) and high <= ema_slow + (ta.atr(14) * 1.5) and close < ema_slow
+
+// Combined signals
+long_signal  = sig1_bull or sig2_bull or sig3_bull
+short_signal = sig1_bear or sig2_bear or sig3_bear
+
+plotshape(long_signal,  "Long Signal",  shape.triangleup,   location.belowbar, color_up, size = size.small)
+plotshape(short_signal, "Short Signal", shape.triangledown, location.abovebar, color_dn, size = size.small)
+
+// ==========================================
+// --- TRADE MANAGEMENT (UDT) ---
+// ==========================================
+
+grp_trade = "Trade Management"
+risk_reward_1 = input.float(1.5, "Risk:Reward TP1", minval = 0.1, group = grp_trade)
+risk_reward_2 = input.float(3.0, "Risk:Reward TP2", minval = 0.1, group = grp_trade)
+risk_reward_3 = input.float(5.0, "Risk:Reward TP3", minval = 0.1, group = grp_trade)
+sl_atr_mult   = input.float(2.0, "SL ATR Multiplier", minval = 0.1, group = grp_trade)
+
+type Trade
+    bool   is_long
+    float  entry_price
+    float  sl_price
+    float  tp1_price
+    float  tp2_price
+    float  tp3_price
+    int    entry_bar
+    bool   is_active = true
+    line   l_entry
+    line   l_sl
+    line   l_tp1
+    line   l_tp2
+    line   l_tp3
+    label  lbl_setup
+
+var Trade[] active_trades = array.new<Trade>()
+
+// Function to handle trade exit checks
+check_exits(Trade t) =>
+    bool closed = false
+    if t.is_active
+        if t.is_long
+            if low <= t.sl_price
+                t.is_active := false
+                closed := true
+            else if high >= t.tp3_price
+                t.is_active := false
+                closed := true
+        else
+            if high >= t.sl_price
+                t.is_active := false
+                closed := true
+            else if low <= t.tp3_price
+                t.is_active := false
+                closed := true
+    closed
+
+// Logic to create new trades
+atr = ta.atr(14)
+if (long_signal or short_signal) and barstate.isconfirmed
+    bool is_long = long_signal
+    float entry = close
+    float sl = is_long ? low - (atr * sl_atr_mult) : high + (atr * sl_atr_mult)
+    float risk = math.abs(entry - sl)
+    float tp1 = is_long ? entry + (risk * risk_reward_1) : entry - (risk * risk_reward_1)
+    float tp2 = is_long ? entry + (risk * risk_reward_2) : entry - (risk * risk_reward_2)
+    float tp3 = is_long ? entry + (risk * risk_reward_3) : entry - (risk * risk_reward_3)
+
+    Trade new_trade = Trade.new(
+         is_long = is_long,
+         entry_price = entry,
+         sl_price = sl,
+         tp1_price = tp1,
+         tp2_price = tp2,
+         tp3_price = tp3,
+         entry_bar = bar_index
+         )
+
+    array.push(active_trades, new_trade)
+
+// Function to update visual objects for a trade
+update_visuals(Trade t) =>
+    color c_main = t.is_long ? color_up : color_dn
+
+    // If objects don't exist yet, create them
+    if na(t.l_entry)
+        t.l_entry   := line.new(t.entry_bar, t.entry_price, bar_index, t.entry_price, color = color.gray, style = line.style_dotted)
+        t.l_sl      := line.new(t.entry_bar, t.sl_price, bar_index, t.sl_price, color = color.red, style = line.style_solid, width = 1)
+        t.l_tp1     := line.new(t.entry_bar, t.tp1_price, bar_index, t.tp1_price, color = color.new(c_main, 50), style = line.style_solid)
+        t.l_tp2     := line.new(t.entry_bar, t.tp2_price, bar_index, t.tp2_price, color = color.new(c_main, 30), style = line.style_solid)
+        t.l_tp3     := line.new(t.entry_bar, t.tp3_price, bar_index, t.tp3_price, color = c_main, style = line.style_solid, width = 2)
+        t.lbl_setup := label.new(t.entry_bar, t.entry_price, t.is_long ? "LONG SETUP" : "SHORT SETUP",
+             color = color.new(c_main, 20), textcolor = color.white, style = label.style_label_left, size = size.small)
+        float(na)
+    else
+        // Update existing objects
+        line.set_x2(t.l_entry, bar_index)
+        line.set_x2(t.l_sl, bar_index)
+        line.set_x2(t.l_tp1, bar_index)
+        line.set_x2(t.l_tp2, bar_index)
+        line.set_x2(t.l_tp3, bar_index)
+        float(na)
+
+// Monitor active trades
+if array.size(active_trades) > 0
+    int i = array.size(active_trades) - 1
+    while i >= 0
+        Trade t = array.get(active_trades, i)
+        bool is_old = bar_index - t.entry_bar > 500
+
+        if check_exits(t) or is_old
+            t.is_active := false
+            // Visual cleanup on exit
+            line.delete(t.l_entry)
+            line.delete(t.l_sl)
+            line.delete(t.l_tp1)
+            line.delete(t.l_tp2)
+            line.delete(t.l_tp3)
+            label.delete(t.lbl_setup)
+            array.remove(active_trades, i)
+            float(na)
+        else
+            update_visuals(t)
+            float(na)
+
+        i := i - 1
+
+// ==========================================
+// --- DASHBOARD ---
+// ==========================================
+
+var table dash = table.new(position.top_right, 2, 4, bgcolor = color.rgb(15, 23, 42), border_width = 1, border_color = color.gray)
+
+if barstate.islast
+    table.cell(dash, 0, 0, "Strategy", text_color = color.white, text_size = size.small)
+    table.cell(dash, 1, 0, "Trader DNA", text_color = color_trend, text_size = size.small)
+
+    table.cell(dash, 0, 1, "Trend", text_color = color.white, text_size = size.small)
+    table.cell(dash, 1, 1, is_bull_trend ? "BULLISH" : is_bear_trend ? "BEARISH" : "NEUTRAL",
+         text_color = is_bull_trend ? color_up : is_bear_trend ? color_dn : color.gray, text_size = size.small)
+
+    table.cell(dash, 0, 2, "Signal 1 (X)", text_color = color.white, text_size = size.small)
+    table.cell(dash, 1, 2, sig1_bull ? "BULL" : sig1_bear ? "BEAR" : "NONE",
+         text_color = sig1_bull ? color_up : sig1_bear ? color_dn : color.gray, text_size = size.small)
+
+    table.cell(dash, 0, 3, "Pullback (PB)", text_color = color.white, text_size = size.small)
+    table.cell(dash, 1, 3, (sig2_bull or sig3_bull) ? "BULL" : (sig2_bear or sig3_bear) ? "BEAR" : "NONE",
+         text_color = (sig2_bull or sig3_bull) ? color_up : (sig2_bear or sig3_bear) ? color_dn : color.gray, text_size = size.small)
+    float(na)
