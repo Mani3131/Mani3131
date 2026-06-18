@@ -1,0 +1,214 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Gambo FRVP Strategy [Jules]", "Gambo FRVP", overlay = true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500)
+
+// ==========================================
+// -- Inputs --
+// ==========================================
+grp_impulse = "Impulse Detection"
+pivot_len   = input.int(5, "Pivot Length", minval = 1, group = grp_impulse, tooltip = "Lookback for identifying pivot highs/lows.")
+atr_mult    = input.float(2.0, "ATR Filter Multiplier", minval = 0.1, step = 0.1, group = grp_impulse, tooltip = "Minimum movement required for an impulse leg, as a multiplier of ATR.")
+
+grp_vp      = "Volume Profile"
+vp_bins     = input.int(50, "Number of Bins", minval = 10, maxval = 100, group = grp_vp, tooltip = "Granularity of the Volume Profile calculation.")
+
+grp_trade   = "Trade Settings"
+rr_ratio    = input.float(2.0, "Risk:Reward Ratio", minval = 0.1, step = 0.1, group = grp_trade, tooltip = "Target Profit relative to Risk.")
+use_patterns = input.bool(true, "Require Pattern Confirmation", group = grp_trade, tooltip = "If enabled, entry requires a Pin Bar or Engulfing pattern at the POC.")
+
+// ==========================================
+// -- Constants & Palette --
+// ==========================================
+COLOR_EMERALD = color.rgb(0, 201, 167)
+COLOR_ROSE    = color.rgb(255, 51, 102)
+
+// ==========================================
+// -- Types & Variables --
+// ==========================================
+type Leg
+    int start_index
+    int end_index
+    float start_price
+    float end_price
+    float poc
+    bool is_bullish
+    bool used = false
+    box bx
+    line ln_poc
+    label lbl_poc
+
+type Trade
+    float entry
+    float sl
+    float tp
+    bool active = true
+    label lbl_entry
+    line ln_sl
+    line ln_tp
+
+var Leg[] legs = array.new<Leg>()
+var Trade[] active_trades = array.new<Trade>()
+
+// ==========================================
+// -- Global Stateful Calculations --
+// ==========================================
+atr = ta.atr(14)
+ph = ta.pivothigh(pivot_len, pivot_len)
+pl = ta.pivotlow(pivot_len, pivot_len)
+
+// Global state tracking for pivots
+val_ph = ta.valuewhen(not na(ph), ph, 0)
+idx_ph = ta.valuewhen(not na(ph), bar_index - pivot_len, 0)
+val_pl = ta.valuewhen(not na(pl), pl, 0)
+idx_pl = ta.valuewhen(not na(pl), bar_index - pivot_len, 0)
+
+// Pattern Detection
+is_pinbar() =>
+    body = math.abs(close - open)
+    total_range = high - low
+    upper_wick = high - math.max(open, close)
+    lower_wick = math.min(open, close) - low
+    total_range > 0 and (upper_wick > total_range * 0.66 or lower_wick > total_range * 0.66) and body < total_range * 0.33
+
+is_engulfing() =>
+    bull = close > open and close[1] < open[1] and close > open[1] and open < close[1]
+    bear = close < open and close[1] > open[1] and close < open[1] and open > close[1]
+    [bull, bear]
+
+[is_bull_eng, is_bear_eng] = is_engulfing()
+is_bull_pattern = (is_pinbar() and close > open) or is_bull_eng
+is_bear_pattern = (is_pinbar() and close < open) or is_bear_eng
+
+// Volume Profile POC Calculation Function
+get_poc(int start_idx, int end_idx, float p1, float p2) =>
+    float poc_level = na
+    float min_p = math.min(p1, p2)
+    float max_p = math.max(p1, p2)
+
+    if end_idx > start_idx and max_p > min_p
+        float bin_size = (max_p - min_p) / vp_bins
+        // Safety: Check 5000-bar limit for history access
+        int lookback_start = bar_index - start_idx
+        int lookback_end = bar_index - end_idx
+
+        if bin_size > 0 and lookback_start < 5000 and lookback_end >= 0
+            float[] bins = array.new_float(vp_bins, 0.0)
+            for i = lookback_end to lookback_start
+                float p = close[i]
+                float v = nz(volume[i])
+                int bin_idx = math.min(vp_bins - 1, int(math.floor((p - min_p) / bin_size)))
+                if bin_idx >= 0
+                    array.set(bins, bin_idx, array.get(bins, bin_idx) + v)
+
+            int max_bin = 0
+            float max_vol = 0.0
+            for j = 0 to vp_bins - 1
+                float current_vol = array.get(bins, j)
+                if current_vol > max_vol
+                    max_vol := current_vol
+                    max_bin := j
+            poc_level := min_p + (max_bin + 0.5) * bin_size
+    poc_level
+
+// ==========================================
+// -- Impulse Detection --
+// ==========================================
+if not na(ph)
+    if (ph - val_pl) > nz(atr) * atr_mult
+        float leg_poc = get_poc(idx_pl, bar_index - pivot_len, val_pl, ph)
+        if not na(leg_poc)
+            legs.push(Leg.new(idx_pl, bar_index - pivot_len, val_pl, ph, leg_poc, true, false))
+
+if not na(pl)
+    if (val_ph - pl) > nz(atr) * atr_mult
+        float leg_poc = get_poc(idx_ph, bar_index - pivot_len, val_ph, pl)
+        if not na(leg_poc)
+            legs.push(Leg.new(idx_ph, bar_index - pivot_len, val_ph, pl, leg_poc, false, false))
+
+// Cleanup old legs
+if legs.size() > 50
+    Leg old = legs.shift()
+    box.delete(old.bx)
+    line.delete(old.ln_poc)
+    label.delete(old.lbl_poc)
+
+// ==========================================
+// -- Visuals & Trade Logic --
+// ==========================================
+if legs.size() > 0
+    Leg l = legs.get(legs.size() - 1)
+    if na(l.bx) // Draw if new
+        color col = l.is_bullish ? color.new(COLOR_EMERALD, 85) : color.new(COLOR_ROSE, 85)
+        l.bx := box.new(l.start_index, l.start_price, l.end_index, l.end_price, border_color = col, bgcolor = col)
+        l.ln_poc := line.new(l.end_index, l.poc, bar_index, l.poc, color = l.is_bullish ? COLOR_EMERALD : COLOR_ROSE, width = 1, style = line.style_dashed)
+        l.lbl_poc := label.new(bar_index, l.poc, "POC", color = color.new(color.black, 100), textcolor = l.is_bullish ? COLOR_EMERALD : COLOR_ROSE, style = label.style_label_left, size = size.tiny)
+
+    for i = 0 to legs.size() - 1
+        Leg leg = legs.get(i)
+        line.set_x2(leg.ln_poc, bar_index)
+        label.set_x(leg.lbl_poc, bar_index)
+
+        // Signal Detection
+        if not leg.used
+            if leg.is_bullish
+                if low <= leg.poc and high >= leg.poc and (not use_patterns or is_bull_pattern)
+                    float sl = leg.start_price
+                    float risk = leg.poc - sl
+                    if risk > 0
+                        float tp = leg.poc + risk * rr_ratio
+                        active_trades.push(Trade.new(leg.poc, sl, tp, true,
+                          label.new(bar_index, low, "BUY", color=COLOR_EMERALD, textcolor=color.white, style=label.style_label_up, size = size.small),
+                          line.new(bar_index, sl, bar_index + 5, sl, color=COLOR_ROSE, style=line.style_solid, width = 2),
+                          line.new(bar_index, tp, bar_index + 5, tp, color=COLOR_EMERALD, style=line.style_solid, width = 2)))
+                        leg.used := true
+            else
+                if high >= leg.poc and low <= leg.poc and (not use_patterns or is_bear_pattern)
+                    float sl = leg.start_price
+                    float risk = sl - leg.poc
+                    if risk > 0
+                        float tp = leg.poc - risk * rr_ratio
+                        active_trades.push(Trade.new(leg.poc, sl, tp, true,
+                          label.new(bar_index, high, "SELL", color=COLOR_ROSE, textcolor=color.white, style=label.style_label_down, size = size.small),
+                          line.new(bar_index, sl, bar_index + 5, sl, color=COLOR_ROSE, style=line.style_solid, width = 2),
+                          line.new(bar_index, tp, bar_index + 5, tp, color=COLOR_EMERALD, style=line.style_solid, width = 2)))
+                        leg.used := true
+
+// Cleanup old trades
+if active_trades.size() > 50
+    Trade old_t = active_trades.shift()
+    label.delete(old_t.lbl_entry)
+    line.delete(old_t.ln_sl)
+    line.delete(old_t.ln_tp)
+
+// Update Active Trades
+int trade_idx = 0
+while trade_idx < active_trades.size()
+    Trade tr = active_trades.get(trade_idx)
+    if tr.active
+        line.set_x2(tr.ln_sl, bar_index + 2)
+        line.set_x2(tr.ln_tp, bar_index + 2)
+
+        bool win = false
+        bool loss = false
+        if tr.entry > tr.sl
+            if high >= tr.tp
+                win := true
+            else if low <= tr.sl
+                loss := true
+        else
+            if low <= tr.tp
+                win := true
+            else if high >= tr.sl
+                loss := true
+
+        if win or loss or bar_index - label.get_x(tr.lbl_entry) > 300
+            tr.active := false
+    trade_idx += 1
+
+// ==========================================
+// -- Alerts --
+// ==========================================
+alertcondition(is_bull_pattern, "Bullish Pattern", "Bullish rejection pattern detected")
+alertcondition(is_bear_pattern, "Bearish Pattern", "Bearish rejection pattern detected")
