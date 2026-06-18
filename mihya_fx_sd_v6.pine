@@ -158,35 +158,33 @@ if short_signal
     alert("Sell Signal: Price Action Rejection in Supply Zone", alert.freq_once_per_bar_close)
 
 // --- Quarterly Theory Highlights ---
-var string qt_phase = "None"
-color qt_color = na
-if qt_enabled
-    t = time(timeframe.period, "0000-2359", qt_tz)
-    if not na(t)
-        hr = hour(t, qt_tz)
-        mn = minute(t, qt_tz)
-        total_mn = hr * 60 + mn
+t = time(timeframe.period, "0000-2359", qt_tz)
+hr = hour(t, qt_tz)
+mn = minute(t, qt_tz)
+total_mn = hr * 60 + mn
 
-        // Parse anchor
-        hr_anchor = str.tonumber(str.substring(qt_anchor, 0, 2))
-        mn_anchor = str.tonumber(str.substring(qt_anchor, 2, 4))
-        anchor_mn = hr_anchor * 60 + mn_anchor
+// Parse anchor
+hr_anchor = str.tonumber(str.substring(qt_anchor, 0, 2))
+mn_anchor = str.tonumber(str.substring(qt_anchor, 2, 4))
+anchor_mn = hr_anchor * 60 + mn_anchor
 
-        // Calculate quarter
-        offset_mn = (total_mn - anchor_mn + 1440) % 1440
-        quarter_num = (offset_mn / 90) % 4 + 1
+// Calculate quarter
+offset_mn = (total_mn - anchor_mn + 1440) % 1440
+quarter_num = (offset_mn / 90) % 4 + 1
 
-        qt_phase := switch quarter_num
-            1 => "Accumulation"
-            2 => "Manipulation"
-            3 => "Distribution"
-            4 => "Reversal"
+qt_phase = switch quarter_num
+    1 => "Accumulation"
+    2 => "Manipulation"
+    3 => "Distribution"
+    4 => "Reversal"
+    => "None"
 
-        qt_color := switch quarter_num
-            1 => color.new(color.blue, 90)
-            2 => color.new(color.red, 90)
-            3 => color.new(color.green, 90)
-            4 => color.new(color.orange, 90)
+qt_color = not qt_enabled or na(t) ? na : switch quarter_num
+    1 => color.new(color.blue, 90)
+    2 => color.new(color.red, 90)
+    3 => color.new(color.green, 90)
+    4 => color.new(color.orange, 90)
+    => na
 
 bgcolor(qt_color, title = "Quarterly Phase Highlight")
 
