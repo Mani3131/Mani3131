@@ -116,7 +116,7 @@ manage_zones(supply_zones)
 manage_zones(demand_zones)
 
 // --- Auto Fibonacci OTE Logic ---
-var fib_tool = Fib(na, na, na, na, na, na)
+var fib_tool = Fib.new(line(na), line(na), line(na), line(na), line(na), line(na))
 
 if show_fib
     float ph = ta.highest(high, fib_lookback)
@@ -165,7 +165,7 @@ mn_anchor = str.tonumber(str.substring(qt_anchor, 2, 4))
 anchor_mn = hr_anchor * 60 + mn_anchor
 
 offset_mn = (total_mn - anchor_mn + 1440) % 1440
-quarter_num = (offset_mn / 90) % 4 + 1
+quarter_num = math.floor(offset_mn / 90) % 4 + 1
 
 qt_phase = quarter_num == 1 ? "Accumulation" :
            quarter_num == 2 ? "Manipulation" :
