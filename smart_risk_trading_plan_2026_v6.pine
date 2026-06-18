@@ -1,0 +1,205 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Smart Risk Trading Plan 2026", overlay = true, max_boxes_count = 500, max_labels_count = 500, max_lines_count = 500, max_bars_back = 5000)
+
+// --- Inputs ---
+grp_htf = "Higher Timeframe Settings"
+htf_tf = input.timeframe("60", "HTF Timeframe", group = grp_htf)
+htf_lookback = input.int(100, "HTF Lookback Bars", minval = 10, group = grp_htf)
+htf_displacement_mult = input.float(2.0, "Displacement Multiplier (ATR)", minval = 1.0, group = grp_htf)
+
+grp_ltf = "Lower Timeframe Settings"
+ltf_pivot_len = input.int(3, "LTF Pivot Length", minval = 1, group = grp_ltf)
+
+grp_risk = "Risk Management"
+rr_ratio = input.float(2.0, "Risk/Reward Ratio", minval = 0.1, group = grp_risk)
+
+grp_vis = "Visuals"
+show_htf_zones = input.bool(true, "Show HTF Zones", group = grp_vis)
+show_ltf_struct = input.bool(true, "Show LTF Structure", group = grp_vis)
+show_dashboard = input.bool(true, "Show Dashboard", group = grp_vis)
+
+// --- Colors ---
+color_demand = color.new(color.green, 80)
+color_demand_border = color.new(color.green, 20)
+color_supply = color.new(color.red, 80)
+color_supply_border = color.new(color.red, 20)
+color_choch = color.purple
+
+// --- Types ---
+type Zone
+    float top
+    float bottom
+    int start_bar
+    bool is_supply
+    bool active = true
+
+// --- Global Variables ---
+var Zone[] htf_zones = array.new<Zone>()
+
+// --- HTF Logic ---
+// Fetching previous HTF candle data to avoid lookahead bias and ensure we work with closed candles
+[h_o_prev, h_h_prev, h_l_prev, h_c_prev, h_atr_prev, h_h_base, h_l_base] = request.security(syminfo.tickerid, htf_tf, [open[1], high[1], low[1], close[1], ta.atr(14)[1], high[2], low[2]], lookahead = barmerge.lookahead_on)
+
+htf_new_bar = timeframe.change(htf_tf)
+
+if htf_new_bar
+    float body = math.abs(h_c_prev - h_o_prev)
+
+    if body > h_atr_prev * htf_displacement_mult
+        bool is_bullish_displacement = h_c_prev > h_o_prev
+
+        Zone new_zone = Zone.new(h_h_base, h_l_base, bar_index, not is_bullish_displacement)
+        array.push(htf_zones, new_zone)
+
+        if array.size(htf_zones) > 20 // Limit for performance
+            array.remove(htf_zones, 0)
+
+// Mitigation Logic
+if array.size(htf_zones) > 0
+    for i = 0 to array.size(htf_zones) - 1
+        Zone z = array.get(htf_zones, i)
+        if z.active
+            if z.is_supply
+                if high > z.top // Supply broken
+                    z.active := false
+            else
+                if low < z.bottom // Demand broken
+                    z.active := false
+
+// --- Visualizing HTF Zones ---
+var box[] zone_boxes = array.new_box()
+if barstate.islast and show_htf_zones
+    for b in zone_boxes
+        box.delete(b)
+    array.clear(zone_boxes)
+
+    if array.size(htf_zones) > 0
+        for i = 0 to array.size(htf_zones) - 1
+            Zone z = array.get(htf_zones, i)
+            if z.active
+                array.push(zone_boxes, box.new(z.start_bar, z.top, bar_index + 5, z.bottom,
+                     bgcolor = z.is_supply ? color_supply : color_demand,
+                     border_color = z.is_supply ? color_supply_border : color_demand_border,
+                     extend = extend.right))
+
+// --- LTF Structure & CHoCH Logic ---
+float ph = ta.pivothigh(high, ltf_pivot_len, ltf_pivot_len)
+float pl = ta.pivotlow(low, ltf_pivot_len, ltf_pivot_len)
+
+// FVG Detection (3-candle pattern)
+bool fvg_up = low > high[2]
+bool fvg_down = high < low[2]
+
+if fvg_up
+    box.new(bar_index - 2, high[2], bar_index, low, bgcolor = color.new(color.green, 95), border_color = na, text = "FVG", text_size = size.tiny, text_color = color.new(color.green, 50))
+if fvg_down
+    box.new(bar_index - 2, high, bar_index, low[2], bgcolor = color.new(color.red, 95), border_color = na, text = "FVG", text_size = size.tiny, text_color = color.new(color.red, 50))
+
+var float last_ph = float(na)
+var float last_pl = float(na)
+var int last_ph_idx = int(na)
+var int last_pl_idx = int(na)
+// CE10173 Fix: Use int for trend bias (0: na, 1: bullish, -1: bearish)
+var int trend_bias = 0
+
+if not na(ph)
+    last_ph := ph
+    last_ph_idx := bar_index - ltf_pivot_len
+if not na(pl)
+    last_pl := pl
+    last_pl_idx := bar_index - ltf_pivot_len
+
+// Initializing bias if not set
+if trend_bias == 0 and not na(last_ph) and not na(last_pl)
+    trend_bias := close > (last_ph + last_pl) / 2 ? 1 : -1
+
+// Detect tapping of HTF Zones
+bool in_demand = false
+bool in_supply = false
+if array.size(htf_zones) > 0
+    for i = 0 to array.size(htf_zones) - 1
+        Zone z = array.get(htf_zones, i)
+        if z.active
+            if not z.is_supply and low <= z.top and low >= z.bottom
+                in_demand := true
+            if z.is_supply and high >= z.bottom and high <= z.top
+                in_supply := true
+
+// CHoCH Detection
+var bool entry_waiting = false
+var string setup_type = "" // "BUY" or "SELL"
+var float entry_price = float(na)
+var float sl_price = float(na)
+var float tp_price = float(na)
+var int setup_bar = 0
+
+if in_demand and trend_bias == -1
+    if high > last_ph
+        trend_bias := 1
+        entry_waiting := true
+        setup_type := "BUY"
+        setup_bar := bar_index
+        sl_price := ta.lowest(low, math.max(1, math.min(500, bar_index - last_ph_idx + 1)))
+        entry_price := high[1]
+        tp_price := entry_price + (entry_price - sl_price) * rr_ratio
+
+        box.new(bar_index - 1, high[1], bar_index, low[1], bgcolor = color.new(color.green, 90), border_color = color.new(color.green, 50), text = "OB", text_size = size.tiny)
+        label.new(bar_index, high, "CHoCH (Bullish Setup)", color = color_choch, textcolor = color.white, style = label.style_label_down)
+
+if in_supply and trend_bias == 1
+    if low < last_pl
+        trend_bias := -1
+        entry_waiting := true
+        setup_type := "SELL"
+        setup_bar := bar_index
+        sl_price := ta.highest(high, math.max(1, math.min(500, bar_index - last_pl_idx + 1)))
+        entry_price := low[1]
+        tp_price := entry_price - (sl_price - entry_price) * rr_ratio
+
+        box.new(bar_index - 1, high[1], bar_index, low[1], bgcolor = color.new(color.red, 90), border_color = color.new(color.red, 50), text = "OB", text_size = size.tiny)
+        label.new(bar_index, low, "CHoCH (Bearish Setup)", color = color_choch, textcolor = color.white, style = label.style_label_up)
+
+// Entry Execution
+if entry_waiting
+    if setup_type == "BUY"
+        if low <= entry_price
+            label.new(bar_index, low, "BUY SIGNAL\nTP: " + str.tostring(tp_price, "#.##") + "\nSL: " + str.tostring(sl_price, "#.##"), color = color.green, textcolor = color.white, style = label.style_label_up)
+            entry_waiting := false
+        else if low < sl_price or bar_index - setup_bar > 50 // Invalidation
+            entry_waiting := false
+
+    if setup_type == "SELL"
+        if high >= entry_price
+            label.new(bar_index, high, "SELL SIGNAL\nTP: " + str.tostring(tp_price, "#.##") + "\nSL: " + str.tostring(sl_price, "#.##"), color = color.red, textcolor = color.white, style = label.style_label_down)
+            entry_waiting := false
+        else if high > sl_price or bar_index - setup_bar > 50 // Invalidation
+            entry_waiting := false
+
+// Visualizing Structure
+plotshape(show_ltf_struct ? ph : na, "PH", shape.triangledown, location.abovebar, color.red, offset = -ltf_pivot_len, size = size.tiny)
+plotshape(show_ltf_struct ? pl : na, "PL", shape.triangleup, location.belowbar, color.green, offset = -ltf_pivot_len, size = size.tiny)
+
+// --- Dashboard ---
+var table dashboard = table.new(position.top_right, 2, 5, bgcolor = color.new(color.black, 50), border_width = 1, border_color = color.gray)
+
+if barstate.islast and show_dashboard
+    table.cell(dashboard, 0, 0, "Metric", text_color = color.white, text_size = size.small)
+    table.cell(dashboard, 1, 0, "Value", text_color = color.white, text_size = size.small)
+
+    table.cell(dashboard, 0, 1, "HTF Bias", text_color = color.white, text_size = size.small)
+    table.cell(dashboard, 1, 1, trend_bias == 1 ? "BULLISH" : trend_bias == -1 ? "BEARISH" : "NEUTRAL", text_color = trend_bias == 1 ? color.green : trend_bias == -1 ? color.red : color.white, text_size = size.small)
+
+    table.cell(dashboard, 0, 2, "Setup Status", text_color = color.white, text_size = size.small)
+    table.cell(dashboard, 1, 2, entry_waiting ? "WAITING FOR RETEST" : "MONITORING", text_color = entry_waiting ? color.orange : color.white, text_size = size.small)
+
+    table.cell(dashboard, 0, 3, "In HTF Zone", text_color = color.white, text_size = size.small)
+    table.cell(dashboard, 1, 3, (in_demand or in_supply) ? "YES" : "NO", text_color = (in_demand or in_supply) ? color.yellow : color.white, text_size = size.small)
+
+    table.cell(dashboard, 0, 4, "Script", text_color = color.white, text_size = size.small)
+    table.cell(dashboard, 1, 4, "Smart Risk 2026", text_color = color.white, text_size = size.small)
+
+// Placeholder
+plot(close, color = color.new(color.white, 100))
