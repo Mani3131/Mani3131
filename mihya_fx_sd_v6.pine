@@ -1,0 +1,159 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("MihyaFX Supply & Demand + Price Action", overlay = true, max_boxes_count = 500, max_labels_count = 500)
+
+// --- Inputs ---
+grp_sd = "Supply & Demand Settings"
+displacement_threshold = input.float(2.0, "Displacement Threshold (ATR Multiplier)", minval = 1.0, group = grp_sd, tooltip = "Minimum candle body size relative to ATR to consider it a displacement move.")
+atr_length = input.int(14, "ATR Length", minval = 1, group = grp_sd)
+max_zones = input.int(10, "Max Active Zones (per type)", minval = 1, maxval = 50, group = grp_sd)
+
+grp_pa = "Price Action Confirmation"
+rejection_ratio = input.float(1.5, "Rejection Wick Ratio", minval = 1.0, group = grp_pa, tooltip = "Wick must be this many times larger than the body to count as a rejection.")
+
+grp_vis = "Visuals"
+supply_color = input.color(color.new(color.red, 80), "Supply Zone Color", group = grp_vis)
+demand_color = input.color(color.new(color.teal, 80), "Demand Zone Color", group = grp_vis)
+show_labels = input.bool(true, "Show Signal Labels", group = grp_vis)
+
+// --- UDTs ---
+type Zone
+    box b
+    float top
+    float bottom
+    bool is_supply
+    bool active
+
+// --- Constants & Variables ---
+var float atr = float(na)
+atr := ta.atr(atr_length)
+
+// Ensure historical buffer for calculations
+max_bars_back(close, 500)
+max_bars_back(high, 500)
+max_bars_back(low, 500)
+
+var Zone[] supply_zones = array.new<Zone>()
+var Zone[] demand_zones = array.new<Zone>()
+
+// --- Functions ---
+manage_zones(Zone[] zones, float price) =>
+    if zones.size() > 0
+        for i = 0 to zones.size() - 1
+            Zone z = zones.get(i)
+            if z.active
+                // Mitigation check
+                mitigated = z.is_supply ? high > z.top : low < z.bottom
+                if mitigated
+                    z.active := false
+                    box.set_bgcolor(z.b, color.new(color.gray, 90))
+                    box.set_border_color(z.b, color.new(color.gray, 90))
+                else
+                    // Extend box
+                    box.set_right(z.b, bar_index)
+
+// --- Logic ---
+body_size = math.abs(close - open)
+is_displacement_up = close > open and body_size > atr * displacement_threshold
+is_displacement_down = close < open and body_size > atr * displacement_threshold
+
+// Create Demand Zone
+if is_displacement_up
+    float top = high[1]
+    float bottom = low[1]
+    box b = box.new(left = bar_index - 1, top = top, right = bar_index, bottom = bottom,
+             bgcolor = demand_color, border_color = demand_color,
+             extend = extend.none)
+    demand_zones.push(Zone.new(b, top, bottom, false, true))
+    if demand_zones.size() > max_zones
+        Zone old = demand_zones.shift()
+        box.delete(old.b)
+
+// Create Supply Zone
+if is_displacement_down
+    float top = high[1]
+    float bottom = low[1]
+    box b = box.new(left = bar_index - 1, top = top, right = bar_index, bottom = bottom,
+             bgcolor = supply_color, border_color = supply_color,
+             extend = extend.none)
+    supply_zones.push(Zone.new(b, top, bottom, true, true))
+    if supply_zones.size() > max_zones
+        Zone old = supply_zones.shift()
+        box.delete(old.b)
+
+// Manage existing zones
+manage_zones(supply_zones, close)
+manage_zones(demand_zones, close)
+
+// --- Price Action Confirmation ---
+is_rejection_long = (math.min(open, close) - low) > math.abs(close - open) * rejection_ratio
+is_rejection_short = (high - math.max(open, close)) > math.abs(close - open) * rejection_ratio
+
+bool long_signal = false
+bool short_signal = false
+
+// Check for Long PA in Demand Zone
+if is_rejection_long
+    for i = 0 to demand_zones.size() - 1
+        Zone z = demand_zones.get(i)
+        if z.active and low <= z.top and low >= z.bottom
+            long_signal := true
+            break
+
+// Check for Short PA in Supply Zone
+if is_rejection_short
+    for i = 0 to supply_zones.size() - 1
+        Zone z = supply_zones.get(i)
+        if z.active and high >= z.bottom and high <= z.top
+            short_signal := true
+            break
+
+// --- Visual Signals ---
+plotshape(long_signal and show_labels, "Buy Signal", shape.labelup, location.belowbar, color.teal, text = "BUY", textcolor = color.white, size = size.small)
+plotshape(short_signal and show_labels, "Sell Signal", shape.labeldown, location.abovebar, color.red, text = "SELL", textcolor = color.white, size = size.small)
+
+// --- Alerts ---
+if long_signal
+    alert("Buy Signal: Price Action Rejection in Demand Zone", alert.freq_once_per_bar_close)
+if short_signal
+    alert("Sell Signal: Price Action Rejection in Supply Zone", alert.freq_once_per_bar_close)
+
+// --- Dashboard ---
+var table status_table = table.new(position.top_right, 2, 4, border_width = 1, frame_color = color.gray, frame_width = 1)
+var string last_sig = "None"
+
+if long_signal
+    last_sig := "BUY"
+else if short_signal
+    last_sig := "SELL"
+
+if barstate.islast
+    // Header
+    table.cell(status_table, 0, 0, "Metric", text_color = color.white, bgcolor = color.new(color.gray, 50), text_halign = text.align_center)
+    table.cell(status_table, 1, 0, "Value", text_color = color.white, bgcolor = color.new(color.gray, 50), text_halign = text.align_center)
+
+    // Active Demand
+    active_demand_count = 0
+    if demand_zones.size() > 0
+        for i = 0 to demand_zones.size() - 1
+            Zone z = demand_zones.get(i)
+            if z.active
+                active_demand_count += 1
+    table.cell(status_table, 0, 1, "Active Demand Zones", text_color = color.white, text_halign = text.align_left)
+    table.cell(status_table, 1, 1, str.tostring(active_demand_count), text_color = color.teal, text_halign = text.align_center)
+
+    // Active Supply
+    active_supply_count = 0
+    if supply_zones.size() > 0
+        for i = 0 to supply_zones.size() - 1
+            Zone z = supply_zones.get(i)
+            if z.active
+                active_supply_count += 1
+    table.cell(status_table, 0, 2, "Active Supply Zones", text_color = color.white, text_halign = text.align_left)
+    table.cell(status_table, 1, 2, str.tostring(active_supply_count), text_color = color.red, text_halign = text.align_center)
+
+    // Current Signal
+    table.cell(status_table, 0, 3, "Last Signal", text_color = color.white, text_halign = text.align_left)
+    table.cell(status_table, 1, 3, last_sig, text_color = last_sig == "BUY" ? color.teal : last_sig == "SELL" ? color.red : color.white, text_halign = text.align_center)
