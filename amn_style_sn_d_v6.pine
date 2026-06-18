@@ -1,0 +1,177 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Jules (Software Engineer)
+
+//@version=6
+indicator("AMN Style Supply & Demand [6-Tap] + Kalman", overlay = true, max_boxes_count = 100, max_labels_count = 100)
+
+// --- Inputs ---
+grp_detection = "Zone Detection"
+string detection_mode = input.string("Pivots", "Detection Mode", options = ["Pivots", "Imbalances (FVG)"], group = grp_detection, tooltip = "Method used to identify S&D zones.")
+int pivot_len = input.int(5, "Pivot Strength", minval = 1, group = grp_detection, tooltip = "Number of bars on each side for pivot detection.")
+float displacement_mult = input.float(1.5, "Displacement Multiplier", minval = 0.1, group = grp_detection, tooltip = "Candle body must be X times the ATR for displacement (confirms zone strength).")
+int atr_len = input.int(14, "ATR Length", group = grp_detection)
+
+grp_kalman = "Kalman Filter Settings"
+float k_gain = input.float(0.5, "Kalman Gain (K)", minval = 0.01, maxval = 1.0, group = grp_kalman, tooltip = "Smoothing factor. Lower = More lag, Higher = More responsive.")
+float k_sharpness = input.float(1.0, "Sharpness (Q)", minval = 0.01, maxval = 10.0, group = grp_kalman, tooltip = "Process noise covariance. Adjust for responsiveness.")
+
+grp_display = "Display Settings"
+int max_zones = input.int(10, "Max Active Zones (per type)", minval = 1, maxval = 50, group = grp_display)
+bool show_mitigated = input.bool(true, "Show Mitigated Zones", group = grp_display)
+color supply_color = input.color(color.new(color.red, 80), "Supply Color", group = grp_display)
+color demand_color = input.color(color.new(color.green, 80), "Demand Color", group = grp_display)
+
+// --- Types & Variables ---
+type Zone
+    float top
+    float bottom
+    int start_bar
+    int taps = 0
+    bool is_supply
+    bool active = true
+    bool in_tap = false
+    box box_id
+    label label_id
+
+var array<Zone> supply_zones = array.new<Zone>()
+var array<Zone> demand_zones = array.new<Zone>()
+
+// --- Kalman Filter Function ---
+// Simplified Kalman Filter implementation for price series
+kf(float src, float gain, float sharpness) =>
+    var float x = na
+    var float p = 1.0
+    var float q = sharpness
+    var float r = gain
+
+    if na(x)
+        x := src
+    else
+        // Prediction
+        p := p + q
+        // Measurement Update
+        float k = p / (p + r)
+        x := x + k * (src - x)
+        p := (1 - k) * p
+    x
+
+float kalman = kf(hlc3, k_gain, k_sharpness)
+color k_color = kalman > kalman[1] ? color.lime : color.fuchsia
+plot(kalman, "Kalman Filter", color = k_color, linewidth = 2)
+
+// --- Utilities ---
+float atr = ta.atr(atr_len)
+is_displaced(float body_size) => body_size > atr * displacement_mult
+
+// --- Detection Logic ---
+float ph = ta.pivothigh(high, pivot_len, pivot_len)
+float pl = ta.pivotlow(low, pivot_len, pivot_len)
+
+bool is_pivot_supply = not na(ph) and is_displaced(math.abs(close[pivot_len-1] - open[pivot_len-1])) and close[pivot_len-1] < open[pivot_len-1]
+bool is_pivot_demand = not na(pl) and is_displaced(math.abs(close[pivot_len-1] - open[pivot_len-1])) and close[pivot_len-1] > open[pivot_len-1]
+
+bool is_fvg_demand = low[0] > high[2] and is_displaced(math.abs(close[1] - open[1]))
+bool is_fvg_supply = high[0] < low[2] and is_displaced(math.abs(close[1] - open[1]))
+
+bool supply_detected = detection_mode == "Pivots" ? is_pivot_supply : is_fvg_supply
+bool demand_detected = detection_mode == "Pivots" ? is_pivot_demand : is_fvg_demand
+
+// Handle Supply Detection
+if supply_detected
+    Zone new_zone = Zone.new()
+    if detection_mode == "Pivots"
+        new_zone.top := high[pivot_len]
+        new_zone.bottom := low[pivot_len]
+        new_zone.start_bar := bar_index - pivot_len
+    else
+        new_zone.top := low[2]
+        new_zone.bottom := high[0]
+        new_zone.start_bar := bar_index - 1
+
+    new_zone.is_supply := true
+    new_zone.box_id := box.new(new_zone.start_bar, new_zone.top, bar_index, new_zone.bottom, bgcolor = supply_color, border_color = color.new(color.red, 40))
+    new_zone.label_id := label.new(bar_index, new_zone.top, "Tap: 0", style = label.style_label_down, color = color.red, textcolor = color.white, size = size.tiny)
+    supply_zones.unshift(new_zone)
+    if supply_zones.size() > max_zones
+        Zone removed = supply_zones.pop()
+        box.delete(removed.box_id)
+        label.delete(removed.label_id)
+
+// Handle Demand Detection
+if demand_detected
+    Zone new_zone = Zone.new()
+    if detection_mode == "Pivots"
+        new_zone.top := high[pivot_len]
+        new_zone.bottom := low[pivot_len]
+        new_zone.start_bar := bar_index - pivot_len
+    else
+        new_zone.top := low[0]
+        new_zone.bottom := high[2]
+        new_zone.start_bar := bar_index - 1
+
+    new_zone.is_supply := false
+    new_zone.box_id := box.new(new_zone.start_bar, new_zone.top, bar_index, new_zone.bottom, bgcolor = demand_color, border_color = color.new(color.green, 40))
+    new_zone.label_id := label.new(bar_index, new_zone.bottom, "Tap: 0", style = label.style_label_up, color = color.green, textcolor = color.white, size = size.tiny)
+    demand_zones.unshift(new_zone)
+    if demand_zones.size() > max_zones
+        Zone removed = demand_zones.pop()
+        box.delete(removed.box_id)
+        label.delete(removed.label_id)
+
+// --- Signal Logic ---
+var bool in_supply_zone = false
+var bool in_demand_zone = false
+
+manage_zones(zones) =>
+    bool currently_in = false
+    if zones.size() > 0
+        for i = zones.size() - 1 to 0
+            Zone z = zones.get(i)
+            if z.active
+                bool mitigated = z.is_supply ? close > z.top : close < z.bottom
+                if mitigated
+                    z.active := false
+                    if show_mitigated
+                        box.set_right(z.box_id, bar_index)
+                        box.set_bgcolor(z.box_id, color.new(color.gray, 90))
+                        box.set_border_color(z.box_id, color.new(color.gray, 50))
+                        label.delete(z.label_id)
+                    else
+                        box.delete(z.box_id)
+                        label.delete(z.label_id)
+                else
+                    bool enters_zone = low < z.top and high > z.bottom
+                    if enters_zone
+                        currently_in := true
+                        if not z.in_tap
+                            z.taps := z.taps + 1
+                            z.in_tap := true
+                            label.set_text(z.label_id, "Tap: " + str.tostring(z.taps))
+                            if z.taps == 6
+                                label.set_color(z.label_id, color.orange)
+                                label.set_size(z.label_id, size.small)
+                                label.set_text(z.label_id, "Tap: 6 (MAX)")
+                    else
+                        z.in_tap := false
+
+                    box.set_right(z.box_id, bar_index)
+                    label.set_x(z.label_id, bar_index)
+    currently_in
+
+in_supply_zone := manage_zones(supply_zones)
+in_demand_zone := manage_zones(demand_zones)
+
+bool buy_signal = in_demand_zone and ta.crossover(close, kalman)
+bool sell_signal = in_supply_zone and ta.crossunder(close, kalman)
+
+plotshape(buy_signal, "Buy Signal", shape.triangleup, location.belowbar, color.lime, size = size.small, text = "BUY")
+plotshape(sell_signal, "Sell Signal", shape.triangledown, location.abovebar, color.fuchsia, size = size.small, text = "SELL")
+
+alertcondition(buy_signal, "AMN Buy Signal", "Price in Demand Zone + Kalman Cross")
+alertcondition(sell_signal, "AMN Sell Signal", "Price in Supply Zone + Kalman Cross")
+
+// --- Information Table ---
+var table info_table = table.new(position.top_right, 2, 1, bgcolor = color.new(color.black, 70), border_width = 1)
+if barstate.islast
+    table.cell(info_table, 0, 0, "Active Zones:", text_color = color.white, text_size = size.small)
+    table.cell(info_table, 1, 0, str.tostring(supply_zones.size() + demand_zones.size()), text_color = color.yellow, text_size = size.small)
