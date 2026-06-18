@@ -1,0 +1,185 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Pro Trading School / Mani3131
+
+//@version=6
+indicator("Institutional Supply & Demand Zones [PTS]", shorttitle="PTS Inst. SnD", overlay=true, max_boxes_count=100, max_labels_count=100)
+
+// ==========================================
+// Inputs
+// ==========================================
+grp_struc = "Market Structure"
+pivot_len = input.int(5, "Pivot Lookback", minval=1, group=grp_struc, tooltip="Lookback period to identify swing highs and lows.")
+show_struc = input.bool(true, "Show BOS/CHoCH/Sweeps", group=grp_struc)
+
+grp_zones = "Institutional Zones"
+show_demand = input.bool(true, "Show Demand Zones", group=grp_zones)
+show_supply = input.bool(true, "Show Supply Zones", group=grp_zones)
+fvg_filter  = input.bool(true, "Require FVG (Displacement)", group=grp_zones, tooltip="Only show zones that are followed by a Fair Value Gap.")
+mitigation  = input.string("Close", "Mitigation Mode", options=["Touch", "Close"], group=grp_zones, tooltip="Touch: Zone is mitigated when price hits the distal boundary. Close: Zone is mitigated when price closes past the distal boundary.")
+
+color_demand = input.color(color.rgb(0, 201, 167, 80), "Demand Color", group=grp_zones)
+color_supply = input.color(color.rgb(255, 51, 102, 80), "Supply Color", group=grp_zones)
+
+// ==========================================
+// UDTs & Arrays
+// ==========================================
+type Zone
+    float top
+    float bottom
+    int   start_bar
+    box   box_id
+    bool  is_demand
+    bool  is_active
+
+var zones_arr = array.new<Zone>()
+
+// ==========================================
+// Market Structure & Liquidity
+// ==========================================
+float ph = ta.pivothigh(high, pivot_len, pivot_len)
+float pl = ta.pivotlow(low, pivot_len, pivot_len)
+
+var float last_ph = na
+var float last_pl = na
+var int last_ph_idx = na
+var int last_pl_idx = na
+
+if not na(ph)
+    last_ph := ph
+    last_ph_idx := bar_index - pivot_len
+
+if not na(pl)
+    last_pl := pl
+    last_pl_idx := bar_index - pivot_len
+
+// Detect Liquidity Sweeps
+// A sweep occurs when price goes above a previous pivot but fails to stay there (e.g., wick)
+bool sweep_high = not na(last_ph) and high > last_ph and close < last_ph
+bool sweep_low  = not na(last_pl) and low < last_pl and close > last_pl
+
+// Visualization for Sweeps
+if show_struc and sweep_high
+    label.new(bar_index, high, "X", color=color.new(color.red, 100), style=label.style_label_down, textcolor=color.red, size=size.tiny)
+if show_struc and sweep_low
+    label.new(bar_index, low, "X", color=color.new(color.green, 100), style=label.style_label_up, textcolor=color.green, size=size.tiny)
+
+// Detect CHoCH & BOS (Market Structure)
+var float swing_high = na
+var float swing_low  = na
+var int   trend      = 0 // 1: Bullish, -1: Bearish
+
+swing_high := not na(ph) ? ph : swing_high
+swing_low  := not na(pl) ? pl : swing_low
+
+bool bullish_break = not na(swing_high) and ta.crossover(close, swing_high)
+bool bearish_break = not na(swing_low) and ta.crossunder(close, swing_low)
+
+bool bullish_choch = trend <= 0 and bullish_break
+bool bearish_choch = trend >= 0 and bearish_break
+bool bullish_bos   = trend == 1 and bullish_break
+bool bearish_bos   = trend == -1 and bearish_break
+
+if bullish_break
+    trend := 1
+    swing_high := float(na)
+if bearish_break
+    trend := -1
+    swing_low := float(na)
+
+// Visualization for BOS
+if show_struc and bullish_bos
+    label.new(bar_index, high, "BOS", color=color.new(color.green, 100), style=label.style_label_down, textcolor=color.green, size=size.tiny)
+if show_struc and bearish_bos
+    label.new(bar_index, low, "BOS", color=color.new(color.red, 100), style=label.style_label_up, textcolor=color.red, size=size.tiny)
+
+// Detect FVG (Fair Value Gap)
+bool bullish_fvg = low[0] > high[2]
+bool bearish_fvg = high[0] < low[2]
+
+// ==========================================
+// Zone Identification
+// ==========================================
+var int  demand_origin_idx = na
+var float demand_top = na
+var float demand_bottom = na
+var bool  demand_waiting = false
+
+var int  supply_origin_idx = na
+var float supply_top = na
+var float supply_bottom = na
+var bool  supply_waiting = false
+
+// Logic for Demand:
+// 1. Price sweeps a low
+if sweep_low
+    demand_waiting := true
+    demand_origin_idx := bar_index
+    demand_top := math.max(open, close)
+    demand_bottom := low
+
+// 2. If waiting for demand confirmation (Bullish CHoCH + Displacement)
+if demand_waiting
+    // Cancel if price goes below the sweep low before CHoCH
+    if low < demand_bottom
+        demand_waiting := false
+
+    else if bullish_choch
+        bool displacement_found = not fvg_filter or bullish_fvg or bullish_fvg[1] or bullish_fvg[2]
+        if displacement_found and show_demand
+            Zone new_z = Zone.new(demand_top, demand_bottom, demand_origin_idx, box.new(demand_origin_idx, demand_top, bar_index, demand_bottom, bgcolor=color_demand, border_color=na), true, true)
+            array.push(zones_arr, new_z)
+            if show_struc
+                label.new(bar_index, high, "CHoCH", color=color.rgb(0, 201, 167), style=label.style_label_down, textcolor=color.white, size=size.tiny)
+        demand_waiting := false
+
+// Logic for Supply:
+// 1. Price sweeps a high
+if sweep_high
+    supply_waiting := true
+    supply_origin_idx := bar_index
+    supply_top := high
+    supply_bottom := math.min(open, close)
+
+// 2. If waiting for supply confirmation (Bearish CHoCH + Displacement)
+if supply_waiting
+    // Cancel if price goes above the sweep high before CHoCH
+    if high > supply_top
+        supply_waiting := false
+
+    else if bearish_choch
+        bool displacement_found = not fvg_filter or bearish_fvg or bearish_fvg[1] or bearish_fvg[2]
+        if displacement_found and show_supply
+            Zone new_z = Zone.new(supply_top, supply_bottom, supply_origin_idx, box.new(supply_origin_idx, supply_top, bar_index, supply_bottom, bgcolor=color_supply, border_color=na), false, true)
+            array.push(zones_arr, new_z)
+            if show_struc
+                label.new(bar_index, low, "CHoCH", color=color.rgb(255, 51, 102), style=label.style_label_up, textcolor=color.white, size=size.tiny)
+        supply_waiting := false
+
+// ==========================================
+// Mitigation & Maintenance
+// ==========================================
+if array.size(zones_arr) > 0
+    for i = array.size(zones_arr) - 1 to 0
+        Zone z = array.get(zones_arr, i)
+        if z.is_active
+            box.set_right(z.box_id, bar_index)
+
+            bool mitigated = false
+            if z.is_demand
+                if mitigation == "Touch"
+                    mitigated := low < z.bottom
+                else
+                    mitigated := close < z.bottom
+            else
+                if mitigation == "Touch"
+                    mitigated := high > z.top
+                else
+                    mitigated := close > z.top
+
+            if mitigated
+                z.is_active := false
+                box.set_bgcolor(z.box_id, color.new(z.is_demand ? color_demand : color_supply, 95))
+
+// Cleanup
+if array.size(zones_arr) > 50
+    Zone old_z = array.remove(zones_arr, 0)
