@@ -1,0 +1,144 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+strategy("The Anaira Vision Strategy", overlay=true, margin_long=100, margin_short=100, initial_capital=10000)
+
+// --- Inputs ---
+htf_tf = input.timeframe("D", "High Timeframe (for PDH/PDL)")
+show_htf_levels = input.bool(true, "Show PDH/PDL Levels")
+pivot_len = input.int(3, "Pivot Length for MSS")
+max_bars_after_sweep = input.int(20, "Max Bars after Sweep to wait for MSS")
+rr_ratio = input.float(2.0, "Risk/Reward Ratio")
+show_fvgs = input.bool(true, "Show FVG Boxes")
+max_fvg_boxes = input.int(10, "Max FVG Boxes on Chart")
+
+// Session Inputs
+use_sessions = input.bool(true, "Use Session Filter")
+session_times = input.session("0900-1200,1400-1700", "Trading Sessions (UTC+3)")
+timezone_input = "GMT+3"
+
+// --- Session Logic ---
+is_in_session = not use_sessions or not na(time(timeframe.period, session_times, timezone_input))
+
+// --- HTF Data ---
+[pdh, pdl] = request.security(syminfo.tickerid, htf_tf, [high[1], low[1]], lookahead=barmerge.lookahead_on)
+
+// --- Plots ---
+plot(show_htf_levels ? pdh : na, "Previous High", color.new(color.gray, 50), style=plot.style_linebr)
+plot(show_htf_levels ? pdl : na, "Previous Low", color.new(color.gray, 50), style=plot.style_linebr)
+
+// --- Liquidity Sweep Logic ---
+bull_sweep = low < pdl and close > pdl
+bear_sweep = high > pdh and close < pdh
+
+// Markers for sweeps
+plotshape(bull_sweep, title="Bullish Sweep", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+plotshape(bear_sweep, title="Bearish Sweep", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
+
+var int last_bull_sweep_bar = 0
+var int last_bear_sweep_bar = 0
+var float sweep_low = na
+var float sweep_high = na
+
+if bull_sweep
+    last_bull_sweep_bar := bar_index
+    sweep_low := low
+if bear_sweep
+    last_bear_sweep_bar := bar_index
+    sweep_high := high
+
+// --- Market Structure Shift (MSS) ---
+ph = ta.pivothigh(pivot_len, pivot_len)
+pl = ta.pivotlow(pivot_len, pivot_len)
+
+var float last_ph_price = na
+var float last_pl_price = na
+
+if not na(ph)
+    last_ph_price := ph
+if not na(pl)
+    last_pl_price := pl
+
+bool bull_mss_active = false
+bool bear_mss_active = false
+
+if is_in_session
+    if (bar_index - last_bull_sweep_bar <= max_bars_after_sweep) and close > last_ph_price and close[1] <= last_ph_price
+        bull_mss_active := true
+        last_bull_sweep_bar := 0
+
+    if (bar_index - last_bear_sweep_bar <= max_bars_after_sweep) and close < last_pl_price and close[1] >= last_pl_price
+        bear_mss_active := true
+        last_bear_sweep_bar := 0
+
+plotshape(bull_mss_active, title="MSS Bullish", style=shape.labelup, location=location.belowbar, color=color.green, text="MSS", textcolor=color.white, size=size.small)
+plotshape(bear_mss_active, title="MSS Bearish", style=shape.labeldown, location=location.abovebar, color=color.red, text="MSS", textcolor=color.white, size=size.small)
+
+// --- Fair Value Gap (FVG) and Visualization ---
+var box[] fvg_boxes = array.new_box()
+
+var float entry_fvg_top = na
+var float entry_fvg_bottom = na
+var bool waiting_for_entry = false
+var string trade_dir = ""
+
+if bull_mss_active
+    for i = 0 to 5
+        if low[i] > high[i+2]
+            entry_fvg_top := low[i]
+            entry_fvg_bottom := high[i+2]
+            waiting_for_entry := true
+            trade_dir := "LONG"
+            if show_fvgs
+                b = box.new(bar_index[i+2], entry_fvg_top, bar_index, entry_fvg_bottom, bgcolor=color.new(color.green, 85), border_color=na)
+                array.push(fvg_boxes, b)
+            break
+
+if bear_mss_active
+    for i = 0 to 5
+        if high[i] < low[i+2]
+            entry_fvg_top := low[i+2]
+            entry_fvg_bottom := high[i]
+            waiting_for_entry := true
+            trade_dir := "SHORT"
+            if show_fvgs
+                b = box.new(bar_index[i+2], entry_fvg_top, bar_index, entry_fvg_bottom, bgcolor=color.new(color.red, 85), border_color=na)
+                array.push(fvg_boxes, b)
+            break
+
+// Manage FVG box count
+if array.size(fvg_boxes) > max_fvg_boxes
+    box.delete(array.shift(fvg_boxes))
+
+// --- Strategy Execution ---
+var float current_sl = na
+var float current_tp = na
+
+if waiting_for_entry and is_in_session
+    if trade_dir == "LONG"
+        if low <= entry_fvg_top
+            current_sl := sweep_low
+            current_tp := close + (close - current_sl) * rr_ratio
+            strategy.entry("Long", strategy.long)
+            strategy.exit("Exit Long", "Long", stop=current_sl, limit=current_tp)
+            waiting_for_entry := false
+    else if trade_dir == "SHORT"
+        if high >= entry_fvg_bottom
+            current_sl := sweep_high
+            current_tp := close - (current_sl - close) * rr_ratio
+            strategy.entry("Short", strategy.short)
+            strategy.exit("Exit Short", "Short", stop=current_sl, limit=current_tp)
+            waiting_for_entry := false
+
+// Invalidate
+if waiting_for_entry
+    if (trade_dir == "LONG" and close < sweep_low) or (trade_dir == "SHORT" and close > sweep_high) or not is_in_session
+        waiting_for_entry := false
+
+// Plot SL/TP levels for active trades
+plot(strategy.position_size != 0 ? current_sl : na, "Stop Loss", color.red, style=plot.style_linebr, linewidth=2)
+plot(strategy.position_size != 0 ? current_tp : na, "Take Profit", color.green, style=plot.style_linebr, linewidth=2)
+
+// Visualization for Session
+bgcolor(is_in_session and use_sessions ? color.new(color.blue, 96) : na)
