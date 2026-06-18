@@ -18,6 +18,12 @@ supply_color = input.color(color.new(color.red, 80), "Supply Zone Color", group 
 demand_color = input.color(color.new(color.teal, 80), "Demand Zone Color", group = grp_vis)
 show_labels = input.bool(true, "Show Signal Labels", group = grp_vis)
 
+grp_bb = "Big Boss Mathematical Algorithm"
+show_sd_projections = input.bool(true, "Show Standard Deviation Projections", group = grp_bb)
+qt_enabled = input.bool(true, "Enable Quarterly Theory Highlights", group = grp_bb)
+qt_tz = input.string("UTC+3", "Quarterly Theory Timezone", group = grp_bb)
+qt_anchor = input.string("0300", "Quarterly Theory Anchor (HHMM)", group = grp_bb, tooltip = "Start time of Q1 in the selected timezone (Default 03:00 UTC+3 corresponds to 20:00 NY).")
+
 // --- UDTs ---
 type Zone
     box b
@@ -25,6 +31,10 @@ type Zone
     float bottom
     bool is_supply
     bool active
+    line l10
+    line l20
+    line l25
+    line l40
 
 // --- Constants & Variables ---
 var float atr = float(na)
@@ -39,6 +49,13 @@ var Zone[] supply_zones = array.new<Zone>()
 var Zone[] demand_zones = array.new<Zone>()
 
 // --- Functions ---
+delete_zone(Zone z) =>
+    box.delete(z.b)
+    line.delete(z.l10)
+    line.delete(z.l20)
+    line.delete(z.l25)
+    line.delete(z.l40)
+
 manage_zones(Zone[] zones, float price) =>
     if zones.size() > 0
         for i = 0 to zones.size() - 1
@@ -50,9 +67,17 @@ manage_zones(Zone[] zones, float price) =>
                     z.active := false
                     box.set_bgcolor(z.b, color.new(color.gray, 90))
                     box.set_border_color(z.b, color.new(color.gray, 90))
+                    line.set_color(z.l10, color.new(color.gray, 90))
+                    line.set_color(z.l20, color.new(color.gray, 90))
+                    line.set_color(z.l25, color.new(color.gray, 90))
+                    line.set_color(z.l40, color.new(color.gray, 90))
                 else
-                    // Extend box
+                    // Extend box and lines
                     box.set_right(z.b, bar_index)
+                    line.set_x2(z.l10, bar_index)
+                    line.set_x2(z.l20, bar_index)
+                    line.set_x2(z.l25, bar_index)
+                    line.set_x2(z.l40, bar_index)
 
 // --- Logic ---
 body_size = math.abs(close - open)
@@ -63,25 +88,37 @@ is_displacement_down = close < open and body_size > atr * displacement_threshold
 if is_displacement_up
     float top = high[1]
     float bottom = low[1]
+    float h = top - bottom
     box b = box.new(left = bar_index - 1, top = top, right = bar_index, bottom = bottom,
              bgcolor = demand_color, border_color = demand_color,
              extend = extend.none)
-    demand_zones.push(Zone.new(b, top, bottom, false, true))
+
+    line l10 = show_sd_projections ? line.new(bar_index - 1, top + h * 1.0, bar_index, top + h * 1.0, color = demand_color, style = line.style_dashed) : line(na)
+    line l20 = show_sd_projections ? line.new(bar_index - 1, top + h * 2.0, bar_index, top + h * 2.0, color = demand_color, style = line.style_dashed) : line(na)
+    line l25 = show_sd_projections ? line.new(bar_index - 1, top + h * 2.5, bar_index, top + h * 2.5, color = demand_color, style = line.style_dotted) : line(na)
+    line l40 = show_sd_projections ? line.new(bar_index - 1, top + h * 4.0, bar_index, top + h * 4.0, color = demand_color, style = line.style_solid) : line(na)
+
+    demand_zones.push(Zone.new(b, top, bottom, false, true, l10, l20, l25, l40))
     if demand_zones.size() > max_zones
-        Zone old = demand_zones.shift()
-        box.delete(old.b)
+        delete_zone(demand_zones.shift())
 
 // Create Supply Zone
 if is_displacement_down
     float top = high[1]
     float bottom = low[1]
+    float h = top - bottom
     box b = box.new(left = bar_index - 1, top = top, right = bar_index, bottom = bottom,
              bgcolor = supply_color, border_color = supply_color,
              extend = extend.none)
-    supply_zones.push(Zone.new(b, top, bottom, true, true))
+
+    line l10 = show_sd_projections ? line.new(bar_index - 1, bottom - h * 1.0, bar_index, bottom - h * 1.0, color = supply_color, style = line.style_dashed) : line(na)
+    line l20 = show_sd_projections ? line.new(bar_index - 1, bottom - h * 2.0, bar_index, bottom - h * 2.0, color = supply_color, style = line.style_dashed) : line(na)
+    line l25 = show_sd_projections ? line.new(bar_index - 1, bottom - h * 2.5, bar_index, bottom - h * 2.5, color = supply_color, style = line.style_dotted) : line(na)
+    line l40 = show_sd_projections ? line.new(bar_index - 1, bottom - h * 4.0, bar_index, bottom - h * 4.0, color = supply_color, style = line.style_solid) : line(na)
+
+    supply_zones.push(Zone.new(b, top, bottom, true, true, l10, l20, l25, l40))
     if supply_zones.size() > max_zones
-        Zone old = supply_zones.shift()
-        box.delete(old.b)
+        delete_zone(supply_zones.shift())
 
 // Manage existing zones
 manage_zones(supply_zones, close)
@@ -120,8 +157,40 @@ if long_signal
 if short_signal
     alert("Sell Signal: Price Action Rejection in Supply Zone", alert.freq_once_per_bar_close)
 
+// --- Quarterly Theory Highlights ---
+var string qt_phase = "None"
+if qt_enabled
+    t = time(timeframe.period, "0000-2359", qt_tz)
+    if not na(t)
+        hr = hour(t, qt_tz)
+        mn = minute(t, qt_tz)
+        total_mn = hr * 60 + mn
+
+        // Parse anchor
+        hr_anchor = str.tonumber(str.substring(qt_anchor, 0, 2))
+        mn_anchor = str.tonumber(str.substring(qt_anchor, 2, 4))
+        anchor_mn = hr_anchor * 60 + mn_anchor
+
+        // Calculate quarter
+        offset_mn = (total_mn - anchor_mn + 1440) % 1440
+        quarter_num = (offset_mn / 90) % 4 + 1
+
+        qt_phase := switch quarter_num
+            1 => "Accumulation"
+            2 => "Manipulation"
+            3 => "Distribution"
+            4 => "Reversal"
+
+        qt_color = switch quarter_num
+            1 => color.new(color.blue, 90)
+            2 => color.new(color.red, 90)
+            3 => color.new(color.green, 90)
+            4 => color.new(color.orange, 90)
+
+        bgcolor(qt_color, title = "Quarterly Phase Highlight")
+
 // --- Dashboard ---
-var table status_table = table.new(position.top_right, 2, 4, border_width = 1, frame_color = color.gray, frame_width = 1)
+var table status_table = table.new(position.top_right, 2, 5, border_width = 1, frame_color = color.gray, frame_width = 1)
 var string last_sig = "None"
 
 if long_signal
@@ -157,3 +226,7 @@ if barstate.islast
     // Current Signal
     table.cell(status_table, 0, 3, "Last Signal", text_color = color.white, text_halign = text.align_left)
     table.cell(status_table, 1, 3, last_sig, text_color = last_sig == "BUY" ? color.teal : last_sig == "SELL" ? color.red : color.white, text_halign = text.align_center)
+
+    // QT Phase
+    table.cell(status_table, 0, 4, "Market Phase (QT)", text_color = color.white, text_halign = text.align_left)
+    table.cell(status_table, 1, 4, qt_phase, text_color = color.yellow, text_halign = text.align_center)
