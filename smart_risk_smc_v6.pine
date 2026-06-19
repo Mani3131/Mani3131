@@ -1,0 +1,278 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Smart Risk Advanced SMC [v6]", "Smart Risk SMC", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// --- Optimization ---
+max_bars_back(high, 500)
+max_bars_back(low, 500)
+max_bars_back(close, 500)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// --- CONSTANTS & INPUTS ---
+// ---------------------------------------------------------------------------------------------------------------------
+
+// --- Colors ---
+color C_DEMAND     = color.new(#26a69a, 85)
+color C_DEMAND_BDR = color.new(#26a69a, 50)
+color C_SUPPLY     = color.new(#673ab7, 85)
+color C_SUPPLY_BDR = color.new(#673ab7, 50)
+color C_BOS        = color.gray
+color C_CHOCH      = color.orange
+
+// --- Inputs ---
+string grp_mtf   = "Timeframe Settings"
+string htf_tf    = input.timeframe("60", "High Timeframe (HTF)", group = grp_mtf)
+bool show_htf    = input.bool(true, "Show HTF Structure", group = grp_mtf)
+
+string grp_zones = "Supply & Demand Zones"
+float zone_atr_mult = input.float(2.0, "Displacement ATR Multiplier", minval = 0.5, step = 0.1, group = grp_zones, help = "ATR multiplier to identify strong impulsive moves (displacement)")
+int zone_limit      = input.int(10, "Max Active Zones per Type", minval = 1, maxval = 50, group = grp_zones)
+
+string grp_fvg   = "Fair Value Gaps (FVG)"
+bool show_fvg    = input.bool(true, "Show FVGs", group = grp_fvg)
+color c_fvg_bull = input.color(color.new(color.teal, 90), "Bullish FVG", group = grp_fvg)
+color c_fvg_bear = input.color(color.new(color.red, 90), "Bearish FVG", group = grp_fvg)
+
+string grp_dash  = "Dashboard"
+bool show_dash   = input.bool(true, "Show Dashboard", group = grp_dash)
+string dash_pos  = input.string(position.top_right, "Dashboard Position", options = [position.top_right, position.bottom_right, position.top_left, position.bottom_left], group = grp_dash)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// --- DATA FETCHING (HTF) ---
+// ---------------------------------------------------------------------------------------------------------------------
+
+[htf_high, htf_low, htf_close, htf_atr] = request.security(syminfo.tickerid, htf_tf, [high, low, close, ta.atr(14)], lookahead = barmerge.lookahead_off)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// --- TYPES & ARRAYS ---
+// ---------------------------------------------------------------------------------------------------------------------
+
+type Zone
+    box b
+    float top
+    float bottom
+    int start_bar
+    bool is_supply
+    bool mitigated = false
+
+var Zone[] demand_zones = array.new<Zone>()
+var Zone[] supply_zones = array.new<Zone>()
+
+// ---------------------------------------------------------------------------------------------------------------------
+// --- LOGIC: MARKET STRUCTURE & LIQUIDITY ---
+// ---------------------------------------------------------------------------------------------------------------------
+
+// --- HTF Pivots ---
+htf_ph = request.security(syminfo.tickerid, htf_tf, ta.pivothigh(high[1], 5, 5), lookahead = barmerge.lookahead_off)
+htf_pl = request.security(syminfo.tickerid, htf_tf, ta.pivotlow(low[1], 5, 5), lookahead = barmerge.lookahead_off)
+
+var float htf_high_level = na
+var float htf_low_level  = na
+
+if not na(htf_ph)
+    htf_high_level := htf_ph
+if not na(htf_pl)
+    htf_low_level := htf_pl
+
+// --- Trend & Structure ---
+var int trend = 0 // 1: Bullish, -1: Bearish
+var float last_high = na
+var float last_low  = na
+
+bool htf_bos   = false
+bool htf_choch = false
+
+if close > htf_high_level and not na(htf_high_level)
+    if trend == -1
+        htf_choch := true
+    else
+        htf_bos := true
+    trend := 1
+    htf_high_level := na // Reset until next pivot
+
+if close < htf_low_level and not na(htf_low_level)
+    if trend == 1
+        htf_choch := true
+    else
+        htf_bos := true
+    trend := -1
+    htf_low_level := na // Reset until next pivot
+
+// --- Visual Structure ---
+if htf_bos and show_htf
+    label.new(bar_index, high, "BOS", color = color.new(C_BOS, 0), textcolor = color.white, style = label.style_label_down, size = size.tiny)
+if htf_choch and show_htf
+    label.new(bar_index, high, "CHoCH", color = color.new(C_CHOCH, 0), textcolor = color.white, style = label.style_label_down, size = size.tiny)
+
+// --- Liquidity Sweeps ---
+bool sweep_high = high > htf_high_level and close < htf_high_level and not na(htf_high_level)
+bool sweep_low  = low < htf_low_level and close > htf_low_level and not na(htf_low_level)
+
+plotshape(sweep_high, "Liquidity Sweep High", shape.triangledown, location.abovebar, color.red, size = size.small)
+plotshape(sweep_low, "Liquidity Sweep Low", shape.triangleup, location.belowbar, color.green, size = size.small)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// --- LOGIC: SUPPLY & DEMAND ZONES ---
+// ---------------------------------------------------------------------------------------------------------------------
+
+atr = ta.atr(14)
+float body_size = math.abs(close - open)
+bool displacement = body_size > atr * zone_atr_mult
+
+// --- Detect New Zones ---
+if displacement
+    if close > open // Bullish Displacement -> Potential Demand
+        // Base candle is the previous candle
+        float z_top = high[1]
+        float z_bot = low[1]
+        box b = box.new(bar_index - 1, z_top, bar_index, z_bot, bgcolor = C_DEMAND, border_color = C_DEMAND_BDR, extend = extend.right)
+        array.unshift(demand_zones, Zone.new(b, z_top, z_bot, bar_index - 1, false))
+
+    if close < open // Bearish Displacement -> Potential Supply
+        float z_top = high[1]
+        float z_bot = low[1]
+        box b = box.new(bar_index - 1, z_top, bar_index, z_bot, bgcolor = C_SUPPLY, border_color = C_SUPPLY_BDR, extend = extend.right)
+        array.unshift(supply_zones, Zone.new(b, z_top, z_bot, bar_index - 1, true))
+
+// --- Manage & Mitigate Zones ---
+manage_zones(Zone[] zones) =>
+    if array.size(zones) > 0
+        for i = array.size(zones) - 1 to 0
+            Zone z = array.get(zones, i)
+            if not z.mitigated
+                // Check for mitigation
+                bool hit = false
+                if z.is_supply
+                    if high > z.top
+                        hit := true
+                else
+                    if low < z.bottom
+                        hit := true
+
+                if hit
+                    z.mitigated := true
+                    box.set_extend(z.b, extend.none)
+                    box.set_right(z.b, bar_index)
+                    box.set_bgcolor(z.b, color.new(color.gray, 90))
+                    box.set_border_color(z.b, color.new(color.gray, 70))
+
+        // Limit number of zones
+        if array.size(zones) > zone_limit
+            Zone old = array.pop(zones)
+            box.delete(old.b)
+
+manage_zones(demand_zones)
+manage_zones(supply_zones)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// --- LOGIC: FAIR VALUE GAPS (FVG) ---
+// ---------------------------------------------------------------------------------------------------------------------
+
+type FVG
+    box b
+    float top
+    float bottom
+    bool is_bull
+    bool mitigated = false
+
+var FVG[] fvgs = array.new<FVG>()
+
+if show_fvg
+    // Bullish FVG
+    if low > high[2] and close[1] > high[2]
+        float f_top = low
+        float f_bot = high[2]
+        box b = box.new(bar_index - 2, f_top, bar_index, f_bot, bgcolor = c_fvg_bull, border_color = color.new(c_fvg_bull, 50), extend = extend.right)
+        array.unshift(fvgs, FVG.new(b, f_top, f_bot, true))
+
+    // Bearish FVG
+    if high < low[2] and close[1] < low[2]
+        float f_top = low[2]
+        float f_bot = high
+        box b = box.new(bar_index - 2, f_top, bar_index, f_bot, bgcolor = c_fvg_bear, border_color = color.new(c_fvg_bear, 50), extend = extend.right)
+        array.unshift(fvgs, FVG.new(b, f_top, f_bot, false))
+
+// --- Mitigate FVGs ---
+if array.size(fvgs) > 0
+    for i = array.size(fvgs) - 1 to 0
+        FVG f = array.get(fvgs, i)
+        if not f.mitigated
+            bool hit = f.is_bull ? low < f.bottom : high > f.top
+            if hit
+                f.mitigated := true
+                box.delete(f.b)
+
+    // Cleanup
+    if array.size(fvgs) > 50
+        FVG old = array.pop(fvgs)
+        box.delete(old.b)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// --- LOGIC: DASHBOARD & SIGNALS ---
+// ---------------------------------------------------------------------------------------------------------------------
+
+// --- Proximity & Status ---
+bool in_demand = false
+if array.size(demand_zones) > 0
+    for i = 0 to array.size(demand_zones) - 1
+        Zone z = array.get(demand_zones, i)
+        if not z.mitigated and close >= z.bottom and close <= z.top
+            in_demand := true
+            break
+
+bool in_supply = false
+if array.size(supply_zones) > 0
+    for i = 0 to array.size(supply_zones) - 1
+        Zone z = array.get(supply_zones, i)
+        if not z.mitigated and close >= z.bottom and close <= z.top
+            in_supply := true
+            break
+
+string bias_str = trend == 1 ? "BULLISH" : trend == -1 ? "BEARISH" : "NEUTRAL"
+color bias_col = trend == 1 ? color.green : trend == -1 ? color.red : color.gray
+
+string setup_status = "Waiting for setup"
+if in_demand
+    setup_status := "Price in Demand Zone"
+if in_supply
+    setup_status := "Price in Supply Zone"
+if sweep_low and in_demand
+    setup_status := "Liquidity Sweep in Demand!"
+if sweep_high and in_supply
+    setup_status := "Liquidity Sweep in Supply!"
+
+// --- Dashboard ---
+var table dash = table.new(dash_pos, 2, 4, border_width = 1, frame_color = color.gray, frame_width = 1)
+if show_dash and barstate.islast
+    table.cell(dash, 0, 0, "Smart Risk SMC", bgcolor = color.gray, text_color = color.white, text_halign = text.align_center)
+    table.cell(dash, 1, 0, "v6", bgcolor = color.gray, text_color = color.white, text_halign = text.align_center)
+
+    table.cell(dash, 0, 1, "HTF Bias", bgcolor = color.new(color.gray, 80), text_color = color.white, text_halign = text.align_left)
+    table.cell(dash, 1, 1, bias_str, bgcolor = bias_col, text_color = color.white, text_halign = text.align_center)
+
+    table.cell(dash, 0, 2, "Market Context", bgcolor = color.new(color.gray, 80), text_color = color.white, text_halign = text.align_left)
+    table.cell(dash, 1, 2, setup_status, bgcolor = (in_demand or in_supply) ? color.orange : color.new(color.gray, 90), text_color = (in_demand or in_supply) ? color.black : color.white, text_halign = text.align_center)
+
+    table.cell(dash, 0, 3, "Zones Active", bgcolor = color.new(color.gray, 80), text_color = color.white, text_halign = text.align_left)
+    table.cell(dash, 1, 3, "D: " + str.tostring(array.size(demand_zones)) + " | S: " + str.tostring(array.size(supply_zones)), bgcolor = color.new(color.gray, 90), text_color = color.white, text_halign = text.align_center)
+
+// --- Alerts ---
+if ta.change(in_demand) and in_demand
+    alert("Price entered Demand Zone", alert.freq_once_per_bar)
+if ta.change(in_supply) and in_supply
+    alert("Price entered Supply Zone", alert.freq_once_per_bar)
+
+if htf_choch
+    alert("HTF CHoCH Detected! Bias shift to " + bias_str, alert.freq_once_per_bar)
+
+if sweep_low and in_demand
+    alert("A+ Entry Potential: Liquidity Sweep in Demand Zone!", alert.freq_once_per_bar)
+    label.new(bar_index, low, "ENTRY", color = color.green, textcolor = color.white, style = label.style_label_up, size = size.small)
+
+if sweep_high and in_supply
+    alert("A+ Entry Potential: Liquidity Sweep in Supply Zone!", alert.freq_once_per_bar)
+    label.new(bar_index, high, "ENTRY", color = color.red, textcolor = color.white, style = label.style_label_down, size = size.small)
+
+plot(na)
