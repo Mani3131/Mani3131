@@ -1,0 +1,130 @@
+// @version=6
+indicator("Pro Trading School - 5M Complete Entry Model", overlay = true, max_boxes_count = 50, max_lines_count = 50, max_labels_count = 50)
+
+// Historical Buffer
+max_bars_back(close, 500)
+max_bars_back(high, 500)
+max_bars_back(low, 500)
+
+// --- Inputs ---
+grp_htf = "Higher Timeframe Settings"
+htf_tf = input.timeframe("60", "Higher Timeframe (HTF)", group = grp_htf)
+htf_ema_len = input.int(200, "HTF Trend EMA Length", minval = 1, group = grp_htf)
+
+grp_levels = "Level Detection"
+pivot_len = input.int(5, "Pivot Lookback Length", minval = 1, group = grp_levels)
+show_htf_levels = input.bool(true, "Show HTF Levels", group = grp_levels)
+
+grp_logic = "Entry Logic (Bait & Switch)"
+vol_ma_len = input.int(20, "Volume MA Length", minval = 1, group = grp_logic)
+wick_ratio_threshold = input.float(0.5, "Minimum Wick-to-Body Ratio for Sweep", minval = 0.1, step = 0.1, group = grp_logic)
+
+grp_vis = "Visuals & Dashboard"
+show_dashboard = input.bool(true, "Show Strategy Dashboard", group = grp_vis)
+dashboard_pos = input.string(position.top_right, "Dashboard Position", options = [position.top_right, position.bottom_right, position.top_left, position.bottom_left], group = grp_vis)
+
+// --- Constants ---
+COLOR_BULL = color.new(#26a69a, 0)
+COLOR_BEAR = color.new(#ef5350, 0)
+COLOR_NEUTRAL = color.gray
+
+// --- HTF Market Context ---
+[htf_ema, htf_high, htf_low, htf_close] = request.security(syminfo.tickerid, htf_tf, [ta.ema(close, htf_ema_len), high, low, close], lookahead = barmerge.lookahead_off)
+
+htf_bias = close > htf_ema ? 1 : close < htf_ema ? -1 : 0
+htf_bias_color = htf_bias == 1 ? COLOR_BULL : htf_bias == -1 ? COLOR_BEAR : COLOR_NEUTRAL
+
+// --- Level Mapping (Pivots & Flips) ---
+// 5M Pivots for local liquidity detection
+ltf_ph = ta.pivothigh(high, pivot_len, pivot_len)
+ltf_pl = ta.pivotlow(low, pivot_len, pivot_len)
+
+var float last_ltf_ph = na
+var float last_ltf_pl = na
+
+if not na(ltf_ph)
+    last_ltf_ph := ltf_ph
+if not na(ltf_pl)
+    last_ltf_pl := ltf_pl
+
+// HTF Pivots
+[htf_ph, htf_pl] = request.security(syminfo.tickerid, htf_tf, [ta.pivothigh(high, pivot_len, pivot_len), ta.pivotlow(low, pivot_len, pivot_len)], lookahead = barmerge.lookahead_off)
+
+var float last_htf_ph = na
+var float last_htf_pl = na
+
+if not na(htf_ph)
+    last_htf_ph := htf_ph
+if not na(htf_pl)
+    last_htf_pl := htf_pl
+
+// Flip Level Logic: Simple version - track if price has crossed a previous pivot and is now testing it from the other side
+var float active_support = na
+var float active_resistance = na
+
+// If price closes above a HTF PH, that PH might become a Support Flip
+if ta.crossover(close, last_htf_ph)
+    active_support := last_htf_ph
+
+// If price closes below a HTF PL, that PL might become a Resistance Flip
+if ta.crossunder(close, last_htf_pl)
+    active_resistance := last_htf_pl
+
+// --- Bait & Switch Logic ---
+vol_ma = ta.sma(volume, vol_ma_len)
+high_vol = volume > vol_ma
+
+// A "Bait" is when price wicks past a level (LTF or HTF Pivot)
+// A "Switch" is when price closes back below/above the level with high volume
+
+// Bullish Switch: Price wicks below Support (PL) and closes back above, or wicks below a Flip Support
+body_size = math.abs(close - open)
+lower_wick = math.min(open, close) - low
+is_valid_wick_low = lower_wick > body_size * wick_ratio_threshold
+
+is_bait_low = low < math.min(nz(last_ltf_pl, low), nz(last_htf_pl, low)) and is_valid_wick_low
+is_switch_up = close > math.min(nz(last_ltf_pl, close), nz(last_htf_pl, close)) and is_bait_low[1] and high_vol
+
+// Bearish Switch: Price wicks above Resistance (PH) and closes back below
+upper_wick = high - math.max(open, close)
+is_valid_wick_high = upper_wick > body_size * wick_ratio_threshold
+
+is_bait_high = high > math.max(nz(last_ltf_ph, high), nz(last_htf_ph, high)) and is_valid_wick_high
+is_switch_down = close < math.max(nz(last_ltf_ph, close), nz(last_htf_ph, close)) and is_bait_high[1] and high_vol
+
+// Trend Alignment
+long_signal = is_switch_up and htf_bias == 1
+short_signal = is_switch_down and htf_bias == -1
+
+// --- Visuals & Alerts ---
+plotshape(long_signal, title = "Long Signal", style = shape.triangleup, location = location.belowbar, color = COLOR_BULL, size = size.small)
+plotshape(short_signal, title = "Short Signal", style = shape.triangledown, location = location.abovebar, color = COLOR_BEAR, size = size.small)
+
+// Levels
+plot(show_htf_levels ? last_htf_ph : na, "HTF Resistance", color = color.new(COLOR_BEAR, 50), style = plot.style_linebr)
+plot(show_htf_levels ? last_htf_pl : na, "HTF Support", color = color.new(COLOR_BULL, 50), style = plot.style_linebr)
+
+plot(active_support, "Flip Support", color = color.new(color.blue, 70), style = plot.style_linebr, linewidth = 2)
+plot(active_resistance, "Flip Resistance", color = color.new(color.orange, 70), style = plot.style_linebr, linewidth = 2)
+
+// Dashboard
+var table dash = table.new(dashboard_pos, 2, 4, border_width = 1, frame_color = color.gray, border_color = color.gray)
+
+if show_dashboard and barstate.islast
+    table.cell(dash, 0, 0, "HTF Bias", text_color = color.white, bgcolor = color.gray)
+    table.cell(dash, 1, 0, htf_bias == 1 ? "BULLISH" : htf_bias == -1 ? "BEARISH" : "NEUTRAL", text_color = color.white, bgcolor = htf_bias_color)
+
+    table.cell(dash, 0, 1, "Volume", text_color = color.white, bgcolor = color.gray)
+    table.cell(dash, 1, 1, high_vol ? "HIGH" : "NORMAL", text_color = color.white, bgcolor = high_vol ? color.orange : color.gray)
+
+    table.cell(dash, 0, 2, "Last Signal", text_color = color.white, bgcolor = color.gray)
+    table.cell(dash, 1, 2, long_signal ? "LONG" : short_signal ? "SHORT" : "WAITING", text_color = color.white, bgcolor = long_signal ? COLOR_BULL : short_signal ? COLOR_BEAR : color.gray)
+
+    table.cell(dash, 0, 3, "TF Context", text_color = color.white, bgcolor = color.gray)
+    table.cell(dash, 1, 3, timeframe.period + " / " + htf_tf, text_color = color.white, bgcolor = color.gray)
+
+// Alerts
+if long_signal
+    alert("Bullish Bait & Switch detected on " + syminfo.ticker, alert.freq_once_per_bar_close)
+if short_signal
+    alert("Bearish Bait & Switch detected on " + syminfo.ticker, alert.freq_once_per_bar_close)
