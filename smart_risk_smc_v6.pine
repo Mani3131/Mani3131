@@ -27,7 +27,7 @@ string htf_tf    = input.timeframe("60", "High Timeframe (HTF)", group = grp_mtf
 bool show_htf    = input.bool(true, "Show HTF Structure", group = grp_mtf)
 
 string grp_zones = "Supply & Demand Zones"
-float zone_atr_mult = input.float(2.0, "Displacement ATR Multiplier", minval = 0.5, step = 0.1, group = grp_zones, help = "ATR multiplier to identify strong impulsive moves (displacement)")
+float zone_atr_mult = input.float(2.0, "Displacement ATR Multiplier", minval = 0.5, step = 0.1, group = grp_zones, tooltip = "ATR multiplier to identify strong impulsive moves (displacement)")
 int zone_limit      = input.int(10, "Max Active Zones per Type", minval = 1, maxval = 50, group = grp_zones)
 
 string grp_fvg   = "Fair Value Gaps (FVG)"
