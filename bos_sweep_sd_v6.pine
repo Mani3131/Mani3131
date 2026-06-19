@@ -1,0 +1,162 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("BOS + Sweep + S/D Strategy [v6]", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// --- Explicit Buffer Management ---
+max_bars_back(high, 500)
+max_bars_back(low, 500)
+max_bars_back(close, 500)
+
+// --- Inputs ---
+pivot_len = input.int(5, "Pivot Lookback", minval = 1)
+zone_limit = input.int(10, "Max Active Zones", minval = 1)
+wick_ratio = input.float(0.5, "Min Wick-to-Body Ratio for Sweep", minval = 0.1, step = 0.1)
+show_dash   = input.bool(true, "Show Dashboard")
+
+// --- Types & Storage ---
+type Pivot
+    float price
+    int   index
+    bool  is_high
+
+type Zone
+    float top
+    float bottom
+    int   start_index
+    box   display_box
+    bool  is_supply
+    bool  is_active
+    bool  sweep_occurred
+
+var Pivot last_ph = Pivot.new(float(na), int(na), true)
+var Pivot last_pl = Pivot.new(float(na), int(na), false)
+var Zone[] active_zones = array.new<Zone>()
+
+// --- Pivot Detection ---
+ph = ta.pivothigh(high, pivot_len, pivot_len)
+pl = ta.pivotlow(low, pivot_len, pivot_len)
+
+if not na(ph)
+    last_ph := Pivot.new(ph, bar_index - pivot_len, true)
+
+if not na(pl)
+    last_pl := Pivot.new(pl, bar_index - pivot_len, false)
+
+// --- BOS Detection & Zone Creation ---
+bool bull_bos = false
+bool bear_bos = false
+
+if not na(last_ph.price) and close > last_ph.price
+    bull_bos := true
+    lookback = bar_index - (na(last_pl.index) ? math.max(0, bar_index - 20) : last_pl.index)
+    lowest_idx = ta.lowestbars(low, lookback)
+    base_idx = bar_index + lowest_idx
+    z_top = high[math.abs(lowest_idx)]
+    z_bottom = low[math.abs(lowest_idx)]
+
+    new_box = box.new(base_idx, z_top, bar_index, z_bottom, border_color = color.new(color.green, 50), bgcolor = color.new(color.green, 90))
+    array.push(active_zones, Zone.new(z_top, z_bottom, base_idx, new_box, false, true, false))
+    last_ph.price := float(na)
+
+if not na(last_pl.price) and close < last_pl.price
+    bear_bos := true
+    lookback = bar_index - (na(last_ph.index) ? math.max(0, bar_index - 20) : last_ph.index)
+    highest_idx = ta.highestbars(high, lookback)
+    base_idx = bar_index + highest_idx
+    z_top = high[math.abs(highest_idx)]
+    z_bottom = low[math.abs(highest_idx)]
+
+    new_box = box.new(base_idx, z_top, bar_index, z_bottom, border_color = color.new(color.red, 50), bgcolor = color.new(color.red, 90))
+    array.push(active_zones, Zone.new(z_top, z_bottom, base_idx, new_box, true, true, false))
+    last_pl.price := float(na)
+
+// --- Liquidity Sweep Detection ---
+bool is_bull_sweep = false
+bool is_bear_sweep = false
+
+if not na(last_pl.price)
+    if low < last_pl.price and close > last_pl.price
+        wick_size = close - low
+        body_size = math.abs(close - open)
+        if wick_size > body_size * wick_ratio
+            is_bull_sweep := true
+
+if not na(last_ph.price)
+    if high > last_ph.price and close < last_ph.price
+        wick_size = high - close
+        body_size = math.abs(close - open)
+        if wick_size > body_size * wick_ratio
+            is_bear_sweep := true
+
+// --- Manage Zones & Signal Logic ---
+bool buy_signal = false
+bool sell_signal = false
+int active_supply_count = 0
+int active_demand_count = 0
+
+if active_zones.size() > 0
+    for i = active_zones.size() - 1 to 0
+        zone = active_zones.get(i)
+        if zone.is_active
+            box.set_right(zone.display_box, bar_index)
+
+            if zone.is_supply
+                active_supply_count += 1
+                if is_bear_sweep
+                    zone.sweep_occurred := true
+                if zone.sweep_occurred and high >= zone.bottom and low <= zone.top
+                    sell_signal := true
+            else
+                active_demand_count += 1
+                if is_bull_sweep
+                    zone.sweep_occurred := true
+                if zone.sweep_occurred and low <= zone.top and high >= zone.bottom
+                    buy_signal := true
+
+            // Mitigation check
+            if zone.is_supply
+                if close > zone.top
+                    zone.is_active := false
+                    box.set_bgcolor(zone.display_box, color.new(color.gray, 95))
+            else
+                if close < zone.bottom
+                    zone.is_active := false
+                    box.set_bgcolor(zone.display_box, color.new(color.gray, 95))
+
+    if active_zones.size() > zone_limit
+        active_zones.remove(0)
+
+// --- Dashboard ---
+var table dash = table.new(position.top_right, 2, 4, border_width = 1, frame_color = color.gray, border_color = color.gray)
+if show_dash and barstate.islast
+    table.cell(dash, 0, 0, "Metric", text_color = color.white, bgcolor = color.gray)
+    table.cell(dash, 1, 0, "Value", text_color = color.white, bgcolor = color.gray)
+
+    table.cell(dash, 0, 1, "Active Supply", text_halign = text.align_left)
+    table.cell(dash, 1, 1, str.tostring(active_supply_count), bgcolor = active_supply_count > 0 ? color.new(color.red, 70) : na)
+
+    table.cell(dash, 0, 2, "Active Demand", text_halign = text.align_left)
+    table.cell(dash, 1, 2, str.tostring(active_demand_count), bgcolor = active_demand_count > 0 ? color.new(color.green, 70) : na)
+
+    status_text = buy_signal ? "BUY" : sell_signal ? "SELL" : "WAITING"
+    status_color = buy_signal ? color.green : sell_signal ? color.red : color.gray
+    table.cell(dash, 0, 3, "Status", text_halign = text.align_left)
+    table.cell(dash, 1, 3, status_text, bgcolor = color.new(status_color, 70))
+
+// --- Visuals ---
+plotshape(bull_bos, "Bullish BOS", shape.labeldown, location.abovebar, color.blue, text = "BOS", textcolor = color.white, size = size.tiny)
+plotshape(bear_bos, "Bearish BOS", shape.labelup, location.belowbar, color.red, text = "BOS", textcolor = color.white, size = size.tiny)
+
+plotshape(is_bull_sweep, "Bullish Sweep", shape.arrowup, location.belowbar, color.teal, text = "Sweep", textcolor = color.teal, size = size.tiny)
+plotshape(is_bear_sweep, "Bearish Sweep", shape.arrowdown, location.abovebar, color.orange, text = "Sweep", textcolor = color.orange, size = size.tiny)
+
+plotshape(buy_signal, "BUY", shape.triangleup, location.belowbar, color.green, text = "BUY", textcolor = color.white, size = size.small)
+plotshape(sell_signal, "SELL", shape.triangledown, location.abovebar, color.red, text = "SELL", textcolor = color.white, size = size.small)
+
+// Alerting
+if buy_signal
+    alert("Buy Signal: BOS + Sweep + Demand Tap", alert.freq_once_per_bar_close)
+if sell_signal
+    alert("Sell Signal: BOS + Sweep + Supply Tap", alert.freq_once_per_bar_close)
