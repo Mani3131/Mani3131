@@ -14,7 +14,7 @@ color_expansion = input.color(color.new(color.yellow, 85), "Expansion Phase Colo
 asian_session_input = input.session("0200-0800", "Asian Session Time")
 t_asian = time(timeframe.period, asian_session_input, timezone)
 is_asian = not na(t_asian)
-is_new_asian = is_asian and not is_asian[1]
+is_new_asian = is_asian and not nz(is_asian[1], false)
 
 var float asian_high = na
 var float asian_low = na
@@ -50,7 +50,7 @@ if not is_asian and not na(asian_mid_line)
 // --- 4H Structural Matrix Logic ---
 // Boundaries: 00, 04, 08, 12, 16, 20 EAT
 t_4h = time("240", "0000-0000:1234567", timezone)
-is_new_4h = ta.change(t_4h)
+is_new_4h = ta.change(t_4h) != 0
 
 var float p4h_high = na
 var float p4h_low = na
@@ -81,7 +81,7 @@ bgcolor(is_expansion ? color_expansion : na, title = "4H Expansion Phase")
 
 // --- 15-Minute Fractal Rule (First 3 minutes) ---
 t_15m = time("15", "0000-0000:1234567", timezone)
-is_new_15m = ta.change(t_15m)
+is_new_15m = ta.change(t_15m) != 0
 var int start_time_15m = 0
 var float f15_high = na
 var float f15_low = na
@@ -103,7 +103,7 @@ else if (time - start_time_15m) < (3 * 60 * 1000)
 var float friday_close = na
 is_monday = dayofweek(time, timezone) == dayofweek.monday
 is_friday = dayofweek(time, timezone) == dayofweek.friday
-is_new_day = ta.change(dayofmonth(time, timezone))
+is_new_day = ta.change(dayofmonth(time, timezone)) != 0
 
 if is_friday
     friday_close := close
@@ -128,7 +128,7 @@ is_1619 = not na(t_1619)
 var float anchor_price_1619 = na
 var line anchor_line = na
 
-if is_1619 and not is_1619[1]
+if is_1619 and not nz(is_1619[1], false)
     anchor_price_1619 := open
     anchor_line := line.new(x1 = bar_index, y1 = anchor_price_1619, x2 = bar_index + 60, y2 = anchor_price_1619, color = color.yellow, width = 2)
 
