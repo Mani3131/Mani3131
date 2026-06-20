@@ -77,16 +77,16 @@ else if not asian_sess and asian_sess[1]
     in_asian := false
 
 // --- Visual Plots for 4H Levels ---
-plot(prev_h4_high, "Prev 4H High", color.red, 1, plot.style_linebr)
-plot(prev_h4_low, "Prev 4H Low", color.green, 1, plot.style_linebr)
-plot(prev_h4_open, "Prev 4H Open", color.gray, 1, plot.style_linebr)
-plot(prev_h4_close, "Prev 4H Close", color.silver, 1, plot.style_linebr)
-plot(prev_h4_mid, "Prev 4H Midpoint", color.orange, 1, plot.style_linebr)
+plot(prev_h4_high, "Prev 4H High", color.red, style = plot.style_linebr)
+plot(prev_h4_low, "Prev 4H Low", color.green, style = plot.style_linebr)
+plot(prev_h4_open, "Prev 4H Open", color.gray, style = plot.style_linebr)
+plot(prev_h4_close, "Prev 4H Close", color.silver, style = plot.style_linebr)
+plot(prev_h4_mid, "Prev 4H Midpoint", color.orange, style = plot.style_linebr)
 
 // --- Visual Plots for Asian Range ---
-plot(not in_asian ? asian_high : na, "Asian High", color.blue, 1, plot.style_linebr)
-plot(not in_asian ? asian_low : na, "Asian Low", color.blue, 1, plot.style_linebr)
-plot(not in_asian ? asian_mid : na, "Asian Mid", color.blue, 1, plot.style_linebr)
+plot(not in_asian ? asian_high : na, "Asian High", color.blue, style = plot.style_linebr)
+plot(not in_asian ? asian_low : na, "Asian Low", color.blue, style = plot.style_linebr)
+plot(not in_asian ? asian_mid : na, "Asian Mid", color.blue, style = plot.style_linebr)
 
 // --- 16:19 Anchor & Liquidity Hunt Window ---
 var float anchor_1619 = na
@@ -120,7 +120,7 @@ if in_hunt_window
         sweep_asian_low := true
 
 // Plot Anchor
-plot(anchor_1619, "16:19 Anchor Price", color.new(color.white, 50), 1, plot.style_linebr, linewidth = 2)
+plot(anchor_1619, "16:19 Anchor Price", color.new(color.white, 50), style = plot.style_linebr, linewidth = 2)
 
 // --- 17:00 Execution Engine & Expansion Rules ---
 is_1700 = hour(time, i_tz) == 17 and minute(time, i_tz) == 0 and timeframe.isintraday
