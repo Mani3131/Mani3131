@@ -14,7 +14,7 @@ color_expansion = input.color(color.new(color.yellow, 85), "Expansion Phase Colo
 asian_session_input = input.session("0200-0800", "Asian Session Time")
 t_asian = time(timeframe.period, asian_session_input, timezone)
 is_asian = not na(t_asian)
-is_new_asian = is_asian and not nz(is_asian[1], false)
+is_new_asian = is_asian and (na(is_asian[1]) or not is_asian[1])
 
 var float asian_high = na
 var float asian_low = na
@@ -128,7 +128,7 @@ is_1619 = not na(t_1619)
 var float anchor_price_1619 = na
 var line anchor_line = na
 
-if is_1619 and not nz(is_1619[1], false)
+if is_1619 and (na(is_1619[1]) or not is_1619[1])
     anchor_price_1619 := open
     anchor_line := line.new(x1 = bar_index, y1 = anchor_price_1619, x2 = bar_index + 60, y2 = anchor_price_1619, color = color.yellow, width = 2)
 
