@@ -1,0 +1,197 @@
+//@version=6
+indicator("AMDX Core Framework [Big Boss]", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// --- Inputs ---
+grp_sessions = "Sessions & Time"
+tz_input = input.string("UTC+3", "Timezone", tooltip = "Default is EAT (UTC+3)", group = grp_sessions)
+session_start = input.session("0800-1400", "90m Session Window", tooltip = "The 6-hour session divided into 90m quarters", group = grp_sessions)
+midnight_mode = input.string("NY (UTC-5)", "True Midnight Open Anchor", options = ["NY (UTC-5)", "London (UTC+0)"], group = grp_sessions)
+
+grp_h4 = "H4 Opening Macro"
+h4_tracking = input.bool(true, "Track H4 Opening Macro (10 min)", group = grp_h4)
+
+grp_phases = "AMDX Phases"
+show_phases = input.bool(true, "Highlight 90-min Quarters", group = grp_phases)
+
+// --- Colors ---
+color_q1 = color.new(color.blue, 80)
+color_q2 = color.new(color.red, 80)
+color_q3 = color.new(color.green, 80)
+color_q4 = color.new(color.orange, 80)
+color_h4_macro = color.new(color.gray, 80)
+
+// --- Global Variables ---
+var float d_open = na
+var float h4_open = na
+var float h1_open = na
+
+// --- True Open Horizontal Lines ---
+t_daily = time("D", "0000-2359:1234567", timezone = tz_input)
+t_h4    = time("240", "0000-2359:1234567", timezone = tz_input)
+t_h1    = time("60", "0000-2359:1234567", timezone = tz_input)
+
+new_daily = ta.change(t_daily)
+new_h4    = ta.change(t_h4)
+new_h1    = ta.change(t_h1)
+
+if not na(new_daily) and new_daily != 0
+    d_open := open
+if not na(new_h4) and new_h4 != 0
+    h4_open := open
+if not na(new_h1) and new_h1 != 0
+    h1_open := open
+
+plot(d_open, "Daily Open", color = color.new(color.white, 20), style = plot.style_linebr, linewidth = 2)
+plot(h4_open, "H4 Open", color = color.new(color.gray, 30), style = plot.style_linebr, linewidth = 1)
+plot(h1_open, "Hourly Open", color = color.new(color.gray, 50), style = plot.style_linebr, linewidth = 1)
+
+// --- True Midnight Open Anchor ---
+var float true_midnight_open = na
+// NY Midnight (UTC-5) or London Midnight (UTC+0)
+midnight_tz = midnight_mode == "NY (UTC-5)" ? "UTC-5" : "UTC+0"
+t_midnight = time("D", "0000-2359:1234567", timezone = midnight_tz)
+if not na(ta.change(t_midnight)) and ta.change(t_midnight) != 0
+    true_midnight_open := open
+
+plot(true_midnight_open, "True Midnight Open", color = color.new(color.yellow, 20), style = plot.style_linebr, linewidth = 2)
+
+// --- London Session Macro Window (08:00 EAT) ---
+is_london_macro = not na(time(timeframe.period, "0800-0810:1234567", tz_input)) // Highlighting the influx window
+bgcolor(is_london_macro ? color.new(color.blue, 90) : na, title = "London Macro Window")
+
+// --- 90-minute AMDX Session Cycle ---
+var float q1_high = na
+var float q1_low = na
+var box q1_box = na
+var box q2_box = na
+var box q3_box = na
+var box q4_box = na
+
+in_session = not na(time(timeframe.period, session_start, tz_input))
+session_new = in_session and not in_session[1]
+
+// Use a persistent variable to track the start time of the 6-hour session
+var int session_start_time = na
+if session_new
+    session_start_time := time
+
+elapsed_session_min = int((time - session_start_time) / 60000)
+
+// Quarter Identification
+is_q1 = in_session and elapsed_session_min >= 0   and elapsed_session_min < 90
+is_q2 = in_session and elapsed_session_min >= 90  and elapsed_session_min < 180
+is_q3 = in_session and elapsed_session_min >= 180 and elapsed_session_min < 270
+is_q4 = in_session and elapsed_session_min >= 270 and elapsed_session_min < 360
+
+// Q1: Accumulation (0-90m)
+if is_q1
+    if na(q1_high) or session_new
+        q1_high := high
+        q1_low := low
+        if show_phases
+            q1_box := box.new(left = bar_index, top = high, right = bar_index, bottom = low, bgcolor = color_q1, border_style = line.style_dotted)
+    else
+        q1_high := math.max(q1_high, high)
+        q1_low := math.min(q1_low, low)
+        if show_phases
+            box.set_right(q1_box, bar_index)
+            box.set_top(q1_box, q1_high)
+            box.set_bottom(q1_box, q1_low)
+
+// Q2: Manipulation (91-180m)
+var bool q2_swept_high = false
+var bool q2_swept_low = false
+var bool manipulation_complete = false
+
+if is_q2
+    if is_q2 and not (is_q2[1] == true)
+        q2_swept_high := false
+        q2_swept_low := false
+        manipulation_complete := false
+        if show_phases
+            q2_box := box.new(left = bar_index, top = high, right = bar_index, bottom = low, bgcolor = color_q2, border_style = line.style_dotted)
+
+    if show_phases
+        box.set_right(q2_box, bar_index)
+        box.set_top(q2_box, math.max(box.get_top(q2_box), high))
+        box.set_bottom(q2_box, math.min(box.get_bottom(q2_box), low))
+
+    // Sweep detection
+    if not manipulation_complete
+        if high > q1_high
+            q2_swept_high := true
+        if low < q1_low
+            q2_swept_low := true
+
+        // Counter-reversal confirmation (e.g., engulfing or simple reversal candle)
+        if q2_swept_high and close < open and close < close[1]
+            manipulation_complete := true
+            label.new(bar_index, high, "Manipulation Complete (High Sweep)", color = color.red, textcolor = color.white, style = label.style_label_down)
+        else if q2_swept_low and close > open and close > close[1]
+            manipulation_complete := true
+            label.new(bar_index, low, "Manipulation Complete (Low Sweep)", color = color.green, textcolor = color.white, style = label.style_label_up)
+
+// Q3: Distribution (181-270m)
+var line q3_vector = na
+var int q3_start_bar = na
+var float q3_start_price = na
+
+if is_q3
+    if is_q3 and not (is_q3[1] == true)
+        q3_start_bar := bar_index
+        q3_start_price := close
+        if show_phases
+            q2_top = box.get_top(q2_box)
+            q2_bottom = box.get_bottom(q2_box)
+            q3_box := box.new(left = bar_index, top = q2_top, right = bar_index, bottom = q2_bottom, bgcolor = color_q3, border_style = line.style_dotted)
+            q3_vector := line.new(x1 = bar_index, y1 = close, x2 = bar_index, y2 = close, color = color.green, width = 2, style = line.style_arrow_right)
+
+    if show_phases
+        box.set_right(q3_box, bar_index)
+        box.set_top(q3_box, math.max(box.get_top(q3_box), high))
+        box.set_bottom(q3_box, math.min(box.get_bottom(q3_box), low))
+        line.set_xy2(q3_vector, bar_index, close)
+
+// Q4: Reversal / Continuation (271-360m)
+if is_q4
+    if is_q4 and not (is_q4[1] == true)
+        if show_phases
+            q3_top = box.get_top(q3_box)
+            q3_bottom = box.get_bottom(q3_box)
+            q4_box := box.new(left = bar_index, top = q3_top, right = bar_index, bottom = q3_bottom, bgcolor = color_q4, border_style = line.style_dotted)
+
+    if show_phases
+        box.set_right(q4_box, bar_index)
+        box.set_top(q4_box, math.max(box.get_top(q4_box), high))
+        box.set_bottom(q4_box, math.min(box.get_bottom(q4_box), low))
+
+// --- H4 10-minute Opening Macro ---
+var box h4_box = na
+var float h4_macro_high = na
+var float h4_macro_low = na
+var bool h4_macro_active = false
+
+is_new_h4 = not na(t_h4) and (na(t_h4[1]) or t_h4 != t_h4[1])
+h4_elapsed_min = int((time - t_h4) / 60000)
+
+if h4_tracking and is_new_h4
+    h4_box := box.new(left = bar_index, top = high, right = bar_index, bottom = low, bgcolor = color_h4_macro, border_color = color.gray)
+    h4_macro_high := high
+    h4_macro_low := low
+    h4_macro_active := true
+
+if h4_macro_active and h4_elapsed_min < 10
+    box.set_right(h4_box, bar_index)
+    h4_macro_high := math.max(h4_macro_high, high)
+    h4_macro_low := math.min(h4_macro_low, low)
+    box.set_top(h4_box, h4_macro_high)
+    box.set_bottom(h4_box, h4_macro_low)
+else if h4_macro_active and h4_elapsed_min >= 10
+    h4_macro_active := false
+
+// Sweep Alerts for H4 Macro
+if h4_tracking and not h4_macro_active and not na(h4_macro_high)
+    if high > h4_macro_high and high[1] <= h4_macro_high
+        alert("H4 Macro High Swept", alert.freq_once_per_bar)
+    if low < h4_macro_low and low[1] >= h4_macro_low
+        alert("H4 Macro Low Swept", alert.freq_once_per_bar)
