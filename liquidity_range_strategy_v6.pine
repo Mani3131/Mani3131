@@ -1,0 +1,137 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+strategy("Liquidity Range Strategy v6", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// --- Inputs ---
+grp_time = "Time Settings (UTC)"
+session_full_input = input.session("1319-1400", "Full Strategy Session", group = grp_time, tooltip = "UTC Time for the overall strategy monitoring (EAT 16:19-17:00)")
+session_range_input = input.session("1330-1340", "Liquidity Range Session", group = grp_time, tooltip = "UTC Time for defining the liquidity range")
+timezone_input = input.string("UTC", "Timezone", group = grp_time)
+
+// --- Time Logic ---
+is_in_full_session = not na(time(timeframe.period, session_full_input, timezone_input))
+is_in_range_session = not na(time(timeframe.period, session_range_input, timezone_input))
+
+var float range_high = na
+var float range_low = na
+
+if is_in_range_session
+    if not is_in_range_session[1]
+        range_high := high
+        range_low := low
+    else
+        range_high := math.max(range_high, high)
+        range_low := math.min(range_low, low)
+
+// Reset range at the start of the full session if needed, or keep last day's
+// Usually, these strategies look at the range formed TODAY.
+if is_in_full_session and not is_in_full_session[1]
+    range_high := na
+    range_low := na
+
+// --- HTF and Daily Anchors ---
+htf_4h = "240"
+daily = "D"
+
+[h4_high, h4_low] = request.security(syminfo.tickerid, htf_4h, [high[1], low[1]], lookahead = barmerge.lookahead_off)
+[d_open, d_high, d_low] = request.security(syminfo.tickerid, daily, [open[1], high[1], low[1]], lookahead = barmerge.lookahead_off)
+
+// Current day open (not delayed by [1] if we want today's open, but security with [1] on Daily gives yesterday's.
+// If "Daily price anchors" means today's open, we should get it without [1] but with barmerge.lookahead_on?
+// No, standard non-repainting way to get today's open is request.security(..., open, lookahead=barmerge.lookahead_on).
+// However, the memory says: "use current bar references rather than indexed ones when using lookahead_on".
+// But lookahead_on is generally avoided in strategies unless strictly necessary.
+// Let's get today's data safely.
+
+d_open_today = request.security(syminfo.tickerid, daily, open, lookahead = barmerge.lookahead_on)
+
+// --- Detection Logic ---
+
+// 1. Liquidity Sweeps (13:30-13:40 range)
+// Sweep occurs when price goes beyond the range but closes back inside (or just wicks through it)
+// A sweep is typically: high > range_high but close < range_high
+is_sweep_high = high > range_high and close < range_high
+is_sweep_low = low < range_low and close > range_low
+
+// 2. 4H HTF Breaches
+// Breach is typically a close beyond the level
+is_h4_breach_upper = close > h4_high
+is_h4_breach_lower = close < h4_low
+
+// 3. Inside Candles
+is_inside_candle = high <= high[1] and low >= low[1]
+
+// 4. Imbalances (Fair Value Gaps)
+is_bullish_fvg = low > high[2]
+is_bearish_fvg = high < low[2]
+
+// Combined signals for strategy entry
+// Usually: Sweep + Inside Candle or Sweep + FVG
+long_condition = is_in_full_session and (is_sweep_low or is_h4_breach_lower) and (is_inside_candle or is_bullish_fvg)
+short_condition = is_in_full_session and (is_sweep_high or is_h4_breach_upper) and (is_inside_candle or is_bearish_fvg)
+
+if long_condition
+    strategy.entry("Long", strategy.long)
+
+if short_condition
+    strategy.entry("Short", strategy.short)
+
+// --- Visuals ---
+
+var box range_box = na
+
+if is_in_range_session
+    if not is_in_range_session[1]
+        range_box := box.new(bar_index, range_high, bar_index, range_low, bgcolor = color.new(color.blue, 80), border_color = color.blue)
+    else
+        box.set_right(range_box, bar_index)
+        box.set_top(range_box, range_high)
+        box.set_bottom(range_box, range_low)
+
+// Plot ranges
+plot(range_high, "Range High", color.new(color.blue, 0), style = plot.style_linebr)
+plot(range_low, "Range Low", color.new(color.blue, 0), style = plot.style_linebr)
+
+// Plot HTF Levels
+plot(h4_high, "4H High", color.new(color.red, 0), style = plot.style_stepline)
+plot(h4_low, "4H Low", color.new(color.red, 0), style = plot.style_stepline)
+
+// Plot Daily Anchors
+plot(d_open_today, "Daily Open", color.new(color.gray, 0), style = plot.style_circles)
+plot(d_high, "Prev Day High", color.new(color.orange, 50), style = plot.style_linebr)
+plot(d_low, "Prev Day Low", color.new(color.orange, 50), style = plot.style_linebr)
+
+// Highlight sweeps and triggers
+plotshape(is_sweep_high, "Sweep High", shape.triangledown, location.abovebar, color.red, size = size.small)
+plotshape(is_sweep_low, "Sweep Low", shape.triangleup, location.belowbar, color.green, size = size.small)
+
+plotshape(is_inside_candle, "Inside Candle", shape.circle, location.abovebar, color.yellow, size = size.tiny)
+
+// Highlight Sessions
+bgcolor(is_in_range_session ? color.new(color.blue, 90) : na)
+bgcolor(is_in_full_session and not is_in_range_session ? color.new(color.green, 95) : na)
+
+// --- Dashboard ---
+var table dashboard = table.new(position.top_right, 2, 6, bgcolor = color.new(color.black, 50), border_color = color.gray, border_width = 1)
+
+if barstate.islast
+    table.cell(dashboard, 0, 0, "Strategy Status", text_color = color.white, text_halign = text.align_center)
+    table.cell(dashboard, 1, 0, is_in_full_session ? "MONITORING" : "IDLE", text_color = is_in_full_session ? color.green : color.gray)
+
+    table.cell(dashboard, 0, 1, "Session", text_color = color.white, text_halign = text.align_left)
+    table.cell(dashboard, 1, 1, is_in_range_session ? "RANGE" : (is_in_full_session ? "ACTIVE" : "OFF"), text_color = color.white)
+
+    table.cell(dashboard, 0, 2, "H4 Breach", text_color = color.white, text_halign = text.align_left)
+    table.cell(dashboard, 1, 2, is_h4_breach_upper ? "UPPER" : (is_h4_breach_lower ? "LOWER" : "NONE"), text_color = (is_h4_breach_upper or is_h4_breach_lower) ? color.orange : color.white)
+
+    table.cell(dashboard, 0, 3, "Sweep", text_color = color.white, text_halign = text.align_left)
+    table.cell(dashboard, 1, 3, is_sweep_high ? "HIGH" : (is_sweep_low ? "LOW" : "NONE"), text_color = (is_sweep_high or is_sweep_low) ? color.yellow : color.white)
+
+    table.cell(dashboard, 0, 4, "Inside Candle", text_color = color.white, text_halign = text.align_left)
+    table.cell(dashboard, 1, 4, is_inside_candle ? "YES" : "NO", text_color = is_inside_candle ? color.yellow : color.white)
+
+    table.cell(dashboard, 0, 5, "Bias", text_color = color.white, text_halign = text.align_left)
+    bias_text = strategy.position_size > 0 ? "LONG" : (strategy.position_size < 0 ? "SHORT" : "NEUTRAL")
+    table.cell(dashboard, 1, 5, bias_text, text_color = strategy.position_size > 0 ? color.green : (strategy.position_size < 0 ? color.red : color.white))
