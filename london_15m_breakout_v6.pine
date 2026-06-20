@@ -1,0 +1,85 @@
+//@version=6
+indicator("London 15m Breakout (UTC+3)", overlay=true)
+
+// 1. Inputs
+session_input = input.session("1000-1015", title="London Opening 15m (UTC+3)")
+timezone_input = input.string("GMT+3", title="Timezone")
+use_close = input.bool(true, title="Use Close for Breakout Confirmation", tooltip="If true, wait for candle close outside the range. If false, trigger on price touch (wick).")
+
+// 2. Session Tracking
+// Use time() to check if current bar is within the session
+t = time(timeframe.period, session_input, timezone = timezone_input)
+in_session = not na(t)
+session_start = in_session and na(t[1])
+session_end = not in_session and not na(t[1])
+
+// 3. State Variables
+var float range_high = na
+var float range_low = na
+var int start_bar = na
+var bool traded_today = false
+var bool session_completed = false
+var box range_box = box(na)
+
+// Reset at the start of a new London session
+if session_start
+    range_high := high
+    range_low := low
+    start_bar := bar_index
+    traded_today := false
+    session_completed := false
+    range_box := box(na)
+
+// Update high and low during the 15-minute session
+if in_session
+    range_high := math.max(nz(range_high, high), high)
+    range_low := math.min(nz(range_low, low), low)
+
+// 4. Draw/Update the Box
+if in_session
+    if na(range_box)
+        range_box := box.new(left=start_bar, top=range_high, right=bar_index, bottom=range_low,
+                             bgcolor=color.new(color.blue, 90), border_color=color.blue, border_width=2)
+    else
+        box.set_top(range_box, range_high)
+        box.set_bottom(range_box, range_low)
+        box.set_right(range_box, bar_index)
+
+if session_end
+    session_completed := true
+
+// 5. Breakout Logic
+is_valid_trade_window = session_completed and not traded_today
+
+buy_signal = false
+sell_signal = false
+
+if is_valid_trade_window
+    if use_close
+        if close > range_high
+            buy_signal := true
+            traded_today := true
+        else if close < range_low
+            sell_signal := true
+            traded_today := true
+    else
+        if high > range_high
+            buy_signal := true
+            traded_today := true
+        else if low < range_low
+            sell_signal := true
+            traded_today := true
+
+// 6. Visuals & Alerts
+plotshape(buy_signal, title="Buy Signal", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text="BUY")
+plotshape(sell_signal, title="Sell Signal", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text="SELL")
+
+// Plot levels for visual confirmation
+plot(session_completed ? range_high : na, color=color.new(color.green, 50), style=plot.style_linebr, title="Range High")
+plot(session_completed ? range_low : na, color=color.new(color.red, 50), style=plot.style_linebr, title="Range Low")
+
+// Alerts
+if buy_signal
+    alert("London Buy Breakout! Price: " + str.tostring(close), alert.freq_once_per_bar)
+if sell_signal
+    alert("London Sell Breakout! Price: " + str.tostring(close), alert.freq_once_per_bar)
