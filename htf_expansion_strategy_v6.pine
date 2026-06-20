@@ -86,7 +86,7 @@ plot(prev_h4_mid, "Prev 4H Midpoint", color.orange, 1, plot.style_linebr)
 // --- Visual Plots for Asian Range ---
 plot(not in_asian ? asian_high : na, "Asian High", color.blue, 1, plot.style_linebr)
 plot(not in_asian ? asian_low : na, "Asian Low", color.blue, 1, plot.style_linebr)
-plot(not in_asian ? asian_mid : na, "Asian Mid", color.blue, 1, plot.style_dotted)
+plot(not in_asian ? asian_mid : na, "Asian Mid", color.blue, 1, plot.style_linebr)
 
 // --- 16:19 Anchor & Liquidity Hunt Window ---
 var float anchor_1619 = na
