@@ -1,0 +1,115 @@
+//@version=6
+indicator("H4 Expansion Detector", overlay = true)
+
+// --- Historical Buffer ---
+max_bars_back(high, 500)
+max_bars_back(low, 500)
+max_bars_back(close, 500)
+
+// --- Inputs ---
+tf_input        = input.timeframe("240", "H4 Timeframe")
+vol_type        = input.string("ATR", "Volatility Metric", options = ["ATR", "Bollinger Band Width"])
+atr_length      = input.int(14, "ATR Length", minval = 1)
+bb_length       = input.int(20, "BB Length", minval = 1)
+bb_mult         = input.float(2.0, "BB Multiplier", minval = 0.1)
+vol_ma_length   = input.int(20, "Volatility MA Length", minval = 1, tooltip = "Average volatility to compare against")
+threshold_pct   = input.float(90.0, "Accumulation Threshold (%)", minval = 1.0, maxval = 100.0, tooltip = "If current volatility < X% of its average, it is considered accumulation")
+show_zones      = input.bool(true, "Show Accumulation Zones")
+
+// --- HTF Data Fetching (Non-repainting) ---
+// Define functions for volatility calculation to be used within request.security()
+get_vol() =>
+    float _vol = 0.0
+    if vol_type == "ATR"
+        _vol := ta.atr(atr_length)
+    else
+        [basis, upper, lower] = ta.bb(close, bb_length, bb_mult)
+        _vol := (upper - lower) / basis
+    _vol
+
+get_vol_ma() =>
+    vol_val = get_vol()
+    ta.sma(vol_val, vol_ma_length)
+
+// We fetch the data from the PREVIOUS closed HTF candle to ensure no repainting.
+// The functions inside the array will be calculated in the context of the H4 timeframe.
+[htf_high, htf_low, htf_close, htf_vol, htf_vol_ma] = request.security(
+     syminfo.tickerid,
+     tf_input,
+     [high[1], low[1], close[1], get_vol()[1], get_vol_ma()[1]],
+     lookahead = barmerge.lookahead_off
+ )
+
+// --- Logic Implementation ---
+var float acc_high = na
+var float acc_low  = na
+var int   acc_start_idx = na
+var box   acc_box = na
+
+bool htf_new_bar = ta.change(time(tf_input)) != 0
+bool is_breakout_up   = false
+bool is_breakout_down = false
+
+// Check if the HTF candle that JUST closed was accumulating
+bool was_acc = htf_vol < (htf_vol_ma * (threshold_pct / 100.0))
+
+if htf_new_bar
+    if was_acc
+        // Start or continue accumulation
+        if na(acc_high)
+            acc_high := htf_high
+            acc_low  := htf_low
+            acc_start_idx := bar_index
+            if show_zones
+                acc_box := box.new(bar_index, acc_high, bar_index, acc_low, border_color = color.gray, bgcolor = color.new(color.gray, 90))
+        else
+            acc_high := math.max(acc_high, htf_high)
+            acc_low  := math.min(acc_low, htf_low)
+            if show_zones
+                box.set_top(acc_box, acc_high)
+                box.set_bottom(acc_box, acc_low)
+                box.set_right(acc_box, bar_index)
+    else
+        // Volatility is above threshold. Did we break out of a PREVIOUSLY tracked accumulation with a spike?
+        if not na(acc_high)
+            // Expansion trigger: Breakout + Volatility Spike (above average)
+            if (htf_close > acc_high or htf_close < acc_low) and htf_vol > htf_vol_ma
+                if htf_close > acc_high
+                    is_breakout_up := true
+                else
+                    is_breakout_down := true
+
+                // Close the box at the breakout bar
+                if show_zones
+                    box.set_right(acc_box, bar_index)
+
+                // Reset accumulation tracking after expansion
+                acc_high := na
+                acc_low  := na
+                acc_start_idx := na
+                acc_box := na
+            else if htf_vol > htf_vol_ma * 2.0
+                // If volatility becomes extremely high without a breakout, we might want to reset the zone as it's no longer valid accumulation
+                if show_zones
+                    box.set_right(acc_box, bar_index)
+                acc_high := na
+                acc_low  := na
+                acc_start_idx := na
+                acc_box := na
+
+// Update box right side on every bar if we are accumulating
+if not na(acc_box)
+    box.set_right(acc_box, bar_index)
+
+// --- Visualization ---
+plotshape(is_breakout_up, title = "Expansion Long", style = shape.triangleup, location = location.belowbar, color = color.green, size = size.small, text = "Expansion")
+plotshape(is_breakout_down, title = "Expansion Short", style = shape.triangledown, location = location.abovebar, color = color.red, size = size.small, text = "Expansion")
+
+// Optional Background coloring on the bar where expansion is detected
+bgcolor(is_breakout_up ? color.new(color.green, 90) : is_breakout_down ? color.new(color.red, 90) : na)
+
+// Alerts
+if is_breakout_up
+    alert("H4 Expansion Up detected on " + syminfo.ticker, alert.freq_once_per_bar)
+if is_breakout_down
+    alert("H4 Expansion Down detected on " + syminfo.ticker, alert.freq_once_per_bar)
