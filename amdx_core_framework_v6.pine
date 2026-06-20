@@ -34,11 +34,11 @@ new_daily = ta.change(t_daily)
 new_h4    = ta.change(t_h4)
 new_h1    = ta.change(t_h1)
 
-if new_daily
+if not na(new_daily) and new_daily != 0
     d_open := open
-if new_h4
+if not na(new_h4) and new_h4 != 0
     h4_open := open
-if new_h1
+if not na(new_h1) and new_h1 != 0
     h1_open := open
 
 plot(d_open, "Daily Open", color = color.new(color.white, 20), style = plot.style_linebr, linewidth = 2)
@@ -50,7 +50,7 @@ var float true_midnight_open = na
 // NY Midnight (UTC-5) or London Midnight (UTC+0)
 midnight_tz = midnight_mode == "NY (UTC-5)" ? "UTC-5" : "UTC+0"
 t_midnight = time("D", "0000-2359:1234567", timezone = midnight_tz)
-if ta.change(t_midnight)
+if not na(ta.change(t_midnight)) and ta.change(t_midnight) != 0
     true_midnight_open := open
 
 plot(true_midnight_open, "True Midnight Open", color = color.new(color.yellow, 20), style = plot.style_linebr, linewidth = 2)
@@ -104,7 +104,7 @@ var bool q2_swept_low = false
 var bool manipulation_complete = false
 
 if is_q2
-    if ta.change(is_q2)
+    if is_q2 and not (is_q2[1] == true)
         q2_swept_high := false
         q2_swept_low := false
         manipulation_complete := false
@@ -137,7 +137,7 @@ var int q3_start_bar = na
 var float q3_start_price = na
 
 if is_q3
-    if ta.change(is_q3)
+    if is_q3 and not (is_q3[1] == true)
         q3_start_bar := bar_index
         q3_start_price := close
         if show_phases
@@ -154,7 +154,7 @@ if is_q3
 
 // Q4: Reversal / Continuation (271-360m)
 if is_q4
-    if ta.change(is_q4)
+    if is_q4 and not (is_q4[1] == true)
         if show_phases
             q3_top = box.get_top(q3_box)
             q3_bottom = box.get_bottom(q3_box)
