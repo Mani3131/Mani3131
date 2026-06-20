@@ -1,0 +1,197 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("HTF Expansion & Liquidity Strategy [Mani3131]", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// --- Inputs ---
+string i_tz = input.string("UTC+3", "Timezone", tooltip = "Default timezone is UTC+3 (EAT)")
+string i_asian_session = input.session("0300-1200", "Asian Session", tooltip = "Asian Range session time")
+string i_4h_sessions = "0000-0400,0400-0800,0800-1200,1200-1600,1600-2000,2000-0000"
+
+// Colors
+color c_asian = input.color(color.new(color.blue, 80), "Asian Range Color")
+color c_4h = input.color(color.new(color.gray, 90), "4H Block Color")
+color c_expansion = input.color(color.new(color.yellow, 80), "Expansion Zone Color")
+
+// --- Time & Session Functions ---
+is_in_session(sess, tz) =>
+    not na(time(timeframe.period, sess, tz))
+
+// --- HTF 4H Tracking ---
+var float h4_open = na
+var float h4_high = na
+var float h4_low = na
+var float h4_close = na
+var int h4_start_idx = na
+var int h4_candle_count = 0
+
+// Previous 4H Metrics
+var float prev_h4_open = na
+var float prev_h4_high = na
+var float prev_h4_low = na
+var float prev_h4_close = na
+var float prev_h4_mid = na
+
+// New 4H Block Detection (Every 4 hours: 00, 04, 08, 12, 16, 20)
+is_new_4h = (hour(time, i_tz) % 4 == 0) and (minute(time, i_tz) == 0) and timeframe.isintraday
+
+if is_new_4h
+    // Capture Previous 4H Metrics before resetting
+    prev_h4_open := h4_open
+    prev_h4_high := h4_high
+    prev_h4_low := h4_low
+    prev_h4_close := close[1]
+    prev_h4_mid := (prev_h4_high + prev_h4_low) / 2
+
+    // Reset for New 4H Block
+    h4_open := open
+    h4_high := high
+    h4_low := low
+    h4_start_idx := bar_index
+    h4_candle_count := 0
+else
+    h4_high := math.max(h4_high, high)
+    h4_low := math.min(h4_low, low)
+    h4_candle_count += 1
+
+// --- Asian Range Tracking ---
+var float asian_high = na
+var float asian_low = na
+var float asian_mid = na
+var int asian_start_idx = na
+var bool in_asian = false
+
+bool asian_sess = is_in_session(i_asian_session, i_tz)
+
+if asian_sess and not asian_sess[1]
+    asian_high := high
+    asian_low := low
+    asian_start_idx := bar_index
+    in_asian := true
+else if asian_sess
+    asian_high := math.max(asian_high, high)
+    asian_low := math.min(asian_low, low)
+else if not asian_sess and asian_sess[1]
+    asian_mid := (asian_high + asian_low) / 2
+    in_asian := false
+
+// --- Visual Plots for 4H Levels ---
+plot(prev_h4_high, "Prev 4H High", color.red, style = plot.style_linebr)
+plot(prev_h4_low, "Prev 4H Low", color.green, style = plot.style_linebr)
+plot(prev_h4_open, "Prev 4H Open", color.gray, style = plot.style_linebr)
+plot(prev_h4_close, "Prev 4H Close", color.silver, style = plot.style_linebr)
+plot(prev_h4_mid, "Prev 4H Midpoint", color.orange, style = plot.style_linebr)
+
+// --- Visual Plots for Asian Range ---
+plot(not in_asian ? asian_high : na, "Asian High", color.blue, style = plot.style_linebr)
+plot(not in_asian ? asian_low : na, "Asian Low", color.blue, style = plot.style_linebr)
+plot(not in_asian ? asian_mid : na, "Asian Mid", color.blue, style = plot.style_linebr)
+
+// --- 16:19 Anchor & Liquidity Hunt Window ---
+var float anchor_1619 = na
+is_1619 = hour(time, i_tz) == 16 and minute(time, i_tz) == 19 and timeframe.isintraday
+
+if is_1619
+    anchor_1619 := close
+
+// Liquidity Hunt Window: 16:30 - 16:40
+in_hunt_window = hour(time, i_tz) == 16 and minute(time, i_tz) >= 30 and minute(time, i_tz) < 40 and timeframe.isintraday
+
+var bool sweep_h4_high = false
+var bool sweep_h4_low = false
+var bool sweep_asian_high = false
+var bool sweep_asian_low = false
+
+if is_new_4h
+    sweep_h4_high := false
+    sweep_h4_low := false
+    sweep_asian_high := false
+    sweep_asian_low := false
+
+if in_hunt_window
+    if high > prev_h4_high
+        sweep_h4_high := true
+    if low < prev_h4_low
+        sweep_h4_low := true
+    if high > asian_high
+        sweep_asian_high := true
+    if low < asian_low
+        sweep_asian_low := true
+
+// Plot Anchor
+plot(anchor_1619, "16:19 Anchor Price", color.new(color.white, 50), style = plot.style_linebr, linewidth = 2)
+
+// --- 17:00 Execution Engine & Expansion Rules ---
+is_1700 = hour(time, i_tz) == 17 and minute(time, i_tz) == 0 and timeframe.isintraday
+
+// Inside Candle Detection
+is_inside = high < high[1] and low > low[1]
+
+// FVG Detection (Bullish & Bearish)
+is_fvg_bull = low > high[2]
+is_fvg_bear = high < low[2]
+
+// Expansion Zone (First 100 candles of 4H cycle)
+is_expansion = h4_candle_count <= 100
+
+// Position Limit (Max 2 per 4H cycle)
+var int trades_count = 0
+if is_new_4h
+    trades_count := 0
+
+// Execution Signal (Logic: At 17:00, if sweep occurred and trigger detected)
+bool signal_long = is_1700 and (sweep_h4_low or sweep_asian_low) and (is_inside or is_fvg_bull) and trades_count < 2
+bool signal_short = is_1700 and (sweep_h4_high or sweep_asian_high) and (is_inside or is_fvg_bear) and trades_count < 2
+
+if signal_long or signal_short
+    trades_count += 1
+
+plotshape(signal_long, "Long Signal", shape.triangleup, location.belowbar, color.green, size = size.small, text = "17:00 BUY")
+plotshape(signal_short, "Short Signal", shape.triangledown, location.abovebar, color.red, size = size.small, text = "17:00 SELL")
+
+// Highlight Expansion Zone
+bgcolor(is_expansion ? c_expansion : na, title = "Expansion Zone Highlight")
+
+// --- Visuals: Boxes ---
+var box b_h4 = na
+var box b_asian = na
+
+if is_new_4h
+    b_h4 := box.new(left = bar_index, top = high, right = bar_index, bottom = low, bgcolor = c_4h, border_color = color.new(color.gray, 50))
+else if not na(b_h4)
+    box.set_top(b_h4, h4_high)
+    box.set_bottom(b_h4, h4_low)
+    box.set_right(b_h4, bar_index)
+
+if asian_sess and not asian_sess[1]
+    b_asian := box.new(left = bar_index, top = high, right = bar_index, bottom = low, bgcolor = c_asian, border_color = color.new(color.blue, 50))
+else if asian_sess and not na(b_asian)
+    box.set_top(b_asian, asian_high)
+    box.set_bottom(b_asian, asian_low)
+    box.set_right(b_asian, bar_index)
+
+// --- Dashboard ---
+var table board = table.new(position.top_right, 2, 7, bgcolor = color.new(color.black, 20), border_width = 1, border_color = color.gray)
+
+if barstate.islast
+    table.cell(board, 0, 0, "Metric", text_color = color.white, text_halign = text.align_center)
+    table.cell(board, 1, 0, "Value", text_color = color.white, text_halign = text.align_center)
+
+    table.cell(board, 0, 1, "4H Phase", text_color = color.white)
+    table.cell(board, 1, 1, is_expansion ? "Expansion (" + str.tostring(h4_candle_count) + ")" : "Exhaustion (" + str.tostring(h4_candle_count) + ")", text_color = is_expansion ? color.yellow : color.gray)
+
+    table.cell(board, 0, 2, "Trades/4H", text_color = color.white)
+    table.cell(board, 1, 2, str.tostring(trades_count) + " / 2", text_color = trades_count >= 2 ? color.red : color.green)
+
+    table.cell(board, 0, 3, "16:19 Anchor", text_color = color.white)
+    table.cell(board, 1, 3, str.tostring(anchor_1619, "#.#####"), text_color = color.white)
+
+    table.cell(board, 0, 4, "Sweep H4 H/L", text_color = color.white)
+    table.cell(board, 1, 4, (sweep_h4_high ? "H " : "") + (sweep_h4_low ? "L " : ""), text_color = color.orange)
+
+    table.cell(board, 0, 5, "Sweep Asian H/L", text_color = color.white)
+    table.cell(board, 1, 5, (sweep_asian_high ? "H " : "") + (sweep_asian_low ? "L " : ""), text_color = color.orange)
+
+    table.cell(board, 0, 6, "Prev 4H Mid", text_color = color.white)
+    table.cell(board, 1, 6, str.tostring(prev_h4_mid, "#.#####"), text_color = color.orange)
