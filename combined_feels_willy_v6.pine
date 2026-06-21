@@ -1,0 +1,1331 @@
+// © FeelsStrategy & WillyAlgoTrader
+//@version=6
+indicator("S&R + Fibonacci Structure Engine [FEELS + Willy]", "S&R + Fib [FEELS+Willy]", overlay = true, max_lines_count = 500, max_boxes_count = 500, max_labels_count = 500, max_bars_back = 5000)
+
+// =====================================================================
+//                               TYPES
+// =====================================================================
+type Pivot
+    float price
+    int   bar
+    float vol
+    float wick
+
+type Zone
+    float top
+    float bot
+    float center
+    float strength
+    float volSum
+    int   touches
+    int   firstBar
+    int   lastTouch
+    int   diedBar
+    bool  isResistance
+    bool  wasBroken
+    bool  isLiveBreak
+
+// =====================================================================
+//                              FEELS INPUTS
+// =====================================================================
+grpFEELSStrength = "FEELS - Zone Strength"
+preset      = input.string("Swing", "Strength preset", options = ["Scalp", "Local", "Swing", "Major", "Custom"], group = grpFEELSStrength, tooltip = "Scalp: very tight zones for 1-5m timeframes.\nLocal: tight zones from recent pivots.\nSwing: balanced zones.\nMajor: wide zones from significant macro pivots.\nCustom: manually define pivot lengths below.")
+
+grpFEELSPivot     = "FEELS - Custom Parameters"
+pivLeftIn    = input.int(15, "Left bars",  minval = 2, maxval = 100, group = grpFEELSPivot, tooltip = "Number of bars to the left required to confirm a custom pivot.")
+pivRightIn   = input.int(8,  "Right bars", minval = 2, maxval = 50, group = grpFEELSPivot, tooltip = "Number of bars to the right required to confirm a custom pivot.")
+clusterTolIn = input.float(0.9, "Cluster tolerance (× ATR)", minval = 0.2, maxval = 3.0, step = 0.1, group = grpFEELSPivot, tooltip = "Multiplier based on ATR. Higher values merge pivots that are further apart into a single, wider zone.")
+minSpacingIn = input.int(20, "Minimum bars between touches", minval = 0, maxval = 200, group = grpFEELSPivot, tooltip = "Minimum number of bars required between price touches for them to be counted as separate, valid touches.")
+pivBuffer    = input.int(80, "Pivot memory", minval = 20, maxval = 200, group = grpFEELSPivot, tooltip = "Maximum number of historical pivots kept in memory to build zones. Higher values look further back in time.")
+
+grpFEELSCluster = "FEELS - Zones"
+zoneCount  = input.int(6, "Active zones per side", minval = 1, maxval = 8, group = grpFEELSCluster, tooltip = "Maximum number of active Support and Resistance zones displayed on the chart simultaneously.")
+minTouches = input.int(2, "Minimum touches", minval = 2, maxval = 10, group = grpFEELSCluster, tooltip = "Minimum number of pivot touches required to form and display a valid zone.")
+fadeAge    = input.int(120, "Fade after (bars)", minval = 0, maxval = 500, group = grpFEELSCluster, tooltip = "Number of bars after which a zone starts to become more transparent if it hasn't been touched. Set to 0 to disable fading.")
+hideFar    = input.float(60.0, "Hide zones farther than (%)", minval = 0.0, maxval = 200.0, step = 5.0, group = grpFEELSCluster, tooltip = "Hides zones whose center price is further than this percentage away from the current price. Set to 0 to always show all zones.")
+
+grpFEELSHistory   = "FEELS - Broken Zones"
+showBroken   = input.bool(false, "Show confirmed broken zones", group = grpFEELSHistory, tooltip = "Displays historical zones that were physically broken by the closing price.")
+showDropped  = input.bool(false, "Show dropped zones",          group = grpFEELSHistory, tooltip = "Displays zones that were removed from the active list because newer, stronger pivots reorganized the clusters.")
+brokenBull   = input.color(color.rgb(105, 140, 125),  "Broken support color",    group = grpFEELSHistory, tooltip = "Color applied to historical/broken support zones.")
+brokenBear   = input.color(color.rgb(165, 105, 110),  "Broken resistance color", group = grpFEELSHistory, tooltip = "Color applied to historical/broken resistance zones.")
+brokenOp     = input.int(85, "Broken zone opacity", minval = 30, maxval = 95, group = grpFEELSHistory, tooltip = "Base transparency for historical/broken zones. Lower values make them more transparent.")
+
+grpFEELSSignals    = "FEELS - Signals (optional)"
+showTest      = input.bool(false, "Show successful test markers",  group = grpFEELSSignals, tooltip = "Displays a circle when the price touches an active zone and successfully bounces/rejects off it.")
+showRetest    = input.bool(false, "Show retest markers",           group = grpFEELSSignals, tooltip = "Displays a diamond when the price returns to test a previously broken zone from the opposite side (e.g., broken resistance turning into support).")
+showReaction  = input.bool(false, "Show zone reaction marks",      group = grpFEELSSignals, tooltip = "Displays a small diamond when price touches an active zone but holds (does not close beyond it), and text labels when a zone is physically broken.")
+sigCooldown   = input.int(20, "Cooldown bars",    minval = 0, maxval = 100, group = grpFEELSSignals, tooltip = "Minimum number of bars that must pass before a zone can trigger another bounce/retest signal.")
+retestWindow  = input.int(50, "Retest window (bars)", minval = 5, maxval = 200, group = grpFEELSSignals, tooltip = "Maximum number of bars after a breakout during which a return to the zone is still considered a valid retest.")
+
+grpFEELSStyle    = "FEELS - Style"
+resColor    = input.color(color.rgb(244, 67, 79),  "Resistance", group = grpFEELSStyle, tooltip = "Color for active Resistance zones (top).")
+supColor    = input.color(color.rgb(38, 166, 154), "Support",    group = grpFEELSStyle, tooltip = "Color for active Support zones (bottom).")
+useVolColor = input.bool(true,  "Color zones by volume",  group = grpFEELSStyle, tooltip = "Automatically makes zones with higher cumulative volume more vivid and lowers opacity for low-volume zones.")
+showLabels  = input.bool(true,  "Show zone strength label", group = grpFEELSStyle, tooltip = "Displays the text label containing star rating, number of touches, and volume score.")
+showVolText = input.bool(true,  "Show volume score",        group = grpFEELSStyle, tooltip = "Displays the volume score text inside the zone label.")
+volFormat   = input.string("Absolute", "Volume format", options = ["Absolute", "Percentage"], group = grpFEELSStyle, tooltip = "Absolute: Shows values like 1.2M or 450K.\nPercentage: Shows relative strength (1-100%) compared to the strongest active zone.")
+singleLine  = input.bool(false, "Single line label",        group = grpFEELSStyle, tooltip = "Places the volume score and star rating on the same single line instead of two separate lines.")
+zoneOpacity = input.int(82, "Zone opacity (low volume)", minval = 60, maxval = 95, group = grpFEELSStyle, tooltip = "Base transparency for zones with low volume. If 'Color zones by volume' is enabled, high-volume zones will automatically become less transparent than this value.")
+
+// FEELS preset resolution
+pivLeft    = preset == "Scalp" ?  4  : preset == "Local" ?  6  : preset == "Swing" ? 15  : preset == "Major" ? 35  : pivLeftIn
+pivRight   = preset == "Scalp" ?  2  : preset == "Local" ?  4  : preset == "Swing" ?  8  : preset == "Major" ? 15  : pivRightIn
+clusterTol = preset == "Scalp" ? 0.4 : preset == "Local" ? 0.5 : preset == "Swing" ? 0.9 : preset == "Major" ? 1.4 : clusterTolIn
+minSpacing = preset == "Scalp" ?  4  : preset == "Local" ?  8  : preset == "Swing" ? 20  : preset == "Major" ? 50  : minSpacingIn
+
+// =====================================================================
+//                              WILLY INPUTS
+// =====================================================================
+GRP_WILLY_MAIN    = "Willy - Main Settings"
+GRP_WILLY_FIB     = "Willy - Fibonacci Levels"
+GRP_WILLY_STRUCT  = "Willy - Structure"
+GRP_WILLY_LIQ     = "Willy - Liquidity"
+GRP_WILLY_VISUAL  = "Willy - Visual Settings"
+GRP_WILLY_DASH    = "Willy - Dashboard"
+GRP_WILLY_ALERT   = "Willy - Alerts"
+GRP_WILLY_COLORS  = "Willy - Colors"
+
+INDICATOR_VERSION = "v1.5.2"
+
+swingLenInput = input.int(10, "Swing Detection Length", minval = 3, maxval = 50, step = 1, group = GRP_WILLY_MAIN, tooltip = "Lookback for pivot detection.\n• Higher = larger swings, fewer structures\n• Lower = more granular swings, more noise\n• Recommended: 8–20")
+atrFilterInput = input.bool(true, "ATR Swing Filter", group = GRP_WILLY_MAIN, tooltip = "Filter out minor swings smaller than ATR threshold.\nReduces noise on volatile instruments")
+atrMultInput = input.float(0.5, "ATR Filter Multiplier", minval = 0.1, maxval = 3.0, step = 0.1, group = GRP_WILLY_MAIN, tooltip = "Minimum swing size as multiple of ATR.\n• Higher = only large swings qualify\n• Lower = more swings detected\n• Recommended: 0.3–1.0")
+cooldownInput = input.int(5, "Signal Cooldown (bars)", minval = 1, maxval = 50, step = 1, group = GRP_WILLY_MAIN, tooltip = "Minimum bars between consecutive BUY or SELL signals.\nPrevents signal clustering on choppy price action.\n• Higher = fewer signals, less noise\n• Recommended: 3–10")
+
+showFibInput = input.bool(true, "Show Fibonacci Levels", group = GRP_WILLY_FIB, tooltip = "Display Fibonacci retracement levels from the last confirmed structure")
+fibExtendInput = input.int(20, "Fib Extension Bars", minval = 5, maxval = 100, step = 5, group = GRP_WILLY_FIB, tooltip = "How many bars to extend Fibonacci lines to the right")
+
+showFib236Input = input.bool(false, "0.236", inline = "fib1", group = GRP_WILLY_FIB)
+showFib382Input = input.bool(true, "0.382", inline = "fib1", group = GRP_WILLY_FIB)
+showFib500Input = input.bool(true, "0.500", inline = "fib1", group = GRP_WILLY_FIB)
+showFib618Input = input.bool(true, "0.618", inline = "fib2", group = GRP_WILLY_FIB)
+showFib786Input = input.bool(true, "0.786", inline = "fib2", group = GRP_WILLY_FIB)
+showFibTargetInput = input.bool(true, "Target (-0.618)", inline = "fib3", group = GRP_WILLY_FIB)
+showFibTgt50Input = input.bool(true, "-0.5", inline = "fib3", group = GRP_WILLY_FIB)
+
+confluenceTolInput = input.float(0.3, "Confluence ATR Tolerance", minval = 0.05, maxval = 1.0, step = 0.05, group = GRP_WILLY_FIB, tooltip = "Max distance (in ATR) between price and Fib level to count as confluence.\n• Lower = stricter requirement\n• Recommended: 0.2–0.5")
+
+showStructInput = input.bool(true, "Show BOS / CHoCH", group = GRP_WILLY_STRUCT, tooltip = "Show Break of Structure (BOS) and Change of Character (CHoCH) labels and lines")
+showSwingsInput = input.bool(true, "Show Swing Labels", group = GRP_WILLY_STRUCT, tooltip = "Show HH/HL/LH/LL swing point labels on confirmed pivots")
+showEngulfInput = input.bool(true, "Show Engulfing Signals", group = GRP_WILLY_STRUCT, tooltip = "Show bullish/bearish engulfing patterns filtered by structure context")
+strictEngulfInput = input.bool(true, "Strict Engulfing", group = GRP_WILLY_STRUCT, tooltip = "Strict (classic): current body must STRICTLY exceed previous body on both sides.\nLoose: allows equality on one side — produces more signals but lower quality.\n• ON  = fewer, higher-quality patterns (recommended)\n• OFF = more patterns, matches pre-v1.5.1 behavior")
+
+showEqLevelsInput = input.bool(true, "Show EQH / EQL", group = GRP_WILLY_LIQ, tooltip = "Detect and draw Equal Highs / Equal Lows — resting liquidity zones")
+eqTolInput = input.float(0.1, "EQ ATR Tolerance", minval = 0.01, maxval = 0.5, step = 0.01, group = GRP_WILLY_LIQ, tooltip = "Max distance (in ATR) between two swings to count as equal.\n• Lower = stricter\n• Recommended: 0.05–0.2")
+eqExtendBarsInput = input.int(50, "EQ Line Extension (bars)", minval = 5, maxval = 500, step = 5, group = GRP_WILLY_LIQ, tooltip = "How many bars to extend EQH/EQL lines to the right.\nLine auto-trims at sweep bar when liquidity is taken.")
+showSweepsInput = input.bool(true, "Show Liquidity Sweeps", group = GRP_WILLY_LIQ, tooltip = "Detect wick-through + close-back-inside patterns at swing highs/lows or EQH/EQL")
+sweepAddsConfInput = input.bool(true, "Sweeps Boost Confluence", group = GRP_WILLY_LIQ, tooltip = "Add weight to confluence score when a liquidity sweep occurs")
+
+themeInput = input.string("Auto", "Theme", options = ["Auto", "Dark", "Light"], group = GRP_WILLY_VISUAL, tooltip = "Chart color theme.\n• Auto: detects from chart background\n• Dark: optimized for dark backgrounds\n• Light: optimized for light/white backgrounds")
+showSignalsInput = input.bool(false, "Show Buy/Sell Signals", group = GRP_WILLY_VISUAL, tooltip = "Show confirmed entry signals based on structure + Fibonacci confluence")
+showWatermarkInput = input.bool(true, "Show Watermark", group = GRP_WILLY_VISUAL, tooltip = "Display 'WillyAlgoTrader' watermark on chart")
+structLineStyleInput = input.string("Dashed", "Structure Line Style", options = ["Solid", "Dashed", "Dotted"], group = GRP_WILLY_VISUAL, tooltip = "Line style for BOS/CHoCH break lines")
+structLineWidthInput = input.int(2, "Structure Line Width", minval = 1, maxval = 4, step = 1, group = GRP_WILLY_VISUAL, tooltip = "Thickness of structure break lines")
+
+showDashInput = input.bool(true, "Show Dashboard", group = GRP_WILLY_DASH, tooltip = "Show info panel with trend, signal, and confluence data")
+dashPosStr = input.string("Top Right", "Position", options = ["Top Left", "Top Right", "Bottom Left", "Bottom Right"], group = GRP_WILLY_DASH, tooltip = "Dashboard position on chart")
+
+webhookInput = input.bool(false, "Webhook JSON Format", group = GRP_WILLY_ALERT, tooltip = "Send alerts in JSON format for webhook integrations (3Commas, custom bots, etc.)")
+
+bullColorInput = input.color(#00E676, "Bull", inline = "colors", group = GRP_WILLY_COLORS)
+bearColorInput = input.color(#FF5252, "Bear", inline = "colors", group = GRP_WILLY_COLORS)
+fibColorInput = input.color(#42A5F5, "Fib Lines", inline = "colors2", group = GRP_WILLY_COLORS)
+confluenceColorInput = input.color(#FFD600, "Confluence", inline = "colors2", group = GRP_WILLY_COLORS)
+eqColorInput = input.color(#B388FF, "EQH/EQL", inline = "colors3", group = GRP_WILLY_COLORS)
+sweepColorInput = input.color(#FF9100, "Sweep", inline = "colors3", group = GRP_WILLY_COLORS)
+
+// =====================================================================
+//                         FEELS SOURCES & PIVOTS
+// =====================================================================
+atr50   = ta.atr(50)
+volMa50 = ta.sma(volume, 50)
+
+phPxFEELS = ta.pivothigh(high, pivLeft, pivRight)
+plPxFEELS = ta.pivotlow(low,   pivLeft, pivRight)
+
+upperWickFEELS(int idx) =>
+    high[idx] - math.max(open[idx], close[idx])
+
+lowerWickFEELS(int idx) =>
+    math.min(open[idx], close[idx]) - low[idx]
+
+safeVolumeFEELS(int idx) =>
+    v = volume[idx]
+    na(v) or v <= 0 ? 1.0 : v
+
+var array<Pivot> highPivotsFEELS = array.new<Pivot>()
+var array<Pivot> lowPivotsFEELS  = array.new<Pivot>()
+
+dataReadyFEELS = not na(atr50) and atr50 > 0
+newHighPivotFEELS = false
+newLowPivotFEELS  = false
+
+if not na(phPxFEELS) and phPxFEELS > 0 and dataReadyFEELS
+    highPivotsFEELS.push(Pivot.new(phPxFEELS, bar_index - pivRight, safeVolumeFEELS(pivRight), upperWickFEELS(pivRight)))
+    if highPivotsFEELS.size() > pivBuffer
+        highPivotsFEELS.shift()
+    newHighPivotFEELS := true
+
+if not na(plPxFEELS) and plPxFEELS > 0 and dataReadyFEELS
+    lowPivotsFEELS.push(Pivot.new(plPxFEELS, bar_index - pivRight, safeVolumeFEELS(pivRight), lowerWickFEELS(pivRight)))
+    if lowPivotsFEELS.size() > pivBuffer
+        lowPivotsFEELS.shift()
+    newLowPivotFEELS := true
+
+// =====================================================================
+//                            FEELS CLUSTERING
+// =====================================================================
+pivotWeightFEELS(Pivot p, float a, float vAvg) =>
+    safeVol  = na(p.vol)  or p.vol  <= 0 ? 0.0 : p.vol
+    safeWick = na(p.wick) or p.wick <  0 ? 0.0 : p.wick
+    age      = math.max(1, bar_index - p.bar)
+    decay    = 1.0 / (1.0 + age / 200.0)
+    volNorm  = vAvg > 0 ? safeVol / vAvg : 1.0
+    wickNorm = a > 0 ? safeWick / a : 0.0
+    (1.0 + volNorm * 0.5 + wickNorm * 0.5) * decay
+
+buildZonesFEELS(array<Pivot> src, bool resistance, float a, float vAvg) =>
+    out = array.new<Zone>()
+    if src.size() >= minTouches and a > 0
+        used = array.new<bool>()
+        for i = 0 to src.size() - 1
+            used.push(false)
+        tol = a * clusterTol
+        for i = 0 to src.size() - 1
+            if not used.get(i)
+                seed    = src.get(i)
+                members = array.new<Pivot>()
+                members.push(seed)
+                used.set(i, true)
+                if i + 1 <= src.size() - 1
+                    for j = i + 1 to src.size() - 1
+                        if not used.get(j)
+                            cand = src.get(j)
+                            if math.abs(cand.price - seed.price) <= tol
+                                farEnough = true
+                                if minSpacing > 0
+                                    for k = 0 to members.size() - 1
+                                        if math.abs(cand.bar - members.get(k).bar) < minSpacing
+                                            farEnough := false
+                                            break
+                                if farEnough
+                                    members.push(cand)
+                                    used.set(j, true)
+                if members.size() >= minTouches
+                    priceSum  = 0.0
+                    weightSum = 0.0
+                    volSum    = 0.0
+                    earliest  = members.get(0).bar
+                    latest    = members.get(0).bar
+                    for k = 0 to members.size() - 1
+                        m = members.get(k)
+                        w = pivotWeightFEELS(m, a, vAvg)
+                        priceSum  += m.price * w
+                        weightSum += w
+                        volSum    += na(m.vol) ? 0.0 : m.vol
+                        earliest  := math.min(earliest, m.bar)
+                        latest    := math.max(latest,   m.bar)
+                    if weightSum > 0
+                        center = priceSum / weightSum
+                        pad    = a * 0.25
+                        out.push(Zone.new(center + pad, center - pad, center, weightSum, volSum, members.size(), earliest, latest, na, resistance, false, false))
+    out
+
+trimToTopNFEELS(array<Zone> zones, int keep) =>
+    result = array.new<Zone>()
+    if zones.size() > 0
+        copy = zones.copy()
+        limit = math.min(keep, copy.size())
+        for i = 0 to limit - 1
+            if copy.size() == 0
+                break
+            bestIdx = 0
+            bestVal = copy.get(0).strength
+            if copy.size() > 1
+                for j = 1 to copy.size() - 1
+                    if copy.get(j).strength > bestVal
+                        bestVal := copy.get(j).strength
+                        bestIdx := j
+            result.push(copy.get(bestIdx))
+            copy.remove(bestIdx)
+    result
+
+// =====================================================================
+//                       FEELS ZONE STATE & ARCHIVING
+// =====================================================================
+var array<Zone> resZonesFEELS    = array.new<Zone>()
+var array<Zone> supZonesFEELS    = array.new<Zone>()
+var array<Zone> brokenZonesFEELS = array.new<Zone>()
+
+archiveIfNewFEELS(Zone z, float a) =>
+    duplicate = false
+    if brokenZonesFEELS.size() > 0
+        tol = a * clusterTol * 0.7
+        for i = 0 to brokenZonesFEELS.size() - 1
+            existing = brokenZonesFEELS.get(i)
+            if existing.isResistance == z.isResistance and math.abs(existing.center - z.center) <= tol
+                duplicate := true
+                if z.wasBroken and not existing.wasBroken
+                    existing.wasBroken   := true
+                    existing.diedBar     := z.diedBar
+                    existing.isLiveBreak := z.isLiveBreak
+                    brokenZonesFEELS.set(i, existing)
+                break
+    if not duplicate
+        brokenZonesFEELS.push(z)
+        if brokenZonesFEELS.size() > 100
+            brokenZonesFEELS.shift()
+    duplicate
+
+// Live-break check
+if resZonesFEELS.size() > 0
+    for i = 0 to resZonesFEELS.size() - 1
+        z = resZonesFEELS.get(i)
+        if na(z.diedBar) and close > z.top
+            z.diedBar     := bar_index
+            z.wasBroken   := true
+            z.isLiveBreak := close[1] <= z.top
+            resZonesFEELS.set(i, z)
+            archiveIfNewFEELS(z, atr50)
+
+if supZonesFEELS.size() > 0
+    for i = 0 to supZonesFEELS.size() - 1
+        z = supZonesFEELS.get(i)
+        if na(z.diedBar) and close < z.bot
+            z.diedBar     := bar_index
+            z.wasBroken   := true
+            z.isLiveBreak := close[1] >= z.bot
+            supZonesFEELS.set(i, z)
+            archiveIfNewFEELS(z, atr50)
+
+if resZonesFEELS.size() > 0
+    for i = 0 to resZonesFEELS.size() - 1
+        z = resZonesFEELS.get(i)
+        if na(z.diedBar) and high >= z.bot and low <= z.top
+            z.lastTouch := bar_index
+            resZonesFEELS.set(i, z)
+
+if supZonesFEELS.size() > 0
+    for i = 0 to supZonesFEELS.size() - 1
+        z = supZonesFEELS.get(i)
+        if na(z.diedBar) and high >= z.bot and low <= z.top
+            z.lastTouch := bar_index
+            supZonesFEELS.set(i, z)
+
+zoneSurvivesFEELS(Zone old, array<Zone> newSet, float a) =>
+    survived = false
+    if newSet.size() > 0
+        tol = a * clusterTol
+        for i = 0 to newSet.size() - 1
+            nz = newSet.get(i)
+            if math.abs(nz.center - old.center) <= tol
+                survived := true
+                break
+    survived
+
+isAlreadyBrokenFEELS(Zone z, float a) =>
+    broken = false
+    if brokenZonesFEELS.size() > 0
+        tol = a * clusterTol * 0.7
+        for i = 0 to brokenZonesFEELS.size() - 1
+            bz = brokenZonesFEELS.get(i)
+            if bz.isResistance == z.isResistance and bz.wasBroken and math.abs(bz.center - z.center) <= tol
+                broken := true
+                break
+    broken
+
+inheritStateFEELS(Zone newZ, array<Zone> oldZones, float a) =>
+    inherited = newZ
+    if oldZones.size() > 0
+        tol = a * clusterTol
+        for i = 0 to oldZones.size() - 1
+            oldZ = oldZones.get(i)
+            if math.abs(oldZ.center - newZ.center) <= tol
+                inherited.lastTouch := oldZ.lastTouch
+                break
+    inherited
+
+if newHighPivotFEELS or newLowPivotFEELS
+    newResFEELS = trimToTopNFEELS(buildZonesFEELS(highPivotsFEELS, true,  atr50, volMa50), zoneCount)
+    newSupFEELS = trimToTopNFEELS(buildZonesFEELS(lowPivotsFEELS,  false, atr50, volMa50), zoneCount)
+    if resZonesFEELS.size() > 0
+        for i = 0 to resZonesFEELS.size() - 1
+            old = resZonesFEELS.get(i)
+            if na(old.diedBar) and old.touches >= minTouches and not zoneSurvivesFEELS(old, newResFEELS, atr50)
+                old.diedBar   := bar_index
+                old.wasBroken := false
+                archiveIfNewFEELS(old, atr50)
+    if supZonesFEELS.size() > 0
+        for i = 0 to supZonesFEELS.size() - 1
+            old = supZonesFEELS.get(i)
+            if na(old.diedBar) and old.touches >= minTouches and not zoneSurvivesFEELS(old, newSupFEELS, atr50)
+                old.diedBar   := bar_index
+                old.wasBroken := false
+                archiveIfNewFEELS(old, atr50)
+    oldResCopy = resZonesFEELS.copy()
+    oldSupCopy = supZonesFEELS.copy()
+    resZonesFEELS.clear()
+    if newResFEELS.size() > 0
+        for i = 0 to newResFEELS.size() - 1
+            nz = newResFEELS.get(i)
+            if not isAlreadyBrokenFEELS(nz, atr50)
+                inh = inheritStateFEELS(nz, oldResCopy, atr50)
+                resZonesFEELS.push(inh)
+    supZonesFEELS.clear()
+    if newSupFEELS.size() > 0
+        for i = 0 to newSupFEELS.size() - 1
+            nz = newSupFEELS.get(i)
+            if not isAlreadyBrokenFEELS(nz, atr50)
+                inh = inheritStateFEELS(nz, oldSupCopy, atr50)
+                supZonesFEELS.push(inh)
+
+// =====================================================================
+//                              FEELS SIGNALS
+// =====================================================================
+var array<float> sigZoneCentersFEELS = array.new<float>()
+var array<int>   sigZoneBarsFEELS    = array.new<int>()
+
+cooldownOkFEELS(float center) =>
+    ok = true
+    if sigZoneCentersFEELS.size() > 0
+        for i = 0 to sigZoneCentersFEELS.size() - 1
+            if math.abs(sigZoneCentersFEELS.get(i) - center) <= atr50 * clusterTol
+                if bar_index - sigZoneBarsFEELS.get(i) < sigCooldown
+                    ok := false
+                    break
+    ok
+
+recordSignalFEELS(float center) =>
+    sigZoneCentersFEELS.push(center)
+    sigZoneBarsFEELS.push(bar_index)
+    if sigZoneCentersFEELS.size() > 50
+        sigZoneCentersFEELS.shift()
+        sigZoneBarsFEELS.shift()
+    center
+
+zoneRenderableFEELS(Zone z) =>
+    na(z.diedBar) and z.touches >= minTouches and not na(z.top) and not na(z.bot) and z.top > 0 and z.bot > 0 and z.bot < z.top
+
+checkSupBounceFEELS() =>
+    fired = false
+    if supZonesFEELS.size() > 0
+        for i = 0 to supZonesFEELS.size() - 1
+            z = supZonesFEELS.get(i)
+            if zoneRenderableFEELS(z)
+                pierced = low <= z.top
+                heldUp  = close >= z.bot and close >= open
+                if pierced and heldUp and cooldownOkFEELS(z.center)
+                    recordSignalFEELS(z.center)
+                    fired := true
+                    break
+    fired
+
+checkResRejectFEELS() =>
+    fired = false
+    if resZonesFEELS.size() > 0
+        for i = 0 to resZonesFEELS.size() - 1
+            z = resZonesFEELS.get(i)
+            if zoneRenderableFEELS(z)
+                pierced = high >= z.bot
+                heldDn  = close <= z.top and close <= open
+                if pierced and heldDn and cooldownOkFEELS(z.center)
+                    recordSignalFEELS(z.center)
+                    fired := true
+                    break
+    fired
+
+checkRetestBullFEELS() =>
+    fired = false
+    if brokenZonesFEELS.size() > 0
+        for i = 0 to brokenZonesFEELS.size() - 1
+            z = brokenZonesFEELS.get(i)
+            if z.isResistance and z.wasBroken and not na(z.diedBar)
+                age = bar_index - z.diedBar
+                if age > 0 and age <= retestWindow
+                    if low <= z.top and close >= z.bot and close >= open
+                        fired := true
+                        break
+    fired
+
+checkRetestBearFEELS() =>
+    fired = false
+    if brokenZonesFEELS.size() > 0
+        for i = 0 to brokenZonesFEELS.size() - 1
+            z = brokenZonesFEELS.get(i)
+            if not z.isResistance and z.wasBroken and not na(z.diedBar)
+                age = bar_index - z.diedBar
+                if age > 0 and age <= retestWindow
+                    if high >= z.bot and close <= z.top and close <= open
+                        fired := true
+                        break
+    fired
+
+bounceUpFEELS   = checkSupBounceFEELS()
+bounceDownFEELS = checkResRejectFEELS()
+retestUpFEELS   = checkRetestBullFEELS()
+retestDownFEELS = checkRetestBearFEELS()
+
+resHoldFEELS = false
+supHoldFEELS = false
+if resZonesFEELS.size() > 0
+    for i = 0 to resZonesFEELS.size() - 1
+        z = resZonesFEELS.get(i)
+        if zoneRenderableFEELS(z)
+            if high >= z.bot and close < z.top
+                resHoldFEELS := true
+                break
+if supZonesFEELS.size() > 0
+    for i = 0 to supZonesFEELS.size() - 1
+        z = supZonesFEELS.get(i)
+        if zoneRenderableFEELS(z)
+            if low <= z.top and close > z.bot
+                supHoldFEELS := true
+                break
+
+// =====================================================================
+//                              FEELS DRAWING FUNCTIONS
+// =====================================================================
+var array<box>   bxBuf = array.new<box>()
+var array<line>  lnBuf = array.new<line>()
+var array<label> lbBuf = array.new<label>()
+
+clearBuffers() =>
+    if bxBuf.size() > 0
+        for i = 0 to bxBuf.size() - 1
+            box.delete(bxBuf.get(i))
+    if lnBuf.size() > 0
+        for i = 0 to lnBuf.size() - 1
+            line.delete(lnBuf.get(i))
+    if lbBuf.size() > 0
+        for i = 0 to lbBuf.size() - 1
+            label.delete(lbBuf.get(i))
+    bxBuf.clear()
+    lnBuf.clear()
+    lbBuf.clear()
+
+strengthStars(float s, float maxS) =>
+    ratio = maxS > 0 ? s / maxS : 0.0
+    ratio >= 0.85 ? "★★★" : ratio >= 0.55 ? "★★" : "★"
+
+ageFade(int lastTouch) =>
+    if fadeAge <= 0
+        0
+    else
+        age = bar_index - lastTouch
+        age <= 0 ? 0 : math.min(15, int(age * 15.0 / fadeAge))
+
+isFar(float zoneCenter) =>
+    if hideFar <= 0 or close <= 0
+        false
+    else
+        distPct = math.abs(zoneCenter - close) / close * 100.0
+        distPct > hideFar
+
+safeStartBar(int b) =>
+    minSafe = bar_index - 4900
+    b < minSafe ? minSafe : b
+
+formatVolume(float v) =>
+    if v >= 1000000000
+        str.tostring(v / 1000000000, "#.##") + "B"
+    else if v >= 1000000
+        str.tostring(v / 1000000, "#.##") + "M"
+    else if v >= 1000
+        str.tostring(v / 1000, "#.##") + "K"
+    else
+        str.tostring(v, "#.##")
+
+drawAlive(Zone z, color baseCol, float maxS, float maxVol) =>
+    if not na(z.top) and not na(z.bot) and not na(z.center) and z.top > 0 and z.bot > 0 and z.bot < z.top and not isFar(z.center)
+        rightX  = bar_index + 25
+        startX  = safeStartBar(z.firstBar)
+        extra   = ageFade(z.lastTouch)
+        volBoost = 0
+        if useVolColor and maxVol > 0
+            volRatio = math.min(1.0, z.volSum / maxVol)
+            volBoost := int(volRatio * 35)
+        fillOp = math.max(40, math.min(95, zoneOpacity + extra - volBoost))
+        fill   = color.new(baseCol, fillOp)
+        edge   = color.new(baseCol, math.min(95, 35 + extra - volBoost / 2))
+        bxBuf.push(box.new(startX, z.top, rightX, z.bot, border_color = na, bgcolor = fill))
+        lnBuf.push(line.new(startX, z.center, rightX, z.center, color = edge, style = line.style_dashed, width = 1))
+        if showLabels
+            string txt = ""
+            stars = strengthStars(z.strength, maxS)
+            if showVolText and maxVol > 0
+                string volVal = ""
+                if volFormat == "Percentage"
+                    volPct = int((z.volSum / maxVol) * 100)
+                    volVal := str.tostring(volPct) + "%"
+                else
+                    volVal := formatVolume(z.volSum)
+                if singleLine
+                    txt := stars + "  " + str.tostring(z.touches) + "×  •  Vol: " + volVal
+                else
+                    txt := "Vol: " + volVal + "\n" + stars + "  " + str.tostring(z.touches) + "×"
+            else
+                txt := stars + "  " + str.tostring(z.touches) + "×"
+            lbBuf.push(label.new(rightX, z.center, txt, style = label.style_label_left, color = color.new(baseCol, 75), textcolor = chart.fg_color, size = size.small))
+    z.center
+
+drawBroken(Zone z) =>
+    if not na(z.top) and not na(z.bot) and z.top > 0 and z.bot > 0 and z.bot < z.top and not isFar(z.center)
+        useCol  = z.isResistance ? brokenBear : brokenBull
+        fill    = color.new(useCol, brokenOp)
+        edge    = color.new(useCol, math.min(90, brokenOp + 10))
+        startX  = safeStartBar(z.firstBar)
+        endBar  = na(z.diedBar) ? bar_index : safeStartBar(z.diedBar)
+        bxBuf.push(box.new(startX, z.top, endBar, z.bot, border_color = na, bgcolor = fill))
+        lnBuf.push(line.new(startX, z.center, endBar, z.center, color = edge, style = line.style_dashed, width = 1))
+        if showReaction and z.wasBroken and not na(z.diedBar) and z.isLiveBreak
+            lblY     = z.isResistance ? z.top : z.bot
+            lblStyle = z.isResistance ? label.style_label_down : label.style_label_up
+            lblTxt   = z.isResistance ? "Break R" : "Break S"
+            lblColor = z.isResistance ? color.rgb(200, 60, 60) : color.rgb(40, 160, 120)
+            lbBuf.push(label.new(safeStartBar(z.diedBar), lblY, lblTxt, style = lblStyle, color = lblColor, textcolor = color.white, size = size.small))
+    z.center
+
+maxStrengthAcross() =>
+    m = 0.0
+    if resZonesFEELS.size() > 0
+        for i = 0 to resZonesFEELS.size() - 1
+            z = resZonesFEELS.get(i)
+            if na(z.diedBar)
+                m := math.max(m, z.strength)
+    if supZonesFEELS.size() > 0
+        for i = 0 to supZonesFEELS.size() - 1
+            z = supZonesFEELS.get(i)
+            if na(z.diedBar)
+                m := math.max(m, z.strength)
+    m
+
+maxVolAcross() =>
+    m = 0.0
+    if resZonesFEELS.size() > 0
+        for i = 0 to resZonesFEELS.size() - 1
+            z = resZonesFEELS.get(i)
+            if na(z.diedBar)
+                m := math.max(m, z.volSum)
+    if supZonesFEELS.size() > 0
+        for i = 0 to supZonesFEELS.size() - 1
+            z = supZonesFEELS.get(i)
+            if na(z.diedBar)
+                m := math.max(m, z.volSum)
+    m
+
+// =====================================================================
+//                             WILLY LOGIC
+// =====================================================================
+isDark = switch themeInput
+    "Dark"  => true
+    "Light" => false
+    => color.r(chart.bg_color) < 128
+
+TEXT_COLOR    = isDark ? #E0E0E0 : #1A1A1A
+TEXT_MUTED    = isDark ? color.new(#9E9E9E, 0) : color.new(#757575, 0)
+TABLE_BG     = isDark ? color.new(#131722, 5) : color.new(#FFFFFF, 5)
+TABLE_BORDER = isDark ? color.new(#2A2E39, 0) : color.new(#D0D0D0, 0)
+TABLE_ROW_ALT = isDark ? color.new(#1C2030, 0) : color.new(#F0F4F8, 0)
+HEADER_BG    = color.new(#2962FF, 0)
+LABEL_TEXT   = #FFFFFF
+WM_COLOR     = isDark ? color.new(#FFFFFF, 80) : color.new(#000000, 80)
+
+getLineStyle(string s) =>
+    switch s
+        "Solid"  => line.style_solid
+        "Dotted" => line.style_dotted
+        => line.style_dashed
+
+getDashPos(string s) =>
+    switch s
+        "Top Left"     => position.top_left
+        "Top Right"    => position.top_right
+        "Bottom Left"  => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        => position.top_right
+
+fibLevelWilly(float swH, float swL, float ratio) =>
+    swH - (swH - swL) * ratio
+
+float atr14Willy = nz(ta.atr(14), 0.0)
+
+int WARMUP_BARSWilly = math.max(swingLenInput * 3, 50)
+bool isWarmedUpWilly = bar_index >= WARMUP_BARSWilly
+
+float pivotHighWilly = ta.pivothigh(high, swingLenInput, swingLenInput)
+float pivotLowWilly  = ta.pivotlow(low,   swingLenInput, swingLenInput)
+
+var float swHigh1Willy = na
+var float swHigh2Willy = na
+var int   swHigh1IdxWilly = na
+var int   swHigh2IdxWilly = na
+
+var float swLow1Willy = na
+var float swLow2Willy = na
+var int   swLow1IdxWilly = na
+var int   swLow2IdxWilly = na
+
+bool newSwingHighWilly = false
+bool newSwingLowWilly  = false
+
+float atrMinSizeWilly = atrFilterInput ? atr14Willy * atrMultInput : 0.0
+
+if not na(pivotHighWilly)
+    bool passFilter = na(swLow1Willy) or (pivotHighWilly - swLow1Willy) >= atrMinSizeWilly
+    if passFilter
+        swHigh2Willy := swHigh1Willy
+        swHigh2IdxWilly := swHigh1IdxWilly
+        swHigh1Willy := pivotHighWilly
+        swHigh1IdxWilly := bar_index - swingLenInput
+        newSwingHighWilly := true
+
+if not na(pivotLowWilly)
+    bool passFilter = na(swHigh1Willy) or (swHigh1Willy - pivotLowWilly) >= atrMinSizeWilly
+    if passFilter
+        swLow2Willy := swLow1Willy
+        swLow2IdxWilly := swLow1IdxWilly
+        swLow1Willy := pivotLowWilly
+        swLow1IdxWilly := bar_index - swingLenInput
+        newSwingLowWilly := true
+
+if newSwingHighWilly and not na(swHigh2Willy) and isWarmedUpWilly and showSwingsInput
+    string swLbl = swHigh1Willy > swHigh2Willy ? "HH" : "LH"
+    color swClr = swHigh1Willy > swHigh2Willy ? bullColorInput : bearColorInput
+    label.new(swHigh1IdxWilly, swHigh1Willy, swLbl, color = color.new(swClr, 100), textcolor = swClr, style = label.style_label_down, size = size.tiny, tooltip = swLbl + ": " + str.tostring(swHigh1Willy, format.mintick))
+
+if newSwingLowWilly and not na(swLow2Willy) and isWarmedUpWilly and showSwingsInput
+    string swLbl = swLow1Willy > swLow2Willy ? "HL" : "LL"
+    color swClr = swLow1Willy > swLow2Willy ? bullColorInput : bearColorInput
+    label.new(swLow1IdxWilly, swLow1Willy, swLbl, color = color.new(swClr, 100), textcolor = swClr, style = label.style_label_up, size = size.tiny, tooltip = swLbl + ": " + str.tostring(swLow1Willy, format.mintick))
+
+float eqToleranceWilly = atr14Willy > 0 ? atr14Willy * eqTolInput : 0.0
+
+var line eqhLineWilly = na
+var label eqhLblWilly = na
+var line eqlLineWilly = na
+var label eqlLblWilly = na
+var bool eqhActiveWilly = false
+var bool eqlActiveWilly = false
+var float eqhPriceWilly = na
+var float eqlPriceWilly = na
+
+if newSwingHighWilly and not na(swHigh2Willy) and math.abs(swHigh1Willy - swHigh2Willy) <= eqToleranceWilly and isWarmedUpWilly
+    if eqhActiveWilly
+        line.delete(eqhLineWilly)
+        label.delete(eqhLblWilly)
+    eqhActiveWilly := true
+    eqhPriceWilly := math.avg(swHigh1Willy, swHigh2Willy)
+    if showEqLevelsInput
+        eqhLineWilly := line.new(swHigh2IdxWilly, eqhPriceWilly, swHigh1IdxWilly + eqExtendBarsInput, eqhPriceWilly, color = eqColorInput, style = line.style_dashed, width = 1)
+        eqhLblWilly := label.new(swHigh1IdxWilly, eqhPriceWilly, "EQH", color = color.new(eqColorInput, 100), textcolor = eqColorInput, style = label.style_label_down, size = size.tiny, tooltip = "Equal Highs @ " + str.tostring(eqhPriceWilly, format.mintick))
+
+if newSwingLowWilly and not na(swLow2Willy) and math.abs(swLow1Willy - swLow2Willy) <= eqToleranceWilly and isWarmedUpWilly
+    if eqlActiveWilly
+        line.delete(eqlLineWilly)
+        label.delete(eqlLblWilly)
+    eqlActiveWilly := true
+    eqlPriceWilly := math.avg(swLow1Willy, swLow2Willy)
+    if showEqLevelsInput
+        eqlLineWilly := line.new(swLow2IdxWilly, eqlPriceWilly, swLow1IdxWilly + eqExtendBarsInput, eqlPriceWilly, color = eqColorInput, style = line.style_dashed, width = 1)
+        eqlLblWilly := label.new(swLow1IdxWilly, eqlPriceWilly, "EQL", color = color.new(eqColorInput, 100), textcolor = eqColorInput, style = label.style_label_up, size = size.tiny, tooltip = "Equal Lows @ " + str.tostring(eqlPriceWilly, format.mintick))
+
+bool sweepHighWilly = false
+bool sweepLowWilly  = false
+float sweepHighRefWilly = 0.0
+float sweepLowRefWilly  = 0.0
+
+var int lastSweptHighIdxWilly = na
+var int lastSweptLowIdxWilly  = na
+
+if barstate.isconfirmed and isWarmedUpWilly
+    float refHigh = eqhActiveWilly ? eqhPriceWilly : swHigh1Willy
+    float refLow  = eqlActiveWilly ? eqlPriceWilly : swLow1Willy
+    int refHighIdx = eqhActiveWilly ? swHigh2IdxWilly : swHigh1IdxWilly
+    int refLowIdx  = eqlActiveWilly ? swLow2IdxWilly  : swLow1IdxWilly
+
+    bool canSweepHigh = not na(refHigh) and (na(lastSweptHighIdxWilly) or refHighIdx != lastSweptHighIdxWilly)
+    bool canSweepLow  = not na(refLow)  and (na(lastSweptLowIdxWilly)  or refLowIdx  != lastSweptLowIdxWilly)
+
+    if canSweepHigh and high > refHigh and close < refHigh and open < refHigh
+        sweepHighWilly := true
+        sweepHighRefWilly := refHigh
+        lastSweptHighIdxWilly := refHighIdx
+        if eqhActiveWilly
+            eqhActiveWilly := false
+            if not na(eqhLineWilly)
+                eqhLineWilly.set_x2(bar_index)
+                eqhLineWilly.set_color(color.new(eqColorInput, 50))
+
+    if canSweepLow and low < refLow and close > refLow and open > refLow
+        sweepLowWilly := true
+        sweepLowRefWilly := refLow
+        lastSweptLowIdxWilly := refLowIdx
+        if eqlActiveWilly
+            eqlActiveWilly := false
+            if not na(eqlLineWilly)
+                eqlLineWilly.set_x2(bar_index)
+                eqlLineWilly.set_color(color.new(eqColorInput, 50))
+
+if showSweepsInput and sweepHighWilly
+    label.new(bar_index, high, "✗", color = color.new(sweepColorInput, 100), textcolor = sweepColorInput, style = label.style_label_down, size = size.small)
+
+if showSweepsInput and sweepLowWilly
+    label.new(bar_index, low, "✗", color = color.new(sweepColorInput, 100), textcolor = sweepColorInput, style = label.style_label_up, size = size.small)
+
+var int structureBiasWilly = 0
+var int lastBrokenHighIdxWilly = na
+var int lastBrokenLowIdxWilly  = na
+var int lastChochDirWilly = 0
+
+bool isBOSWilly   = false
+bool isCHoCHWilly = false
+bool isBullBreakWilly = false
+bool isBearBreakWilly = false
+
+bool bullBreakCondWilly = not na(swHigh1Willy) and barstate.isconfirmed and isWarmedUpWilly and close > swHigh1Willy and (na(lastBrokenHighIdxWilly) or swHigh1IdxWilly != lastBrokenHighIdxWilly)
+bool bearBreakCondWilly = not na(swLow1Willy) and barstate.isconfirmed and isWarmedUpWilly and close < swLow1Willy and (na(lastBrokenLowIdxWilly) or swLow1IdxWilly != lastBrokenLowIdxWilly)
+
+if bullBreakCondWilly and bearBreakCondWilly
+    if structureBiasWilly <= 0
+        bearBreakCondWilly := false
+    else
+        bullBreakCondWilly := false
+
+if bullBreakCondWilly
+    if structureBiasWilly <= 0
+        isCHoCHWilly := true
+        lastChochDirWilly := 1
+        lastSweptHighIdxWilly := na
+        lastSweptLowIdxWilly  := na
+    else
+        isBOSWilly := true
+    structureBiasWilly := 1
+    isBullBreakWilly := true
+    lastBrokenHighIdxWilly := swHigh1IdxWilly
+
+if bearBreakCondWilly
+    if structureBiasWilly >= 0
+        isCHoCHWilly := true
+        lastChochDirWilly := -1
+        lastSweptHighIdxWilly := na
+        lastSweptLowIdxWilly  := na
+    else
+        isBOSWilly := true
+    structureBiasWilly := -1
+    isBearBreakWilly := true
+    lastBrokenLowIdxWilly := swLow1IdxWilly
+
+if showStructInput and (isBOSWilly or isCHoCHWilly)
+    float breakPrice = isBullBreakWilly ? nz(swHigh1Willy, close) : nz(swLow1Willy, close)
+    color breakColor = isBullBreakWilly ? bullColorInput : bearColorInput
+    string breakText = isCHoCHWilly ? "CHoCH" : "BOS"
+    int startIdx = isBullBreakWilly ? nz(swHigh1IdxWilly, bar_index - 10) : nz(swLow1IdxWilly, bar_index - 10)
+    int midIdx = math.round(math.avg(startIdx, bar_index))
+    line.new(startIdx, breakPrice, bar_index, breakPrice, color = breakColor, style = getLineStyle(structLineStyleInput), width = structLineWidthInput)
+    label.new(midIdx, breakPrice, breakText, color = color.new(breakColor, 100), textcolor = breakColor, style = isBullBreakWilly ? label.style_label_down : label.style_label_up, size = size.small)
+
+var float fibSwingHighWilly = na
+var float fibSwingLowWilly  = na
+var int   fibSwingHighIdxWilly = na
+var int   fibSwingLowIdxWilly  = na
+var bool  fibNeedsRedrawWilly = false
+var bool  fibHighIsLiveWilly = false
+var bool  fibLowIsLiveWilly  = false
+var int   fibDirectionWilly = 0
+
+if isCHoCHWilly and isBullBreakWilly
+    fibDirectionWilly := 1
+    fibSwingHighWilly := high
+    fibSwingHighIdxWilly := bar_index
+    fibSwingLowWilly := swLow1Willy
+    fibSwingLowIdxWilly := nz(swLow1IdxWilly, bar_index - 10)
+    fibHighIsLiveWilly := true
+    fibLowIsLiveWilly := false
+    fibNeedsRedrawWilly := true
+
+if isCHoCHWilly and isBearBreakWilly
+    fibDirectionWilly := -1
+    fibSwingLowWilly := low
+    fibSwingLowIdxWilly := bar_index
+    fibSwingHighWilly := swHigh1Willy
+    fibSwingHighIdxWilly := nz(swHigh1IdxWilly, bar_index - 10)
+    fibLowIsLiveWilly := true
+    fibHighIsLiveWilly := false
+    fibNeedsRedrawWilly := true
+
+if isBOSWilly and isBullBreakWilly
+    fibSwingHighWilly := high
+    fibSwingHighIdxWilly := bar_index
+    fibSwingLowWilly := swLow1Willy
+    fibSwingLowIdxWilly := nz(swLow1IdxWilly, bar_index - 10)
+    fibHighIsLiveWilly := true
+    fibLowIsLiveWilly := false
+    fibNeedsRedrawWilly := true
+
+if isBOSWilly and isBearBreakWilly
+    fibSwingLowWilly := low
+    fibSwingLowIdxWilly := bar_index
+    fibSwingHighWilly := swHigh1Willy
+    fibSwingHighIdxWilly := nz(swHigh1IdxWilly, bar_index - 10)
+    fibLowIsLiveWilly := true
+    fibHighIsLiveWilly := false
+    fibNeedsRedrawWilly := true
+
+if not isBullBreakWilly and not isBearBreakWilly
+    if fibHighIsLiveWilly and not na(fibSwingHighWilly) and high > fibSwingHighWilly
+        fibSwingHighWilly := high
+        fibSwingHighIdxWilly := bar_index
+        fibNeedsRedrawWilly := true
+    if fibLowIsLiveWilly and not na(fibSwingLowWilly) and low < fibSwingLowWilly
+        fibSwingLowWilly := low
+        fibSwingLowIdxWilly := bar_index
+        fibNeedsRedrawWilly := true
+
+if newSwingHighWilly and fibHighIsLiveWilly and not na(swHigh1Willy)
+    fibSwingHighWilly := swHigh1Willy
+    fibSwingHighIdxWilly := swHigh1IdxWilly
+    fibHighIsLiveWilly := false
+    fibNeedsRedrawWilly := true
+
+if newSwingLowWilly and fibLowIsLiveWilly and not na(swLow1Willy)
+    fibSwingLowWilly := swLow1Willy
+    fibSwingLowIdxWilly := swLow1IdxWilly
+    fibLowIsLiveWilly := false
+    fibNeedsRedrawWilly := true
+
+if newSwingHighWilly and not fibHighIsLiveWilly and not na(swHigh1Willy) and not na(fibSwingHighWilly) and swHigh1Willy != fibSwingHighWilly
+    fibSwingHighWilly := swHigh1Willy
+    fibSwingHighIdxWilly := swHigh1IdxWilly
+    fibNeedsRedrawWilly := true
+
+if newSwingLowWilly and not fibLowIsLiveWilly and not na(swLow1Willy) and not na(fibSwingLowWilly) and swLow1Willy != fibSwingLowWilly
+    fibSwingLowWilly := swLow1Willy
+    fibSwingLowIdxWilly := swLow1IdxWilly
+    fibNeedsRedrawWilly := true
+
+var float fib236PriceWilly = na
+var float fib382PriceWilly = na
+var float fib500PriceWilly = na
+var float fib618PriceWilly = na
+var float fib786PriceWilly = na
+var float fibTargetPriceWilly = na
+var float fibTgt50PriceWilly = na
+
+bool fibRangeValidWilly = not na(fibSwingHighWilly) and not na(fibSwingLowWilly) and fibSwingHighWilly > fibSwingLowWilly and fibDirectionWilly != 0
+
+if fibRangeValidWilly
+    if fibDirectionWilly == 1
+        fib236PriceWilly := fibLevelWilly(fibSwingHighWilly, fibSwingLowWilly, 0.236)
+        fib382PriceWilly := fibLevelWilly(fibSwingHighWilly, fibSwingLowWilly, 0.382)
+        fib500PriceWilly := fibLevelWilly(fibSwingHighWilly, fibSwingLowWilly, 0.500)
+        fib618PriceWilly := fibLevelWilly(fibSwingHighWilly, fibSwingLowWilly, 0.618)
+        fib786PriceWilly := fibLevelWilly(fibSwingHighWilly, fibSwingLowWilly, 0.786)
+        fibTgt50PriceWilly := fibLevelWilly(fibSwingHighWilly, fibSwingLowWilly, -0.5)
+        fibTargetPriceWilly := fibLevelWilly(fibSwingHighWilly, fibSwingLowWilly, -0.618)
+    else
+        float fibRange = fibSwingHighWilly - fibSwingLowWilly
+        fib236PriceWilly := fibSwingLowWilly + fibRange * 0.236
+        fib382PriceWilly := fibSwingLowWilly + fibRange * 0.382
+        fib500PriceWilly := fibSwingLowWilly + fibRange * 0.500
+        fib618PriceWilly := fibSwingLowWilly + fibRange * 0.618
+        fib786PriceWilly := fibSwingLowWilly + fibRange * 0.786
+        fibTgt50PriceWilly := fibSwingLowWilly - fibRange * 0.5
+        fibTargetPriceWilly := fibSwingLowWilly - fibRange * 0.618
+else
+    fib236PriceWilly := na
+    fib382PriceWilly := na
+    fib500PriceWilly := na
+    fib618PriceWilly := na
+    fib786PriceWilly := na
+    fibTgt50PriceWilly := na
+    fibTargetPriceWilly := na
+
+var line  fibLine236Willy = na
+var line  fibLine382Willy = na
+var line  fibLine500Willy = na
+var line  fibLine618Willy = na
+var line  fibLine786Willy = na
+var label fibLbl236Willy = na
+var label fibLbl382Willy = na
+var label fibLbl500Willy = na
+var label fibLbl618Willy = na
+var label fibLbl786Willy = na
+var line  fibRefLineWilly = na
+var line  fibLineTargetWilly = na
+var label fibLblTargetWilly = na
+var line  fibLineTgt50Willy = na
+var label fibLblTgt50Willy = na
+var box   fibGoldenZoneWilly = na
+var box   fibTargetZoneWilly = na
+
+if showFibInput and fibRangeValidWilly
+    int rightEdge = bar_index + fibExtendInput
+    color targetColor = fibDirectionWilly == 1 ? bullColorInput : bearColorInput
+
+    if fibNeedsRedrawWilly
+        line.delete(fibLine236Willy), line.delete(fibLine382Willy), line.delete(fibLine500Willy)
+        line.delete(fibLine618Willy), line.delete(fibLine786Willy), line.delete(fibRefLineWilly)
+        line.delete(fibLineTargetWilly), line.delete(fibLineTgt50Willy)
+        label.delete(fibLbl236Willy), label.delete(fibLbl382Willy), label.delete(fibLbl500Willy)
+        label.delete(fibLbl618Willy), label.delete(fibLbl786Willy), label.delete(fibLblTargetWilly), label.delete(fibLblTgt50Willy)
+        box.delete(fibGoldenZoneWilly), box.delete(fibTargetZoneWilly)
+        fibLine236Willy := na, fibLine382Willy := na, fibLine500Willy := na, fibLine618Willy := na, fibLine786Willy := na
+        fibRefLineWilly := na, fibLineTargetWilly := na, fibLineTgt50Willy := na, fibLbl236Willy := na, fibLbl382Willy := na
+        fibLbl500Willy := na, fibLbl618Willy := na, fibLbl786Willy := na, fibLblTargetWilly := na, fibLblTgt50Willy := na
+        fibGoldenZoneWilly := na, fibTargetZoneWilly := na
+
+        color fibCol = fibColorInput
+        fibRefLineWilly := line.new(fibSwingLowIdxWilly, fibSwingLowWilly, fibSwingHighIdxWilly, fibSwingHighWilly, color = color.new(fibCol, 60), style = line.style_dotted, width = 1)
+        float gzTop = math.max(fib500PriceWilly, fib786PriceWilly)
+        float gzBot = math.min(fib500PriceWilly, fib786PriceWilly)
+        fibGoldenZoneWilly := box.new(bar_index, gzTop, rightEdge, gzBot, border_color = color.new(#FFD600, 70), bgcolor = color.new(#FFD600, 88), border_width = 0)
+
+        if showFib236Input
+            fibLine236Willy := line.new(bar_index, fib236PriceWilly, rightEdge, fib236PriceWilly, color = color.new(fibCol, 40), style = line.style_dotted, width = 1)
+            fibLbl236Willy := label.new(rightEdge, fib236PriceWilly, "0.236", color = color.new(fibCol, 100), textcolor = color.new(fibCol, 20), style = label.style_label_left, size = size.tiny)
+        if showFib382Input
+            fibLine382Willy := line.new(bar_index, fib382PriceWilly, rightEdge, fib382PriceWilly, color = color.new(fibCol, 30), style = line.style_dotted, width = 1)
+            fibLbl382Willy := label.new(rightEdge, fib382PriceWilly, "0.382", color = color.new(fibCol, 100), textcolor = color.new(fibCol, 10), style = label.style_label_left, size = size.tiny)
+        if showFib500Input
+            fibLine500Willy := line.new(bar_index, fib500PriceWilly, rightEdge, fib500PriceWilly, color = color.new(fibCol, 20), style = line.style_dashed, width = 2)
+            fibLbl500Willy := label.new(rightEdge, fib500PriceWilly, "0.500", color = color.new(fibCol, 100), textcolor = color.new(fibCol, 0), style = label.style_label_left, size = size.tiny)
+        if showFib618Input
+            fibLine618Willy := line.new(bar_index, fib618PriceWilly, rightEdge, fib618PriceWilly, color = color.new(fibCol, 10), style = line.style_solid, width = 2)
+            fibLbl618Willy := label.new(rightEdge, fib618PriceWilly, "0.618", color = color.new(fibCol, 100), textcolor = color.new(fibCol, 0), style = label.style_label_left, size = size.small)
+        if showFib786Input
+            fibLine786Willy := line.new(bar_index, fib786PriceWilly, rightEdge, fib786PriceWilly, color = color.new(fibCol, 30), style = line.style_dotted, width = 1)
+            fibLbl786Willy := label.new(rightEdge, fib786PriceWilly, "0.786", color = color.new(fibCol, 100), textcolor = color.new(fibCol, 10), style = label.style_label_left, size = size.tiny)
+        if showFibTargetInput
+            string tgtLabel = fibDirectionWilly == 1 ? "Target ↑" : "Target ↓"
+            fibLineTargetWilly := line.new(bar_index, fibTargetPriceWilly, rightEdge, fibTargetPriceWilly, color = targetColor, style = line.style_dashed, width = 2)
+            fibLblTargetWilly := label.new(rightEdge, fibTargetPriceWilly, tgtLabel, color = color.new(targetColor, 100), textcolor = targetColor, style = label.style_label_left, size = size.small)
+        if showFibTgt50Input
+            string tgt50Label = fibDirectionWilly == 1 ? "-0.5 ↑" : "-0.5 ↓"
+            fibLineTgt50Willy := line.new(bar_index, fibTgt50PriceWilly, rightEdge, fibTgt50PriceWilly, color = color.new(targetColor, 40), style = line.style_dotted, width = 1)
+            fibLblTgt50Willy := label.new(rightEdge, fibTgt50PriceWilly, tgt50Label, color = color.new(targetColor, 100), textcolor = color.new(targetColor, 40), style = label.style_label_left, size = size.tiny)
+        if showFibTargetInput or showFibTgt50Input
+            float tzTop = math.max(fibTgt50PriceWilly, fibTargetPriceWilly)
+            float tzBot = math.min(fibTgt50PriceWilly, fibTargetPriceWilly)
+            color tzColor = fibDirectionWilly == 1 ? bullColorInput : bearColorInput
+            fibTargetZoneWilly := box.new(bar_index, tzTop, rightEdge, tzBot, border_color = color.new(tzColor, 70), bgcolor = color.new(tzColor, 88), border_width = 0)
+        fibNeedsRedrawWilly := false
+    else
+        int rEdge = bar_index + fibExtendInput
+        if not na(fibLine236Willy)
+            fibLine236Willy.set_x2(rEdge), fibLbl236Willy.set_x(rEdge)
+        if not na(fibLine382Willy)
+            fibLine382Willy.set_x2(rEdge), fibLbl382Willy.set_x(rEdge)
+        if not na(fibLine500Willy)
+            fibLine500Willy.set_x2(rEdge), fibLbl500Willy.set_x(rEdge)
+        if not na(fibLine618Willy)
+            fibLine618Willy.set_x2(rEdge), fibLbl618Willy.set_x(rEdge)
+        if not na(fibLine786Willy)
+            fibLine786Willy.set_x2(rEdge), fibLbl786Willy.set_x(rEdge)
+        if not na(fibLineTargetWilly)
+            fibLineTargetWilly.set_x2(rEdge), fibLblTargetWilly.set_x(rEdge)
+        if not na(fibLineTgt50Willy)
+            fibLineTgt50Willy.set_x2(rEdge), fibLblTgt50Willy.set_x(rEdge)
+        if not na(fibGoldenZoneWilly)
+            fibGoldenZoneWilly.set_right(rEdge)
+        if not na(fibTargetZoneWilly)
+            fibTargetZoneWilly.set_right(rEdge)
+
+if not showFibInput or not fibRangeValidWilly
+    fibNeedsRedrawWilly := false
+
+bool inPremiumWilly = false
+bool inDiscountWilly = false
+if not na(fib500PriceWilly) and fibRangeValidWilly
+    if fibDirectionWilly == 1
+        inPremiumWilly := close > fib500PriceWilly
+        inDiscountWilly := close <= fib500PriceWilly
+    else
+        inPremiumWilly := close < fib500PriceWilly
+        inDiscountWilly := close >= fib500PriceWilly
+
+confToleranceWilly = atr14Willy > 0 ? atr14Willy * confluenceTolInput : 0.001
+isNearLevelWilly(float level) =>
+    if na(level)
+        false
+    else
+        math.abs(close - level) <= confToleranceWilly or (low <= level + confToleranceWilly and high >= level - confToleranceWilly)
+
+// Confluence scoring (MOVE UP before signals)
+float confluenceWeightWilly = 0.0
+if showFib236Input and isNearLevelWilly(fib236PriceWilly)
+    confluenceWeightWilly += 1.0
+if isNearLevelWilly(fib382PriceWilly)
+    confluenceWeightWilly += 1.5
+if isNearLevelWilly(fib500PriceWilly)
+    confluenceWeightWilly += 2.0
+if isNearLevelWilly(fib618PriceWilly)
+    confluenceWeightWilly += 2.5
+if isNearLevelWilly(fib786PriceWilly)
+    confluenceWeightWilly += 1.5
+if not na(swHigh1Willy) and isNearLevelWilly(swHigh1Willy)
+    confluenceWeightWilly += 1.0
+if not na(swLow1Willy) and isNearLevelWilly(swLow1Willy)
+    confluenceWeightWilly += 1.0
+if sweepAddsConfInput and (sweepHighWilly or sweepLowWilly)
+    confluenceWeightWilly += 2.0
+float confluenceScoreWilly = math.min(confluenceWeightWilly * 10.0, 100.0)
+string confluenceStrWilly = confluenceScoreWilly >= 60 ? "Strong" : confluenceScoreWilly >= 30 ? "Moderate" : confluenceScoreWilly > 0 ? "Weak" : "None"
+color confluenceClrWilly = confluenceScoreWilly >= 60 ? bullColorInput : confluenceScoreWilly >= 30 ? confluenceColorInput : confluenceScoreWilly > 0 ? color.new(confluenceColorInput, 50) : TEXT_MUTED
+
+float bodyHiWilly = math.max(close, open)
+float bodyLoWilly = math.min(close, open)
+float bodyWilly = bodyHiWilly - bodyLoWilly
+float bodyAvgWilly = nz(ta.ema(bodyWilly, 14), bodyWilly)
+bool isLongBodyWilly = bodyWilly > bodyAvgWilly
+bool isSmallPrevWilly = nz(bodyWilly[1], 0.0) < nz(bodyAvgWilly[1], bodyAvgWilly)
+bool bodyIsBiggerWilly = bodyWilly > nz(bodyWilly[1], 0.0)
+bool bearishEngulfWilly = false
+bool bullishEngulfWilly = false
+if strictEngulfInput
+    bearishEngulfWilly := close < open and isLongBodyWilly and bodyIsBiggerWilly and close[1] > open[1] and isSmallPrevWilly and open > close[1] and close < open[1]
+    bullishEngulfWilly := close > open and isLongBodyWilly and bodyIsBiggerWilly and close[1] < open[1] and isSmallPrevWilly and open < close[1] and close > open[1]
+else
+    bearishEngulfWilly := close < open and isLongBodyWilly and bodyIsBiggerWilly and close[1] > open[1] and isSmallPrevWilly and close <= open[1] and open >= close[1] and (close < open[1] or open > close[1])
+    bullishEngulfWilly := close > open and isLongBodyWilly and bodyIsBiggerWilly and close[1] < open[1] and isSmallPrevWilly and close >= open[1] and open <= close[1] and (close > open[1] or open < close[1])
+
+bool bearEngulfCtxWilly = bearishEngulfWilly and barstate.isconfirmed and isWarmedUpWilly and (inPremiumWilly or confluenceWeightWilly >= 1.5)
+bool bullEngulfCtxWilly = bullishEngulfWilly and barstate.isconfirmed and isWarmedUpWilly and (inDiscountWilly or confluenceWeightWilly >= 1.5)
+
+if showEngulfInput and bearEngulfCtxWilly
+    label.new(bar_index, high, "▼", color = color.new(bearColorInput, 100), textcolor = bearColorInput, style = label.style_label_down, size = size.small)
+if showEngulfInput and bullEngulfCtxWilly
+    label.new(bar_index, low, "▲", color = color.new(bullColorInput, 100), textcolor = bullColorInput, style = label.style_label_up, size = size.small)
+
+var int barsSinceLastSignalWilly = 999
+barsSinceLastSignalWilly += 1
+bool sweepBuySignalWilly  = sweepLowWilly  and barstate.isconfirmed and isWarmedUpWilly and (inDiscountWilly or confluenceWeightWilly >= 2.0)
+bool sweepSellSignalWilly = sweepHighWilly and barstate.isconfirmed and isWarmedUpWilly and (inPremiumWilly or confluenceWeightWilly >= 2.0)
+bool buyEngulfWilly = bullEngulfCtxWilly and structureBiasWilly == 1 and confluenceWeightWilly >= 1.5
+bool buyChochWilly  = isCHoCHWilly and isBullBreakWilly
+bool buySweepWilly  = sweepBuySignalWilly
+bool sellEngulfWilly = bearEngulfCtxWilly and structureBiasWilly == -1 and confluenceWeightWilly >= 1.5
+bool sellChochWilly  = isCHoCHWilly and isBearBreakWilly
+bool sellSweepWilly  = sweepSellSignalWilly
+bool buyRawWilly  = buyEngulfWilly or buyChochWilly or buySweepWilly
+bool sellRawWilly = sellEngulfWilly or sellChochWilly or sellSweepWilly
+if buyRawWilly and sellRawWilly
+    buyRawWilly  := false
+    sellRawWilly := false
+bool confirmedBuyWilly  = buyRawWilly and barsSinceLastSignalWilly >= cooldownInput and isWarmedUpWilly
+bool confirmedSellWilly = sellRawWilly and barsSinceLastSignalWilly >= cooldownInput and isWarmedUpWilly
+string buyTriggerWilly = ""
+if confirmedBuyWilly
+    buyTriggerWilly := buyChochWilly ? "choch" : ""
+    if buySweepWilly
+        buyTriggerWilly := buyTriggerWilly == "" ? "sweep" : buyTriggerWilly + "+sweep"
+    if buyEngulfWilly
+        buyTriggerWilly := buyTriggerWilly == "" ? "engulf" : buyTriggerWilly + "+engulf"
+string sellTriggerWilly = ""
+if confirmedSellWilly
+    sellTriggerWilly := sellChochWilly ? "choch" : ""
+    if sellSweepWilly
+        sellTriggerWilly := sellTriggerWilly == "" ? "sweep" : sellTriggerWilly + "+sweep"
+    if sellEngulfWilly
+        sellTriggerWilly := sellTriggerWilly == "" ? "engulf" : sellTriggerWilly + "+engulf"
+if confirmedBuyWilly or confirmedSellWilly
+    barsSinceLastSignalWilly := 0
+
+string nearestFibNameWilly = "—"
+float nearestFibDistWilly = na
+
+if fibRangeValidWilly
+    array<float> fibPricesWilly = array.from(fib236PriceWilly, fib382PriceWilly, fib500PriceWilly, fib618PriceWilly, fib786PriceWilly, fibTgt50PriceWilly, fibTargetPriceWilly)
+    array<string> fibNamesWilly = array.from("0.236", "0.382", "0.500", "0.618", "0.786", "-0.5", "-0.618")
+    float minDistWilly = na
+    int minIdxWilly = -1
+    for i = 0 to array.size(fibPricesWilly) - 1
+        float lvl = array.get(fibPricesWilly, i)
+        if not na(lvl)
+            float d = math.abs(close - lvl)
+            if na(minDistWilly) or d < minDistWilly
+                minDistWilly := d
+                minIdxWilly := i
+    if minIdxWilly >= 0
+        nearestFibNameWilly := array.get(fibNamesWilly, minIdxWilly)
+        nearestFibDistWilly := minDistWilly
+
+// =====================================================================
+//                              DASHBOARD & WATERMARK
+// =====================================================================
+var table dashTable = table.new(getDashPos(dashPosStr), 2, 12, TABLE_BG, TABLE_BORDER, 1, TABLE_BORDER, 1)
+
+if showDashInput and barstate.islast
+    table.cell(dashTable, 0, 0, "FibStruct", text_color = #FFFFFF, bgcolor = HEADER_BG, text_size = size.small, text_halign = text.align_center)
+    table.merge_cells(dashTable, 0, 0, 1, 0)
+    string trendStr = structureBiasWilly > 0 ? "Bullish" : structureBiasWilly < 0 ? "Bearish" : "Neutral"
+    color trendClr = structureBiasWilly > 0 ? bullColorInput : structureBiasWilly < 0 ? bearColorInput : TEXT_MUTED
+    table.cell(dashTable, 0, 1, "Trend", text_color = TEXT_MUTED, text_size = size.tiny, bgcolor = TABLE_BG)
+    table.cell(dashTable, 1, 1, trendStr, text_color = trendClr, text_size = size.tiny, bgcolor = TABLE_BG)
+    string fibDirStr = lastChochDirWilly > 0 ? "Long ↑" : lastChochDirWilly < 0 ? "Short ↓" : "—"
+    color fibDirClr = lastChochDirWilly > 0 ? bullColorInput : lastChochDirWilly < 0 ? bearColorInput : TEXT_MUTED
+    table.cell(dashTable, 0, 2, "Fib Dir", text_color = TEXT_MUTED, text_size = size.tiny, bgcolor = TABLE_ROW_ALT)
+    table.cell(dashTable, 1, 2, fibDirStr, text_color = fibDirClr, text_size = size.tiny, bgcolor = TABLE_ROW_ALT)
+    string sigStr = confirmedBuyWilly ? "BUY" : confirmedSellWilly ? "SELL" : "—"
+    color sigClr = confirmedBuyWilly ? bullColorInput : confirmedSellWilly ? bearColorInput : TEXT_MUTED
+    table.cell(dashTable, 0, 3, "Signal", text_color = TEXT_MUTED, text_size = size.tiny, bgcolor = TABLE_BG)
+    table.cell(dashTable, 1, 3, sigStr, text_color = sigClr, text_size = size.tiny, bgcolor = TABLE_BG)
+    table.cell(dashTable, 0, 4, "Confluence", text_color = TEXT_MUTED, text_size = size.tiny, bgcolor = TABLE_ROW_ALT)
+    table.cell(dashTable, 1, 4, confluenceStrWilly + " (" + str.tostring(confluenceScoreWilly, "#") + ")", text_color = confluenceClrWilly, text_size = size.tiny, bgcolor = TABLE_ROW_ALT)
+    string zoneStr = inPremiumWilly ? "Premium" : inDiscountWilly ? "Discount" : "—"
+    color zoneClr = inPremiumWilly ? bearColorInput : inDiscountWilly ? bullColorInput : TEXT_MUTED
+    table.cell(dashTable, 0, 5, "Zone", text_color = TEXT_MUTED, text_size = size.tiny, bgcolor = TABLE_BG)
+    table.cell(dashTable, 1, 5, zoneStr, text_color = zoneClr, text_size = size.tiny, bgcolor = TABLE_BG)
+    string liqStr = eqhActiveWilly and eqlActiveWilly ? "EQH+EQL" : eqhActiveWilly ? "EQH ↑" : eqlActiveWilly ? "EQL ↓" : "—"
+    color liqClr = (eqhActiveWilly or eqlActiveWilly) ? eqColorInput : TEXT_MUTED
+    table.cell(dashTable, 0, 6, "Liquidity", text_color = TEXT_MUTED, text_size = size.tiny, bgcolor = TABLE_ROW_ALT)
+    table.cell(dashTable, 1, 6, liqStr, text_color = liqClr, text_size = size.tiny, bgcolor = TABLE_ROW_ALT)
+    table.cell(dashTable, 0, 7, "Fib .618", text_color = TEXT_MUTED, text_size = size.tiny, bgcolor = TABLE_BG)
+    table.cell(dashTable, 1, 7, na(fib618PriceWilly) ? "—" : str.tostring(fib618PriceWilly, format.mintick), text_color = fibColorInput, text_size = size.tiny, bgcolor = TABLE_BG)
+    table.cell(dashTable, 0, 8, "ATR(14)", text_color = TEXT_MUTED, text_size = size.tiny, bgcolor = TABLE_ROW_ALT)
+    table.cell(dashTable, 1, 8, str.tostring(atr14Willy, format.mintick), text_color = TEXT_COLOR, text_size = size.tiny, bgcolor = TABLE_ROW_ALT)
+    string nearFibStr = "—"
+    color nearFibClr = TEXT_MUTED
+    if not na(nearestFibDistWilly) and atr14Willy > 0
+        float distInAtr = nearestFibDistWilly / atr14Willy
+        nearFibStr := nearestFibNameWilly + " (" + str.tostring(distInAtr, "0.00") + " ATR)"
+        nearFibClr := distInAtr <= confluenceTolInput ? confluenceColorInput : fibColorInput
+    table.cell(dashTable, 0, 9, "Near Fib", text_color = TEXT_MUTED, text_size = size.tiny, bgcolor = TABLE_BG)
+    table.cell(dashTable, 1, 9, nearFibStr, text_color = nearFibClr, text_size = size.tiny, bgcolor = TABLE_BG)
+    table.cell(dashTable, 0, 10, "TF", text_color = TEXT_MUTED, text_size = size.tiny, bgcolor = TABLE_ROW_ALT)
+    table.cell(dashTable, 1, 10, timeframe.period, text_color = TEXT_COLOR, text_size = size.tiny, bgcolor = TABLE_ROW_ALT)
+    table.cell(dashTable, 0, 11, "Version", text_color = TEXT_MUTED, text_size = size.tiny, bgcolor = TABLE_BG)
+    table.cell(dashTable, 1, 11, INDICATOR_VERSION, text_color = TEXT_MUTED, text_size = size.tiny, bgcolor = TABLE_BG)
+
+var table wmTable = table.new(position = position.bottom_center, columns = 1, rows = 1, bgcolor = color.new(color.black, 100), border_color = color.new(color.black, 100), border_width = 0)
+if barstate.islast and showWatermarkInput
+    table.cell(wmTable, 0, 0, "WillyAlgoTrader", text_color = WM_COLOR, text_size = size.normal, text_halign = text.align_center, bgcolor = color.new(color.black, 100))
+
+// =====================================================================
+//                              MERGED DRAWING
+// =====================================================================
+// Willy shapes
+plotshape(showSignalsInput and confirmedBuyWilly ? low : na, "Buy Signal", style = shape.labelup, location = location.belowbar, color = bullColorInput, textcolor = LABEL_TEXT, text = "BUY", size = size.small)
+plotshape(showSignalsInput and confirmedSellWilly ? high : na, "Sell Signal", style = shape.labeldown, location = location.abovebar, color = bearColorInput, textcolor = LABEL_TEXT, text = "SELL", size = size.small)
+
+// FEELS shapes
+plotshape(showTest   and bounceUpFEELS,   "Successful test up",   shape.circle,  location.belowbar, color.new(supColor, 0), size = size.tiny)
+plotshape(showTest   and bounceDownFEELS, "Successful test down", shape.circle,  location.abovebar, color.new(resColor, 0), size = size.tiny)
+plotshape(showRetest and retestUpFEELS,   "Retest support",       shape.diamond, location.belowbar, color.new(supColor, 0), size = size.tiny)
+plotshape(showRetest and retestDownFEELS, "Retest resistance",    shape.diamond, location.abovebar, color.new(resColor, 0), size = size.tiny)
+plotshape(showReaction and supHoldFEELS, "Support hold",    shape.diamond, location.belowbar, color.new(supColor, 30), size = size.tiny)
+plotshape(showReaction and resHoldFEELS, "Resistance hold", shape.diamond, location.abovebar, color.new(resColor, 30), size = size.tiny)
+
+// FEELS Buffer-based drawing
+if barstate.islast
+    clearBuffers()
+    mxFEELS = maxStrengthAcross()
+    mvFEELS = maxVolAcross()
+    if resZonesFEELS.size() > 0
+        for i = 0 to resZonesFEELS.size() - 1
+            z = resZonesFEELS.get(i)
+            if na(z.diedBar)
+                drawAlive(z, resColor, mxFEELS, mvFEELS)
+    if supZonesFEELS.size() > 0
+        for i = 0 to supZonesFEELS.size() - 1
+            z = supZonesFEELS.get(i)
+            if na(z.diedBar)
+                drawAlive(z, supColor, mxFEELS, mvFEELS)
+    if (showBroken or showDropped) and brokenZonesFEELS.size() > 0
+        for i = 0 to brokenZonesFEELS.size() - 1
+            z = brokenZonesFEELS.get(i)
+            shouldShow = (z.wasBroken and showBroken) or (not z.wasBroken and showDropped)
+            if shouldShow
+                drawBroken(z)
+
+// =====================================================================
+//                              ALERTS
+// =====================================================================
+// FEELS Alert Conditions
+priceTouchesAliveFEELS(array<Zone> zs) =>
+    hit = false
+    if zs.size() > 0
+        for i = 0 to zs.size() - 1
+            z = zs.get(i)
+            if na(z.diedBar) and z.touches >= minTouches and high >= z.bot and low <= z.top
+                hit := true
+                break
+    hit
+
+touchedResFEELS = priceTouchesAliveFEELS(resZonesFEELS)
+touchedSupFEELS = priceTouchesAliveFEELS(supZonesFEELS)
+
+brokeResFEELS = false
+brokeSupFEELS = false
+if resZonesFEELS.size() > 0
+    for i = 0 to resZonesFEELS.size() - 1
+        z = resZonesFEELS.get(i)
+        if not na(z.diedBar) and z.diedBar == bar_index and z.touches >= minTouches and z.isLiveBreak
+            brokeResFEELS := true
+if supZonesFEELS.size() > 0
+    for i = 0 to supZonesFEELS.size() - 1
+        z = supZonesFEELS.get(i)
+        if not na(z.diedBar) and z.diedBar == bar_index and z.touches >= minTouches and z.isLiveBreak
+            brokeSupFEELS := true
+
+alertcondition(touchedResFEELS, "Resistance touched", "Price reached an active resistance zone")
+alertcondition(touchedSupFEELS, "Support touched",    "Price reached an active support zone")
+alertcondition(brokeResFEELS,   "Resistance broken",  "Price closed above a resistance zone")
+alertcondition(brokeSupFEELS,   "Support broken",     "Price closed below a support zone")
+alertcondition(bounceUpFEELS,   "Successful support test",    "Bullish reaction at support zone")
+alertcondition(bounceDownFEELS, "Successful resistance test", "Bearish reaction at resistance zone")
+alertcondition(retestUpFEELS,   "Bullish retest",    "Price retested a broken resistance from above")
+alertcondition(retestDownFEELS, "Bearish retest",    "Price retested a broken support from below")
+alertcondition(newHighPivotFEELS or newLowPivotFEELS, "New pivot", "A new pivot was confirmed and zones updated")
+
+// Willy Real-time Alerts
+string tickerStrWilly = syminfo.tickerid
+string tfStrWilly = timeframe.period
+string priceStrWilly = str.tostring(close, format.mintick)
+string confAlertStrWilly = str.tostring(confluenceScoreWilly, "#")
+
+if confirmedBuyWilly
+    string slStr = str.tostring(close - atr14Willy * 1.5, format.mintick)
+    string tpStr = str.tostring(close + atr14Willy * 2.5, format.mintick)
+    string jMsg = '{"action":"buy","ticker":"' + tickerStrWilly + '","price":' + str.tostring(close) + ',"tf":"' + tfStrWilly + '","trigger":"' + buyTriggerWilly + '","confluence":' + confAlertStrWilly + ',"sl":' + slStr + ',"tp":' + tpStr + '}'
+    string tMsg = "🟢 BUY [" + buyTriggerWilly + "] | " + tickerStrWilly + " | TF: " + tfStrWilly + " | Price: " + priceStrWilly + " | Conf: " + confAlertStrWilly + " | SL: " + slStr + " | TP: " + tpStr
+    alert(webhookInput ? jMsg : tMsg, alert.freq_once_per_bar_close)
+
+if confirmedSellWilly
+    string slStr = str.tostring(close + atr14Willy * 1.5, format.mintick)
+    string tpStr = str.tostring(close - atr14Willy * 2.5, format.mintick)
+    string jMsg = '{"action":"sell","ticker":"' + tickerStrWilly + '","price":' + str.tostring(close) + ',"tf":"' + tfStrWilly + '","trigger":"' + sellTriggerWilly + '","confluence":' + confAlertStrWilly + ',"sl":' + slStr + ',"tp":' + tpStr + '}'
+    string tMsg = "🔴 SELL [" + sellTriggerWilly + "] | " + tickerStrWilly + " | TF: " + tfStrWilly + " | Price: " + priceStrWilly + " | Conf: " + confAlertStrWilly + " | SL: " + slStr + " | TP: " + tpStr
+    alert(webhookInput ? jMsg : tMsg, alert.freq_once_per_bar_close)
+
+if isBOSWilly
+    string dirStr = isBullBreakWilly ? "bull" : "bear"
+    string jMsg = '{"action":"bos","ticker":"' + tickerStrWilly + '","price":' + str.tostring(close) + ',"direction":"' + dirStr + '"}'
+    string tMsg = "🔵 BOS | " + tickerStrWilly + " | TF: " + tfStrWilly + " | Price: " + priceStrWilly + " | Dir: " + dirStr
+    alert(webhookInput ? jMsg : tMsg, alert.freq_once_per_bar_close)
+
+if isCHoCHWilly
+    string dirStr = isBullBreakWilly ? "bull" : "bear"
+    string jMsg = '{"action":"choch","ticker":"' + tickerStrWilly + '","price":' + str.tostring(close) + ',"direction":"' + dirStr + '"}'
+    string tMsg = "🟡 CHoCH | " + tickerStrWilly + " | TF: " + tfStrWilly + " | Price: " + priceStrWilly + " | Dir: " + dirStr
+    alert(webhookInput ? jMsg : tMsg, alert.freq_once_per_bar_close)
+
+if sweepHighWilly
+    string jMsg = '{"action":"sweep","ticker":"' + tickerStrWilly + '","price":' + str.tostring(close) + ',"direction":"high","level":' + str.tostring(sweepHighRefWilly, format.mintick) + '}'
+    string tMsg = "🟠 SWEEP HIGH | " + tickerStrWilly + " | TF: " + tfStrWilly + " | Level: " + str.tostring(sweepHighRefWilly, format.mintick) + " | Close: " + priceStrWilly
+    alert(webhookInput ? jMsg : tMsg, alert.freq_once_per_bar_close)
+
+if sweepLowWilly
+    string jMsg = '{"action":"sweep","ticker":"' + tickerStrWilly + '","price":' + str.tostring(close) + ',"direction":"low","level":' + str.tostring(sweepLowRefWilly, format.mintick) + '}'
+    string tMsg = "🟠 SWEEP LOW | " + tickerStrWilly + " | TF: " + tfStrWilly + " | Level: " + str.tostring(sweepLowRefWilly, format.mintick) + " | Close: " + priceStrWilly
+    alert(webhookInput ? jMsg : tMsg, alert.freq_once_per_bar_close)
+
+// =====================================================================
+//                              CLEANUP
+// =====================================================================
+if array.size(label.all) > 490
+    label.delete(array.shift(label.all))
+if array.size(line.all) > 490
+    line.delete(array.shift(line.all))
+if array.size(box.all) > 490
+    box.delete(array.shift(box.all))
