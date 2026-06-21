@@ -879,7 +879,7 @@ if not isBullBreakWilly and not isBearBreakWilly
         fibNeedsRedrawWilly := true
     if fibLowIsLiveWilly and not na(fibSwingLowWilly) and low < fibSwingLowWilly
         fibSwingLowWilly := low
-        fibSwingLowIdx := bar_index
+        fibSwingLowIdxWilly := bar_index
         fibNeedsRedrawWilly := true
 
 if newSwingHighWilly and fibHighIsLiveWilly and not na(swHigh1Willy)
