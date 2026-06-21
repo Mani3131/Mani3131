@@ -69,7 +69,7 @@ if barstate.islast
     table.cell(dash, 0, 2, "4H Range", text_color = color.white)
     table.cell(dash, 1, 2, str.tostring(range4h, format.mintick), text_color = color.white)
 
-    table.cell(dash, 0, 3, "ER (M/D * R)", text_color = color.white)
+    table.cell(dash, 0, 3, "ER (" + str.tostring(mt) + "/" + str.tostring(dy) + " * Range)", text_color = color.white)
     table.cell(dash, 1, 3, str.tostring(estimated_range, format.mintick), text_color = color.orange)
 
     table.cell(dash, 0, 4, "Anchor (Prev 4H Close)", text_color = color.white)
