@@ -252,7 +252,7 @@ if not na(ph) or not na(pl)
     // and then see if there's an ABC correction following it.
 
     found_any = false
-    for i = 0 to math.min(3, math.max(0, pivots.size() - 6))
+    for i = 0 to (pivots.size() >= 6 ? math.min(3, pivots.size() - 6) : -1)
         if found_any
             break
 
