@@ -172,7 +172,7 @@ update_dashboard(WaveSequence seq, bool is_bull) =>
         table.cell(status_tbl, 1, 6, seq.status == "" ? "None" : seq.status, text_color = color.gray)
 
         table.cell(status_tbl, 0, 7, "Confluence", text_color = color.white)
-        table.cell(status_tbl, 1, 7, seq.confluence, text_color = seq.confluence == "None" ? color.gray : color.orange)
+        table.cell(status_tbl, 1, 7, seq.confluence, text_color = seq.confluence == "None" ? color.gray : color.rgb(255, 165, 0))
 
         // Fibonacci Targets
         w3_target = get_wave3_target(seq)
@@ -208,11 +208,11 @@ is_engulfing(bool bull) =>
 
 is_pinbar(bool bull) =>
     body = math.abs(close - open)
-    hl_range = high - low
+    bar_hl_dist = high - low
     if bull
-        low < math.min(open, close) - body * 2 and (hl_range > 0 ? (math.min(open, close) - low) / hl_range > 0.6 : false)
+        low < math.min(open, close) - body * 2 and (bar_hl_dist > 0 ? (math.min(open, close) - low) / bar_hl_dist > 0.6 : false)
     else
-        high > math.max(open, close) + body * 2 and (hl_range > 0 ? (high - math.max(open, close)) / hl_range > 0.6 : false)
+        high > math.max(open, close) + body * 2 and (bar_hl_dist > 0 ? (high - math.max(open, close)) / bar_hl_dist > 0.6 : false)
 
 // --- Confluence Logic ---
 
