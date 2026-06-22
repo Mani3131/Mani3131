@@ -1,0 +1,223 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Wyckoff Accumulation & Distribution Phases [Mani3131]", overlay=true, max_labels_count=500, max_boxes_count=500)
+
+// --- Inputs ---
+pivot_len = input.int(5, "Pivot Length", minval=1, tooltip="Higher values detect major swings, lower values detect micro structures.")
+vol_ma_len = input.int(20, "Volume MA Length", minval=1)
+vol_threshold = input.float(1.5, "High Volume Threshold (x MA)", minval=1.0, step=0.1)
+require_high_vol = input.bool(true, "Require High Volume for Climax")
+climax_lookback = input.int(20, "Climax Markdown/Markup Lookback", minval=5, tooltip="How many bars to check for a sustained move before Climax.")
+show_pivots = input.bool(false, "Show All Pivot Points (Debug Mode)")
+
+// --- Styling ---
+color_phase_a = input.color(color.new(color.gray, 50), "Phase A Color")
+color_phase_b = input.color(color.new(color.blue, 50), "Phase B Color")
+color_phase_c = input.color(color.new(color.yellow, 50), "Phase C Color")
+color_phase_d = input.color(color.new(color.green, 50), "Phase D Color")
+color_sc = input.color(color.red, "Selling Climax Label")
+color_bc = input.color(color.red, "Buying Climax Label")
+color_ar = input.color(color.green, "Auto Rally/Reaction Label")
+color_sos = input.color(color.lime, "Sign of Strength Label")
+
+// --- Technical Calculations ---
+vol_ma = ta.sma(volume, vol_ma_len)
+is_high_volume = volume > vol_ma * vol_threshold
+
+pivot_high_price = ta.pivothigh(high, pivot_len, pivot_len)
+pivot_low_price = ta.pivotlow(low, pivot_len, pivot_len)
+has_pivot_high = not na(pivot_high_price)
+has_pivot_low = not na(pivot_low_price)
+
+// Debug pivots
+plotshape(show_pivots and has_pivot_high, "Pivot High", shape.triangledown, location.abovebar, color.red, size=size.tiny, offset=-pivot_len)
+plotshape(show_pivots and has_pivot_low, "Pivot Low", shape.triangleup, location.belowbar, color.green, size=size.tiny, offset=-pivot_len)
+
+// --- State Variables ---
+var string structure_type = "None" // "Accumulation" or "Distribution"
+var string current_phase = "None"
+var float range_high = na
+var float range_low = na
+var float range_mid = na
+
+var int climax_index = na
+var float climax_price = na
+var int ar_index = na
+var float ar_price = na
+var int st_index = na
+var float st_price = na
+
+var int test_index = na
+var float test_price = na
+var bool phase_c_triggered = false
+var bool phase_d_triggered = false
+
+// --- Reset Logic (Inline) ---
+reset_condition = false
+if not na(range_high) and not na(range_low)
+    if structure_type == "Accumulation" and close < range_low * 0.8
+        reset_condition := true
+    else if structure_type == "Distribution" and close > range_high * 1.2
+        reset_condition := true
+
+if reset_condition
+    structure_type := "None"
+    current_phase := "None"
+    range_high := na
+    range_low := na
+    range_mid := na
+    climax_index := na
+    climax_price := na
+    ar_index := na
+    ar_price := na
+    st_index := na
+    st_price := na
+    test_index := na
+    test_price := na
+    phase_c_triggered := false
+    phase_d_triggered := false
+
+// --- Accumulation Detection ---
+if current_phase == "None" or structure_type == "Accumulation"
+    // 1. Detect Selling Climax (SC)
+    if na(climax_price) and has_pivot_low
+        is_markdown = low[pivot_len] < ta.lowest(low, climax_lookback)[pivot_len + 1]
+        if is_markdown and (not require_high_vol or (is_high_volume or is_high_volume[pivot_len]))
+            climax_price := pivot_low_price
+            climax_index := bar_index[pivot_len]
+            current_phase := "A"
+            structure_type := "Accumulation"
+            label.new(climax_index, climax_price, "SC", style=label.style_label_up, color=color_sc, textcolor=color.white, size=size.normal)
+
+    // 2. Detect Automatic Rally (AR)
+    if not na(climax_price) and na(ar_price) and structure_type == "Accumulation" and has_pivot_high and bar_index[pivot_len] > climax_index
+        ar_price := pivot_high_price
+        ar_index := bar_index[pivot_len]
+        range_high := ar_price
+        range_low := climax_price
+        range_mid := (range_high + range_low) / 2
+        label.new(ar_index, ar_price, "AR", style=label.style_label_down, color=color_ar, textcolor=color.white, size=size.normal)
+
+    // 3. Detect Secondary Test (ST)
+    if not na(ar_price) and na(st_price) and structure_type == "Accumulation" and has_pivot_low and bar_index[pivot_len] > ar_index
+        if low[pivot_len] <= climax_price * 1.1
+            st_price := pivot_low_price
+            st_index := bar_index[pivot_len]
+            label.new(st_index, st_price, "ST", style=label.style_label_up, color=color_phase_a, textcolor=color.white, size=size.normal)
+            current_phase := "B"
+
+    // Phase C: Spring (Test of range lows)
+    if current_phase == "B" and not phase_c_triggered and structure_type == "Accumulation" and has_pivot_low
+        if low[pivot_len] <= range_low * 1.01
+            test_price := pivot_low_price
+            test_index := bar_index[pivot_len]
+            phase_c_triggered := true
+            current_phase := "C"
+            label.new(test_index, test_price, "Spring", style=label.style_label_up, color=color_phase_c, textcolor=color.black, size=size.normal)
+
+    // Phase D: Trend
+    if current_phase == "C" and not phase_d_triggered and structure_type == "Accumulation"
+        if close > range_mid and ta.crossover(close, range_mid)
+            phase_d_triggered := true
+            current_phase := "D"
+            label.new(bar_index, high, "Phase D", style=label.style_label_down, color=color_phase_d, textcolor=color.white, size=size.normal)
+
+// --- Distribution Detection ---
+if current_phase == "None" or structure_type == "Distribution"
+    // 1. Detect Buying Climax (BC)
+    if na(climax_price) and has_pivot_high
+        is_markup = high[pivot_len] > ta.highest(high, climax_lookback)[pivot_len + 1]
+        if is_markup and (not require_high_vol or (is_high_volume or is_high_volume[pivot_len]))
+            climax_price := pivot_high_price
+            climax_index := bar_index[pivot_len]
+            current_phase := "A"
+            structure_type := "Distribution"
+            label.new(climax_index, climax_price, "BC", style=label.style_label_down, color=color_bc, textcolor=color.white, size=size.normal)
+
+    // 2. Detect Automatic Reaction (AR)
+    if not na(climax_price) and na(ar_price) and structure_type == "Distribution" and has_pivot_low and bar_index[pivot_len] > climax_index
+        ar_price := pivot_low_price
+        ar_index := bar_index[pivot_len]
+        range_high := climax_price
+        range_low := ar_price
+        range_mid := (range_high + range_low) / 2
+        label.new(ar_index, ar_price, "AR", style=label.style_label_up, color=color_ar, textcolor=color.white, size=size.normal)
+
+    // 3. Detect Secondary Test (ST)
+    if not na(ar_price) and na(st_price) and structure_type == "Distribution" and has_pivot_high and bar_index[pivot_len] > ar_index
+        if high[pivot_len] >= climax_price * 0.9
+            st_price := pivot_high_price
+            st_index := bar_index[pivot_len]
+            label.new(st_index, st_price, "ST", style=label.style_label_down, color=color_phase_a, textcolor=color.white, size=size.normal)
+            current_phase := "B"
+
+    // Phase C: UTAD (Test of range highs)
+    if current_phase == "B" and not phase_c_triggered and structure_type == "Distribution" and has_pivot_high
+        if high[pivot_len] >= range_high * 0.99
+            test_price := pivot_high_price
+            test_index := bar_index[pivot_len]
+            phase_c_triggered := true
+            current_phase := "C"
+            label.new(test_index, test_price, "UTAD", style=label.style_label_down, color=color_phase_c, textcolor=color.black, size=size.normal)
+
+    // Phase D: Trend
+    if current_phase == "C" and not phase_d_triggered and structure_type == "Distribution"
+        if close < range_mid and ta.crossunder(close, range_mid)
+            phase_d_triggered := true
+            current_phase := "D"
+            label.new(bar_index, low, "Phase D", style=label.style_label_up, color=color_phase_d, textcolor=color.white, size=size.normal)
+
+// Visualizing the range
+var box trading_range_box = na
+if not na(range_high) and not na(range_low)
+    if na(trading_range_box)
+        trading_range_box := box.new(climax_index, range_high, bar_index, range_low, border_color=color_phase_a, bgcolor=color.new(color_phase_a, 90), border_width=2)
+    else
+        box.set_right(trading_range_box, bar_index)
+        box.set_top(trading_range_box, range_high)
+        box.set_bottom(trading_range_box, range_low)
+        box.set_border_color(trading_range_box, current_phase == "A" ? color_phase_a : current_phase == "B" ? color_phase_b : current_phase == "C" ? color_phase_c : color_phase_d)
+        box.set_bgcolor(trading_range_box, color.new(current_phase == "A" ? color_phase_a : current_phase == "B" ? color_phase_b : current_phase == "C" ? color_phase_c : color_phase_d, 90))
+
+phase_bg_color = current_phase == "A" ? color.new(color_phase_a, 95) :
+                 current_phase == "B" ? color.new(color_phase_b, 95) :
+                 current_phase == "C" ? color.new(color_phase_c, 95) :
+                 current_phase == "D" ? color.new(color_phase_d, 95) :
+                 na
+bgcolor(phase_bg_color)
+
+plot(range_high, "Range High", color=color.new(color_phase_a, 50), style=plot.style_linebr, linewidth=2)
+plot(range_low, "Range Low", color=color.new(color_phase_a, 50), style=plot.style_linebr, linewidth=2)
+plot(range_mid, "Equilibrium", color=color.new(color.gray, 80), style=plot.style_linebr)
+
+// Dashboard
+var table dashboard = table.new(position.top_right, 2, 2, bgcolor=color.new(color.black, 70), border_width=1, border_color=color.gray)
+if barstate.islast
+    table.cell(dashboard, 0, 0, "Structure", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 0, structure_type, text_color=structure_type == "Accumulation" ? color.green : structure_type == "Distribution" ? color.red : color.white, text_size=size.small)
+    table.cell(dashboard, 0, 1, "Phase", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 1, current_phase, text_color=color.yellow, text_size=size.small)
+
+// Signals
+is_phase_c_entry = structure_type == "Accumulation" and current_phase == "C" and has_pivot_low and low[pivot_len] >= test_price
+if is_phase_c_entry
+    label.new(bar_index[pivot_len], low[pivot_len], "ENTRY", style=label.style_label_up, color=color_phase_c, textcolor=color.black, size=size.small)
+
+is_sos = structure_type == "Accumulation" and current_phase == "D" and close > open and (high - low) > ta.atr(14) * 1.5 and volume > vol_ma
+var bool sos_label_drawn = false
+if current_phase != "D"
+    sos_label_drawn := false
+if is_sos and not sos_label_drawn
+    label.new(bar_index, low, "SOS", style=label.style_label_up, color=color_sos, textcolor=color.black, size=size.small)
+    sos_label_drawn := true
+
+var bool breakout_occurred = false
+if structure_type == "Accumulation" and current_phase == "D" and ta.crossover(close, range_high)
+    breakout_occurred := true
+
+is_bu_action = breakout_occurred and ta.crossunder(low, range_high * 1.02) and close > range_high and has_pivot_low
+if is_bu_action
+    label.new(bar_index[pivot_len], low[pivot_len], "BU", style=label.style_label_up, color=color_phase_d, textcolor=color.white, size=size.small)
+    breakout_occurred := false
