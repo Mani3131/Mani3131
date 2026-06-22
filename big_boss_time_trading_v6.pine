@@ -119,7 +119,7 @@ if isNyTriggerCandle
 // --- Trade Counting ---
 var int tradeCount = 0
 t4H = time("240", "0000-2359:1234567", timezone = timezoneInput)
-isNew4H = not na(t4H) and na(t4H[1]) or ta.change(t4H)
+isNew4H = (not na(t4H) and na(t4H[1])) or (not na(ta.change(t4H)) and ta.change(t4H) != 0)
 if isNew4H
     tradeCount := 0
 
