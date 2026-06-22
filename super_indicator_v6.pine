@@ -1,0 +1,327 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Mani3131 Super Indicator [v6]", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=500)
+
+// ==========================================
+// User Inputs
+// ==========================================
+
+// --- Supply & Demand Settings ---
+grp_sd_structure = "S&D Market Structure"
+sd_pivot_len     = input.int(3, "Pivot Lookback", minval=1, group=grp_sd_structure)
+sd_show_bos      = input.bool(true, "Show BOS/CHoCH", group=grp_sd_structure)
+
+grp_sd_zones     = "Supply & Demand Zones"
+sd_zone_style    = input.string("Extended", "Zone Style", options=["Box", "Extended"], group=grp_sd_zones)
+sd_min_displacement = input.float(1.5, "Min Displacement (ATR Multiplier)", minval=0.1, step=0.1, group=grp_sd_zones)
+sd_show_breakers = input.bool(true, "Show Breaker Blocks", group=grp_sd_zones)
+sd_show_mitigation = input.bool(true, "Show Mitigation Blocks", group=grp_sd_zones)
+sd_show_flips    = input.bool(true, "Show Flip Zones", group=grp_sd_zones)
+
+grp_sd_filters   = "S&D Trend & Filters"
+sd_use_ema       = input.bool(true, "Use 200 EMA Filter", group=grp_sd_filters)
+sd_ema_len       = input.int(200, "EMA Length", group=grp_sd_filters)
+
+grp_sd_visuals   = "S&D Visuals"
+sd_color_demand  = input.color(color.new(#26a69a, 80), "Demand Color", group=grp_sd_visuals)
+sd_color_supply  = input.color(color.new(#ef5350, 80), "Supply Color", group=grp_sd_visuals)
+sd_color_breaker = input.color(color.new(#673ab7, 80), "Breaker Color", group=grp_sd_visuals)
+sd_color_flip    = input.color(color.new(#ff9800, 80), "Flip Zone Color", group=grp_sd_visuals)
+
+// --- Big Boss Algorithm Settings ---
+grp_bb_algo = "Big Boss Algorithm"
+bb_timezone = input.string("UTC+3", "Timezone", group = grp_bb_algo)
+
+grp_bb_visuals = "Big Boss Visuals"
+bb_target_color = input.color(color.yellow, "Target Line Color", group = grp_bb_visuals)
+bb_text_col = input.color(color.white, "Label Text Color", group = grp_bb_visuals)
+
+// --- Box Theory Settings ---
+grp_bx_theory = "Box Theory Strategy"
+bx_box_color_input = input.color(color.new(color.blue, 90), "Box Background Color", group = grp_bx_theory)
+bx_border_color_input = input.color(color.blue, "Box Border Color", group = grp_bx_theory)
+bx_median_color_input = input.color(color.gray, "Median Line Color", group = grp_bx_theory)
+bx_show_labels = input.bool(true, "Show Buy/Sell Labels", group = grp_bx_theory)
+
+// --- Global Visuals ---
+grp_global_visuals = "Global Dashboard"
+show_dashboard = input.bool(true, "Show Dashboard", group=grp_global_visuals)
+
+
+// ==========================================
+// Types & Shared Variables
+// ==========================================
+type SD_Zone
+    float top
+    float bottom
+    int   start_bar
+    bool  is_demand
+    bool  is_active = true
+    string zone_type = "SD" // "SD", "Breaker", "Mitigation", "Flip"
+    box   display_box
+
+var sd_zones = array.new<SD_Zone>()
+var string last_signal_name = "None"
+
+// ==========================================
+// 1. Supply & Demand Logic
+// ==========================================
+sd_ema_filter = ta.ema(close, sd_ema_len)
+plot(sd_use_ema ? sd_ema_filter : na, "S&D Trend EMA", color.new(color.gray, 50))
+
+sd_atr = ta.atr(14)
+sd_ph = ta.pivothigh(high, sd_pivot_len, sd_pivot_len)
+sd_pl = ta.pivotlow(low, sd_pivot_len, sd_pivot_len)
+
+var float sd_last_ph_price = na
+var float sd_last_pl_price = na
+
+if not na(sd_ph)
+    sd_last_ph_price := sd_ph
+if not na(sd_pl)
+    sd_last_pl_price := sd_pl
+
+bool sd_choch_bull = false
+bool sd_bos_bull = false
+bool sd_choch_bear = false
+bool sd_bos_bear = false
+var int sd_trend_state = 0 // 0: Neutral, 1: Bullish, -1: Bearish
+
+if not na(sd_last_ph_price) and close > sd_last_ph_price
+    if sd_trend_state <= 0
+        sd_choch_bull := true
+        sd_trend_state := 1
+    else
+        sd_bos_bull := true
+    sd_last_ph_price := na
+
+if not na(sd_last_pl_price) and close < sd_last_pl_price
+    if sd_trend_state >= 0
+        sd_choch_bear := true
+        sd_trend_state := -1
+    else
+        sd_bos_bear := true
+    sd_last_pl_price := na
+
+plotshape(sd_show_bos and sd_choch_bull, "S&D CHoCH Bull", shape.labelup, location.belowbar, color.green, size=size.tiny, text="CHoCH", textcolor=color.white)
+plotshape(sd_show_bos and sd_bos_bull, "S&D BOS Bull", shape.labelup, location.belowbar, color.green, size=size.tiny, text="BOS", textcolor=color.white)
+plotshape(sd_show_bos and sd_choch_bear, "S&D CHoCH Bear", shape.labeldown, location.abovebar, color.red, size=size.tiny, text="CHoCH", textcolor=color.white)
+plotshape(sd_show_bos and sd_bos_bear, "S&D BOS Bear", shape.labeldown, location.abovebar, color.red, size=size.tiny, text="BOS", textcolor=color.white)
+
+sd_displacement_thresh = sd_atr * sd_min_displacement
+sd_bull_disp = (close - open) > sd_displacement_thresh and close > high[1]
+
+if sd_bull_disp
+    float zone_top = high[1]
+    float zone_bot = low[1]
+    for i = 1 to 5
+        if close[i] < open[i] or (high[i] - low[i]) < sd_atr[i] * 0.5
+            zone_top := high[i]
+            zone_bot := low[i]
+            break
+    bool is_flip = false
+    if sd_show_flips
+        for z in sd_zones
+            if not z.is_demand and z.is_active and high > z.bottom and low < z.top
+                is_flip := true
+                break
+    new_zone = SD_Zone.new(top = zone_top, bottom = zone_bot, start_bar = bar_index[1], is_demand = true, zone_type = is_flip ? "Flip" : "SD")
+    c = is_flip ? sd_color_flip : sd_color_demand
+    new_zone.display_box := box.new(bar_index[1], zone_top, bar_index, zone_bot, border_color = color.new(c, 50), bgcolor = c, extend = sd_zone_style == "Extended" ? extend.right : extend.none)
+    sd_zones.push(new_zone)
+    if sd_zones.size() > 50
+        sd_zones.remove(0)
+
+sd_bear_disp = (open - close) > sd_displacement_thresh and close < low[1]
+if sd_bear_disp
+    float zone_top = high[1]
+    float zone_bot = low[1]
+    for i = 1 to 5
+        if close[i] > open[i] or (high[i] - low[i]) < sd_atr[i] * 0.5
+            zone_top := high[i]
+            zone_bot := low[i]
+            break
+    bool is_flip = false
+    if sd_show_flips
+        for z in sd_zones
+            if z.is_demand and z.is_active and low < z.top and high > z.bottom
+                is_flip := true
+                break
+    new_zone = SD_Zone.new(top = zone_top, bottom = zone_bot, start_bar = bar_index[1], is_demand = false, zone_type = is_flip ? "Flip" : "SD")
+    c = is_flip ? sd_color_flip : sd_color_supply
+    new_zone.display_box := box.new(bar_index[1], zone_top, bar_index, zone_bot, border_color = color.new(c, 50), bgcolor = c, extend = sd_zone_style == "Extended" ? extend.right : extend.none)
+    sd_zones.push(new_zone)
+    if sd_zones.size() > 50
+        sd_zones.remove(0)
+
+if sd_zones.size() > 0
+    for i = 0 to sd_zones.size() - 1
+        z = sd_zones.get(i)
+        if z.is_active
+            if sd_zone_style == "Box"
+                z.display_box.set_right(bar_index)
+            bool broken = z.is_demand ? close < z.bottom : close > z.top
+            if broken
+                z.is_active := false
+                if sd_show_breakers
+                    z.zone_type := "Breaker"
+                    z.display_box.set_bgcolor(sd_color_breaker)
+                    z.display_box.set_border_color(color.new(sd_color_breaker, 50))
+                else if sd_show_mitigation
+                    z.zone_type := "Mitigation"
+
+                if sd_zone_style == "Extended"
+                    z.display_box.set_extend(extend.none)
+                    z.display_box.set_right(bar_index)
+
+bool sd_long_signal  = false
+bool sd_short_signal = false
+string sd_current_signal = ""
+if sd_zones.size() > 0
+    for i = 0 to sd_zones.size() - 1
+        z = sd_zones.get(i)
+        if z.is_active
+            bool trend_ok = not sd_use_ema or (z.is_demand ? close > sd_ema_filter : close < sd_ema_filter)
+            if trend_ok
+                if z.is_demand and low <= z.top and low >= z.bottom and close > open
+                    sd_long_signal := true
+                    sd_current_signal := z.zone_type + " Retest"
+                else if not z.is_demand and high >= z.bottom and high <= z.top and close < open
+                    sd_short_signal := true
+                    sd_current_signal := z.zone_type + " Retest"
+
+if sd_current_signal != ""
+    last_signal_name := sd_current_signal
+
+plotshape(sd_long_signal, "S&D Long Entry", shape.triangleup, location.belowbar, color.green, size=size.small, text="BUY", textcolor=color.white)
+plotshape(sd_short_signal, "S&D Short Entry", shape.triangledown, location.abovebar, color.red, size=size.small, text="SELL", textcolor=color.white)
+
+// ==========================================
+// 2. Big Boss Market Algorithm Logic
+// ==========================================
+bb_yr = year(time, bb_timezone)
+bb_mt = month(time, bb_timezone)
+bb_dy = dayofmonth(time, bb_timezone)
+
+bb_dc_month = bb_mt % 10
+bb_dc_day   = bb_dy % 10
+bb_dc_year  = bb_yr % 10
+bb_daily_code = bb_dc_month + bb_dc_day + bb_dc_year
+
+[bb_ph4, bb_pl4, bb_pc4] = request.security(syminfo.tickerid, "240", [high[1], low[1], close[1]], lookahead = barmerge.lookahead_off)
+bb_range4h = not na(bb_ph4) and not na(bb_pl4) ? bb_ph4 - bb_pl4 : na
+bb_anchor_close = bb_pc4
+bb_estimated_range = not na(bb_range4h) ? (float(bb_mt) / float(bb_dy)) * bb_range4h : na
+bb_target_price = not na(bb_anchor_close) and not na(bb_estimated_range) ? bb_anchor_close - bb_estimated_range : na
+
+var line bb_target_line = line.new(na, na, na, na, color = bb_target_color, width = 2, style = line.style_solid)
+var label bb_target_label = label.new(na, na, "Bounce Target", style = label.style_label_left, size = size.small, textcolor = bb_text_col, color = bb_target_color)
+plot(bb_target_price, "Big Boss Bounce Point", color = color.new(bb_target_color, 50), style = plot.style_cross)
+
+if barstate.islast
+    line.set_xy1(bb_target_line, bar_index - 10, bb_target_price)
+    line.set_xy2(bb_target_line, bar_index + 10, bb_target_price)
+    label.set_xy(bb_target_label, bar_index + 10, bb_target_price)
+    label.set_text(bb_target_label, "Bounce Point: " + str.tostring(bb_target_price, format.mintick))
+
+// ==========================================
+// 3. Box Theory Strategy Logic
+// ==========================================
+[bx_pdh, bx_pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+bx_median = (bx_pdh + bx_pdl) / 2
+
+var box bx_daily_box = na
+var line bx_median_line = na
+bx_new_day = ta.change(time("D")) != 0
+
+if bx_new_day
+    bx_daily_box := box.new(bar_index, bx_pdh, bar_index, bx_pdl, border_color = bx_border_color_input, bgcolor = bx_box_color_input)
+    bx_median_line := line.new(bar_index, bx_median, bar_index, bx_median, color = bx_median_color_input, style = line.style_dashed)
+else if not na(bx_daily_box)
+    box.set_right(bx_daily_box, bar_index)
+    line.set_x2(bx_median_line, bar_index)
+
+bx_body_size = math.abs(close - open)
+bx_upper_wick = high - math.max(open, close)
+bx_lower_wick = math.min(open, close) - low
+bx_is_bearish_john_wick = bx_upper_wick >= bx_body_size * 2 and bx_lower_wick < bx_upper_wick / 2
+bx_is_bullish_john_wick = bx_lower_wick >= bx_body_size * 2 and bx_upper_wick < bx_lower_wick / 2
+
+bx_range_size = bx_pdh - bx_pdl
+bx_proximity_threshold = bx_range_size * 0.05
+bx_at_box_top = high >= (bx_pdh - bx_proximity_threshold)
+bx_at_box_bottom = low <= (bx_pdl + bx_proximity_threshold)
+
+bx_sell_signal = bx_at_box_top and bx_is_bearish_john_wick
+bx_buy_signal = bx_at_box_bottom and bx_is_bullish_john_wick
+
+if bx_sell_signal
+    last_signal_name := "Box SELL"
+if bx_buy_signal
+    last_signal_name := "Box BUY"
+
+plotshape(bx_show_labels and bx_sell_signal, "Box Sell Signal", shape.labeldown, location.abovebar, color.rgb(255, 51, 102), text = "SELL\nJohn Wick", textcolor = color.white, size = size.tiny)
+plotshape(bx_show_labels and bx_buy_signal, "Box Buy Signal", shape.labelup, location.belowbar, color.rgb(0, 201, 167), text = "BUY\nJohn Wick", textcolor = color.white, size = size.tiny)
+
+plot(bx_pdh, "Prev Day High", color.new(color.red, 50), style = plot.style_stepline)
+plot(bx_pdl, "Prev Day Low", color.new(color.green, 50), style = plot.style_stepline)
+plot(bx_median, "Box Median", color.new(color.gray, 50), style = plot.style_stepline)
+
+// ==========================================
+// Unified Dashboard & Alerts
+// ==========================================
+if sd_long_signal
+    alert("S&D Bullish " + sd_current_signal + " Signal on " + syminfo.ticker, alert.freq_once_per_bar_close)
+if sd_short_signal
+    alert("S&D Bearish " + sd_current_signal + " Signal on " + syminfo.ticker, alert.freq_once_per_bar_close)
+if bx_buy_signal
+    alert("Box Buy Signal on " + syminfo.ticker, alert.freq_once_per_bar_close)
+if bx_sell_signal
+    alert("Box Sell Signal on " + syminfo.ticker, alert.freq_once_per_bar_close)
+
+var table dash = table.new(position.top_right, 2, 12, bgcolor = color.new(color.black, 70), border_width = 1, border_color = color.gray)
+if show_dashboard and barstate.islast
+    // Header
+    table.cell(dash, 0, 0, "Super Indicator Metric", bgcolor=color.new(color.gray, 50), text_color=color.white)
+    table.cell(dash, 1, 0, "Value", bgcolor=color.new(color.gray, 50), text_color=color.white)
+
+    // S&D Info
+    table.cell(dash, 0, 1, "Trend Bias", text_halign=text.align_left, text_color=color.white)
+    table.cell(dash, 1, 1, sd_trend_state == 0 ? "NEUTRAL" : (sd_trend_state == 1 ? "BULLISH" : "BEARISH"), bgcolor=sd_trend_state == 0 ? color.gray : (sd_trend_state == 1 ? color.green : color.red), text_color=color.white)
+
+    table.cell(dash, 0, 2, "EMA Filter", text_halign=text.align_left, text_color=color.white)
+    table.cell(dash, 1, 2, not sd_use_ema ? "OFF" : (close > sd_ema_filter ? "ABOVE" : "BELOW"), bgcolor=close > sd_ema_filter ? color.green : color.red, text_color=color.white)
+
+    sd_active_count = 0
+    if sd_zones.size() > 0
+        for i = 0 to sd_zones.size() - 1
+            if sd_zones.get(i).is_active
+                sd_active_count += 1
+    table.cell(dash, 0, 3, "S&D Active Zones", text_halign=text.align_left, text_color=color.white)
+    table.cell(dash, 1, 3, str.tostring(sd_active_count), text_color=color.white)
+
+    // Big Boss Info
+    table.cell(dash, 0, 4, "BB Daily Code", text_halign=text.align_left, text_color=color.white)
+    table.cell(dash, 1, 4, str.tostring(bb_daily_code) + " (" + str.tostring(bb_dc_month) + "+" + str.tostring(bb_dc_day) + "+" + str.tostring(bb_dc_year) + ")", text_color=color.yellow)
+
+    table.cell(dash, 0, 5, "BB 4H Range", text_halign=text.align_left, text_color=color.white)
+    table.cell(dash, 1, 5, str.tostring(bb_range4h, format.mintick), text_color=color.white)
+
+    table.cell(dash, 0, 6, "BB ER", text_halign=text.align_left, text_color=color.white)
+    table.cell(dash, 1, 6, str.tostring(bb_estimated_range, format.mintick), text_color=color.orange)
+
+    table.cell(dash, 0, 7, "BB Bounce Point", text_halign=text.align_left, text_color=color.white)
+    table.cell(dash, 1, 7, str.tostring(bb_target_price, format.mintick), text_color=color.green)
+
+    // Box Theory Info
+    table.cell(dash, 0, 8, "Box Prev High", text_halign=text.align_left, text_color=color.white)
+    table.cell(dash, 1, 8, str.tostring(bx_pdh, format.mintick), text_color=color.white)
+
+    table.cell(dash, 0, 9, "Box Prev Low", text_halign=text.align_left, text_color=color.white)
+    table.cell(dash, 1, 9, str.tostring(bx_pdl, format.mintick), text_color=color.white)
+
+    // Global
+    table.cell(dash, 0, 10, "Last Signal", text_halign=text.align_left, text_color=color.white)
+    table.cell(dash, 1, 10, last_signal_name, text_color=color.white)
