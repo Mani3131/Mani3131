@@ -10,7 +10,10 @@ string asianSessionTime = input.session("0200-0800:1234567", "Asian Session (Q1)
 string londonSessionTime = input.session("0800-1400:1234567", "London Session (Q2)", tooltip = "Time in EAT")
 string nySessionTime = input.session("1400-2000:1234567", "NY Session (Q3)", tooltip = "Time in EAT")
 string pmSessionTime = input.session("2000-0200:1234567", "PM Session (Q4)", tooltip = "Time in EAT")
-string triggerTime = input.session("0900-0901:1234567", "Trigger Candle (09:00 EAT)", tooltip = "The specific 1-minute candle used for entry.")
+string triggerTime = input.session("0900-0901:1234567", "London Trigger (09:00 EAT)", tooltip = "London reversal trigger candle.")
+string nyTriggerTime = input.session("1800-1801:1234567", "NY Trigger (18:00 EAT)", tooltip = "NY reversal trigger candle.")
+bool showMidnightOpen = input.bool(true, "Show Midnight Open (00:00 EAT)", group = "Levels")
+int maxTradesPerCycle = input.int(2, "Max Trades Per 4H Cycle", minval = 1, group = "Execution")
 
 // Colors
 color colorQ1 = input.color(color.new(color.blue, 90), "Asian (Q1) Color")
@@ -52,6 +55,14 @@ else if inQ1
 
 asianMidpoint = (asianHigh + asianLow) / 2
 
+// --- Midnight Open ---
+var float midnightOpen = na
+isMidnight = not na(time("D", "0000-0001:1234567", timezone = timezoneInput))
+if isMidnight
+    midnightOpen := open
+
+plot(showMidnightOpen ? midnightOpen : na, "Midnight Open", color = color.white, style = plot.style_linebr, linewidth = 2)
+
 // Plotting Asian Levels
 plot(inQ1 or inQ2 or inQ3 or inQ4 ? asianHigh : na, "Asian High", color = color.blue, style = plot.style_linebr)
 plot(inQ1 or inQ2 or inQ3 or inQ4 ? asianLow : na, "Asian Low", color = color.blue, style = plot.style_linebr)
@@ -79,7 +90,9 @@ if isQ1Start
     highSwept := false
     lowSwept := false
 
-// --- 09:00 EAT Trigger Candle ---
+// --- Reversal Trigger Candles ---
+
+// London 09:00 EAT
 bool isTriggerCandle = not na(time("D", triggerTime, timezone = timezoneInput))
 var float triggerHigh = na
 var float triggerLow = na
@@ -88,9 +101,26 @@ if isTriggerCandle
     triggerHigh := high
     triggerLow := low
 
-// Draw box for trigger candle
 if isTriggerCandle
-    box.new(bar_index, triggerHigh, bar_index, triggerLow, border_color = color.yellow, bgcolor = color.new(color.yellow, 80))
+    box.new(bar_index, triggerHigh, bar_index, triggerLow, border_color = color.yellow, bgcolor = color.new(color.yellow, 80), tooltip = "London Trigger Candle (09:00 EAT)")
+
+// NY 18:00 EAT
+bool isNyTriggerCandle = not na(time("D", nyTriggerTime, timezone = timezoneInput))
+var float nyTriggerHigh = na
+var float nyTriggerLow = na
+
+if isNyTriggerCandle
+    nyTriggerHigh := high
+    nyTriggerLow := low
+
+if isNyTriggerCandle
+    box.new(bar_index, nyTriggerHigh, bar_index, nyTriggerLow, border_color = color.orange, bgcolor = color.new(color.orange, 80), tooltip = "NY Trigger Candle (18:00 EAT)")
+
+// --- Trade Counting ---
+var int tradeCount = 0
+isNew4H = ta.change(math.floor(hour / 4)) != 0
+if isNew4H
+    tradeCount := 0
 
 // --- Signal Generation ---
 bool isTriggerClose = isTriggerCandle[1] and not isTriggerCandle
@@ -100,15 +130,20 @@ var float slLevel = na
 var float tp1Level = na
 var float tp2Level = na
 
-if isTriggerClose
+// NY Trigger Close
+bool isNyTriggerClose = isNyTriggerCandle[1] and not isNyTriggerCandle
+
+if isTriggerClose and tradeCount < maxTradesPerCycle
     if highSwept and not lowSwept // Only high swept, look for sell
         shortSignalTrigger := true
+        tradeCount := tradeCount + 1
         slLevel := triggerHigh
         tp1Level := asianMidpoint
         tp2Level := asianLow
         label.new(bar_index, high, "SELL\nSL: " + str.tostring(slLevel) + "\nTP1: " + str.tostring(tp1Level), color = color.red, textcolor = color.white, style = label.style_label_down)
     else if lowSwept and not highSwept // Only low swept, look for buy
         longSignalTrigger := true
+        tradeCount := tradeCount + 1
         slLevel := triggerLow
         tp1Level := asianMidpoint
         tp2Level := asianHigh
@@ -127,8 +162,20 @@ if isTriggerClose
             tp2Level := asianHigh
             label.new(bar_index, low, "BUY (Both Swept)\nSL: " + str.tostring(slLevel), color = color.green, textcolor = color.white, style = label.style_label_up)
 
+if isNyTriggerClose and tradeCount < maxTradesPerCycle
+    // NY logic: "first one-minute candle often forms the day's high before a downward trend to midnight"
+    // This implies a potential sell reversal if it's near high or just a time-based reversal.
+    // If it's a "reversal mechanism", we look for the opposite of the current trend.
+    // Given the prompt: "often forms the day's high before a downward trend to midnight"
+    // Let's assume it's a SELL signal if price is above Midnight Open or Asian Midpoint.
+    shortSignalTrigger := true
+    tradeCount := tradeCount + 1
+    slLevel := nyTriggerHigh
+    tp1Level := asianMidpoint
+    label.new(bar_index, high, "NY SELL\nSL: " + str.tostring(slLevel), color = color.red, textcolor = color.white, style = label.style_label_down)
+
 // --- Dashboard ---
-var table board = table.new(position.top_right, 2, 7, bgcolor = color.new(color.black, 70), border_width = 1, border_color = color.gray)
+var table board = table.new(position.top_right, 2, 9, bgcolor = color.new(color.black, 70), border_width = 1, border_color = color.gray)
 
 if barstate.islast
     table.cell(board, 0, 0, "Big Boss Dashboard", text_color = color.white, text_size = size.small)
@@ -153,6 +200,12 @@ if barstate.islast
     table.cell(board, 0, 6, "Low Swept", text_color = color.white, text_size = size.small)
     table.cell(board, 1, 6, lowSwept ? "YES" : "NO", text_color = lowSwept ? color.red : color.green, text_size = size.small)
 
+    table.cell(board, 0, 7, "Cycle Trades", text_color = color.white, text_size = size.small)
+    table.cell(board, 1, 7, str.tostring(tradeCount) + " / " + str.tostring(maxTradesPerCycle), text_color = tradeCount >= maxTradesPerCycle ? color.red : color.green, text_size = size.small)
+
+    table.cell(board, 0, 8, "Midnight Open", text_color = color.white, text_size = size.small)
+    table.cell(board, 1, 8, str.tostring(midnightOpen), text_color = color.white, text_size = size.small)
+
 // Alerts
-alertcondition(shortSignalTrigger, "Big Boss Sell Signal", "Asian High swept, 09:00 candle closed. Sell entry.")
-alertcondition(longSignalTrigger, "Big Boss Buy Signal", "Asian Low swept, 09:00 candle closed. Buy entry.")
+alertcondition(shortSignalTrigger, "Big Boss Sell Signal", "Reversal trigger (09:00 or 18:00 EAT) closed. Sell entry.")
+alertcondition(longSignalTrigger, "Big Boss Buy Signal", "Reversal trigger (09:00 EAT) closed. Buy entry.")
