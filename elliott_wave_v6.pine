@@ -247,12 +247,13 @@ if not na(pl)
     if pivots.size() > 50
         pivots.pop()
 
-if not na(ph) or not na(pl)
+if (not na(ph) or not na(pl)) and pivots.size() >= 6
     // We try to find the best motive wave in the last few pivots
     // and then see if there's an ABC correction following it.
 
     found_any = false
-    for i = 0 to (pivots.size() >= 6 ? math.min(3, pivots.size() - 6) : -1)
+    max_idx = math.min(3, pivots.size() - 6)
+    for i = 0 to max_idx
         if found_any
             break
 
