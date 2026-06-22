@@ -208,11 +208,11 @@ is_engulfing(bool bull) =>
 
 is_pinbar(bool bull) =>
     body = math.abs(close - open)
-    range = high - low
+    hl_range = high - low
     if bull
-        low < math.min(open, close) - body * 2 and (range > 0 ? (math.min(open, close) - low) / range > 0.6 : false)
+        low < math.min(open, close) - body * 2 and (hl_range > 0 ? (math.min(open, close) - low) / hl_range > 0.6 : false)
     else
-        high > math.max(open, close) + body * 2 and (range > 0 ? (high - math.max(open, close)) / range > 0.6 : false)
+        high > math.max(open, close) + body * 2 and (hl_range > 0 ? (high - math.max(open, close)) / hl_range > 0.6 : false)
 
 // --- Confluence Logic ---
 
