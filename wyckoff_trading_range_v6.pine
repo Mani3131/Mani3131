@@ -22,8 +22,10 @@ color_sos = input.color(color.lime, "Sign of Strength Label")
 vol_ma = ta.sma(volume, vol_ma_len)
 is_high_volume = volume > vol_ma * vol_threshold
 
-pivot_high = ta.pivothigh(high, pivot_len, pivot_len)
-pivot_low = ta.pivotlow(low, pivot_len, pivot_len)
+pivot_high_price = ta.pivothigh(high, pivot_len, pivot_len)
+pivot_low_price = ta.pivotlow(low, pivot_len, pivot_len)
+has_pivot_high = not na(pivot_high_price)
+has_pivot_low = not na(pivot_low_price)
 
 // --- State Variables ---
 var string current_phase = "None"
@@ -46,19 +48,19 @@ var bool phase_d_triggered = false
 // --- Phase A: Stopping Action Detection ---
 // 1. Detect Selling Climax (SC)
 // Typically a sharp drop with high volume followed by a pivot low
-if na(sc_price) and not na(pivot_low)
+if na(sc_price) and has_pivot_low
     // Check if the preceding move was a markdown (simple check: lower highs/lows or RSI oversold)
     // For simplicity, we look for a significant pivot low with high volume in the vicinity
     if is_high_volume or is_high_volume[pivot_len]
-        sc_price := pivot_low
+        sc_price := pivot_low_price
         sc_index := bar_index[pivot_len]
         current_phase := "A"
         label.new(sc_index, sc_price, "SC", style=label.style_label_up, color=color_sc, textcolor=color.white)
 
 // 2. Detect Automatic Rally (AR)
 // The first significant high after SC
-if not na(sc_price) and na(ar_price) and not na(pivot_high) and bar_index[pivot_len] > sc_index
-    ar_price := pivot_high
+if not na(sc_price) and na(ar_price) and has_pivot_high and bar_index[pivot_len] > sc_index
+    ar_price := pivot_high_price
     ar_index := bar_index[pivot_len]
     range_high := ar_price
     range_low := sc_price
@@ -67,9 +69,9 @@ if not na(sc_price) and na(ar_price) and not na(pivot_high) and bar_index[pivot_
 
 // 3. Detect Secondary Test (ST)
 // Price returning to sc_price area
-if not na(ar_price) and na(st_price) and not na(pivot_low) and bar_index[pivot_len] > ar_index
+if not na(ar_price) and na(st_price) and has_pivot_low and bar_index[pivot_len] > ar_index
     if low[pivot_len] <= sc_price * 1.1 // within 10% of SC
-        st_price := pivot_low
+        st_price := pivot_low_price
         st_index := bar_index[pivot_len]
         label.new(st_index, st_price, "ST", style=label.style_label_up, color=color_phase_a, textcolor=color.white)
         current_phase := "B"
@@ -78,10 +80,10 @@ if not na(ar_price) and na(st_price) and not na(pivot_low) and bar_index[pivot_l
 // Phase B is mostly sideways. We can transition to Phase C if we see a significant test of the low.
 
 // --- Phase C: The Final Test (Spring) ---
-if current_phase == "B" and not phase_c_triggered and not na(pivot_low)
+if current_phase == "B" and not phase_c_triggered and has_pivot_low
     // A spring often dips below SC/ST and recovers
     if low[pivot_len] < range_low * 1.05 // Near or below range low
-        spring_price := pivot_low
+        spring_price := pivot_low_price
         spring_index := bar_index[pivot_len]
         phase_c_triggered := true
         current_phase := "C"
@@ -122,7 +124,7 @@ plot(range_mid, "Equilibrium", color=color.new(color.gray, 80), style=plot.style
 
 // 1. Phase C: Low Test Reversal
 // Spotting a successful test of the low in Phase C
-is_phase_c_entry = current_phase == "C" and not na(pivot_low) and low[pivot_len] >= spring_price
+is_phase_c_entry = current_phase == "C" and has_pivot_low and low[pivot_len] >= spring_price
 if is_phase_c_entry
     label.new(bar_index[pivot_len], low[pivot_len], "Entry: Phase C Test", style=label.style_label_up, color=color.new(color_phase_c, 0), textcolor=color.black)
 
@@ -138,7 +140,7 @@ var bool breakout_occurred = false
 if current_phase == "D" and ta.crossover(close, range_high)
     breakout_occurred := true
 
-is_bu_action = breakout_occurred and ta.crossunder(low, range_high * 1.02) and close > range_high and not na(pivot_low)
+is_bu_action = breakout_occurred and ta.crossunder(low, range_high * 1.02) and close > range_high and has_pivot_low
 if is_bu_action
     label.new(bar_index[pivot_len], low[pivot_len], "Entry: BU Retest", style=label.style_label_up, color=color.new(color_phase_d, 0), textcolor=color.white)
     breakout_occurred := false // Reset after detection
