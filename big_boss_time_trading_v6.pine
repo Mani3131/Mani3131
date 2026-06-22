@@ -102,7 +102,7 @@ if isTriggerCandle
     triggerLow := low
 
 if isTriggerCandle
-    box.new(bar_index, triggerHigh, bar_index, triggerLow, border_color = color.yellow, bgcolor = color.new(color.yellow, 80), tooltip = "London Trigger Candle (09:00 EAT)")
+    box.new(bar_index, triggerHigh, bar_index, triggerLow, border_color = color.yellow, bgcolor = color.new(color.yellow, 80))
 
 // NY 18:00 EAT
 bool isNyTriggerCandle = not na(time("D", nyTriggerTime, timezone = timezoneInput))
@@ -114,11 +114,12 @@ if isNyTriggerCandle
     nyTriggerLow := low
 
 if isNyTriggerCandle
-    box.new(bar_index, nyTriggerHigh, bar_index, nyTriggerLow, border_color = color.orange, bgcolor = color.new(color.orange, 80), tooltip = "NY Trigger Candle (18:00 EAT)")
+    box.new(bar_index, nyTriggerHigh, bar_index, nyTriggerLow, border_color = color.orange, bgcolor = color.new(color.orange, 80))
 
 // --- Trade Counting ---
 var int tradeCount = 0
-isNew4H = ta.change(math.floor(hour / 4)) != 0
+t4H = time("240", "0000-2359:1234567", timezone = timezoneInput)
+isNew4H = not na(t4H) and na(t4H[1]) or ta.change(t4H)
 if isNew4H
     tradeCount := 0
 
