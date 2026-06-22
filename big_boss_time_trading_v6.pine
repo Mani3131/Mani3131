@@ -1,0 +1,153 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Big Boss Time-Trading Strategy", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// --- Inputs ---
+string timezoneInput = input.string("UTC+3", "Timezone", options = ["UTC+3", "UTC-5", "UTC+0"], tooltip = "Select the timezone for session calculations. Default is EAT (UTC+3).")
+string asianSessionTime = input.session("0200-0800:1234567", "Asian Session (Q1)", tooltip = "Time in EAT")
+string londonSessionTime = input.session("0800-1400:1234567", "London Session (Q2)", tooltip = "Time in EAT")
+string nySessionTime = input.session("1400-2000:1234567", "NY Session (Q3)", tooltip = "Time in EAT")
+string pmSessionTime = input.session("2000-0200:1234567", "PM Session (Q4)", tooltip = "Time in EAT")
+string triggerTime = input.session("0900-0901:1234567", "Trigger Candle (09:00 EAT)", tooltip = "The specific 1-minute candle used for entry.")
+
+// Colors
+color colorQ1 = input.color(color.new(color.blue, 90), "Asian (Q1) Color")
+color colorQ2 = input.color(color.new(color.red, 90), "London (Q2) Color")
+color colorQ3 = input.color(color.new(color.green, 90), "NY (Q3) Color")
+color colorQ4 = input.color(color.new(color.orange, 90), "PM (Q4) Color")
+
+// --- Session Logic ---
+bool inQ1 = not na(time("D", asianSessionTime, timezone = timezoneInput))
+bool inQ2 = not na(time("D", londonSessionTime, timezone = timezoneInput))
+bool inQ3 = not na(time("D", nySessionTime, timezone = timezoneInput))
+bool inQ4 = not na(time("D", pmSessionTime, timezone = timezoneInput))
+
+// Background Highlighting
+bgcolor(inQ1 ? colorQ1 : na)
+bgcolor(inQ2 ? colorQ2 : na)
+bgcolor(inQ3 ? colorQ3 : na)
+bgcolor(inQ4 ? colorQ4 : na)
+
+// --- Asian Range Tracking ---
+var float asianHigh = na
+var float asianLow = na
+var int asianStartIdx = na
+
+isQ1Start = inQ1 and (na(inQ1[1]) or not inQ1[1])
+
+if isQ1Start
+    asianHigh := high
+    asianLow := low
+    asianStartIdx := bar_index
+else if inQ1
+    asianHigh := math.max(asianHigh, high)
+    asianLow := math.min(asianLow, low)
+
+asianMidpoint = (asianHigh + asianLow) / 2
+
+// Plotting Asian Levels
+plot(inQ1 or inQ2 or inQ3 or inQ4 ? asianHigh : na, "Asian High", color = color.blue, style = plot.style_linebr)
+plot(inQ1 or inQ2 or inQ3 or inQ4 ? asianLow : na, "Asian Low", color = color.blue, style = plot.style_linebr)
+plot(inQ1 or inQ2 or inQ3 or inQ4 ? asianMidpoint : na, "Asian Midpoint", color = color.gray, style = plot.style_linebr)
+
+// --- Liquidity Sweep Detection ---
+var bool highSwept = false
+var bool lowSwept = false
+
+// Detect sweeps after Asian session but before 09:00 EAT
+// Also can happen during Asian session but usually relevant after high/low is established
+// The rules say "Wait for the Asian high or low to be taken out by price action."
+// "If the Asian high/low is purged before 9:00 AM, target the exact 9:00 AM EAT candle."
+
+isBeforeTrigger = not na(time("D", "0800-0900:1234567", timezone = timezoneInput))
+
+if isBeforeTrigger
+    if high > asianHigh
+        highSwept := true
+    if low < asianLow
+        lowSwept := true
+
+// Reset sweep flags at the start of Asian session
+if isQ1Start
+    highSwept := false
+    lowSwept := false
+
+// --- 09:00 EAT Trigger Candle ---
+bool isTriggerCandle = not na(time("D", triggerTime, timezone = timezoneInput))
+var float triggerHigh = na
+var float triggerLow = na
+
+if isTriggerCandle
+    triggerHigh := high
+    triggerLow := low
+
+// Draw box for trigger candle
+if isTriggerCandle
+    box.new(bar_index, triggerHigh, bar_index, triggerLow, border_color = color.yellow, bgcolor = color.new(color.yellow, 80))
+
+// --- Signal Generation ---
+bool isTriggerClose = isTriggerCandle[1] and not isTriggerCandle
+bool shortSignalTrigger = false
+bool longSignalTrigger = false
+var float slLevel = na
+var float tp1Level = na
+var float tp2Level = na
+
+if isTriggerClose
+    if highSwept and not lowSwept // Only high swept, look for sell
+        shortSignalTrigger := true
+        slLevel := triggerHigh
+        tp1Level := asianMidpoint
+        tp2Level := asianLow
+        label.new(bar_index, high, "SELL\nSL: " + str.tostring(slLevel) + "\nTP1: " + str.tostring(tp1Level), color = color.red, textcolor = color.white, style = label.style_label_down)
+    else if lowSwept and not highSwept // Only low swept, look for buy
+        longSignalTrigger := true
+        slLevel := triggerLow
+        tp1Level := asianMidpoint
+        tp2Level := asianHigh
+        label.new(bar_index, low, "BUY\nSL: " + str.tostring(slLevel) + "\nTP1: " + str.tostring(tp1Level), color = color.green, textcolor = color.white, style = label.style_label_up)
+    else if highSwept and lowSwept // Both swept
+        if close < asianMidpoint
+            shortSignalTrigger := true
+            slLevel := triggerHigh
+            tp1Level := asianMidpoint
+            tp2Level := asianLow
+            label.new(bar_index, high, "SELL (Both Swept)\nSL: " + str.tostring(slLevel), color = color.red, textcolor = color.white, style = label.style_label_down)
+        else
+            longSignalTrigger := true
+            slLevel := triggerLow
+            tp1Level := asianMidpoint
+            tp2Level := asianHigh
+            label.new(bar_index, low, "BUY (Both Swept)\nSL: " + str.tostring(slLevel), color = color.green, textcolor = color.white, style = label.style_label_up)
+
+// --- Dashboard ---
+var table board = table.new(position.top_right, 2, 7, bgcolor = color.new(color.black, 70), border_width = 1, border_color = color.gray)
+
+if barstate.islast
+    table.cell(board, 0, 0, "Big Boss Dashboard", text_color = color.white, text_size = size.small)
+    table.merge_cells(board, 0, 0, 1, 0)
+
+    table.cell(board, 0, 1, "Session Status", text_color = color.white, text_size = size.small)
+    currSession = inQ1 ? "Asian (Q1)" : inQ2 ? "London (Q2)" : inQ3 ? "NY (Q3)" : inQ4 ? "PM (Q4)" : "Inter-Session"
+    table.cell(board, 1, 1, currSession, text_color = color.yellow, text_size = size.small)
+
+    table.cell(board, 0, 2, "Asian High", text_color = color.white, text_size = size.small)
+    table.cell(board, 1, 2, str.tostring(asianHigh), text_color = color.blue, text_size = size.small)
+
+    table.cell(board, 0, 3, "Asian Low", text_color = color.white, text_size = size.small)
+    table.cell(board, 1, 3, str.tostring(asianLow), text_color = color.blue, text_size = size.small)
+
+    table.cell(board, 0, 4, "Asian Mid", text_color = color.white, text_size = size.small)
+    table.cell(board, 1, 4, str.tostring(asianMidpoint), text_color = color.gray, text_size = size.small)
+
+    table.cell(board, 0, 5, "High Swept", text_color = color.white, text_size = size.small)
+    table.cell(board, 1, 5, highSwept ? "YES" : "NO", text_color = highSwept ? color.red : color.green, text_size = size.small)
+
+    table.cell(board, 0, 6, "Low Swept", text_color = color.white, text_size = size.small)
+    table.cell(board, 1, 6, lowSwept ? "YES" : "NO", text_color = lowSwept ? color.red : color.green, text_size = size.small)
+
+// Alerts
+alertcondition(shortSignalTrigger, "Big Boss Sell Signal", "Asian High swept, 09:00 candle closed. Sell entry.")
+alertcondition(longSignalTrigger, "Big Boss Buy Signal", "Asian Low swept, 09:00 candle closed. Buy entry.")
