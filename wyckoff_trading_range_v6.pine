@@ -32,8 +32,8 @@ has_pivot_high = not na(pivot_high_price)
 has_pivot_low = not na(pivot_low_price)
 
 // Debug pivots
-plotshape(show_pivots and has_pivot_high, "Pivot High", shape.triangle_down, location.abovebar, color.red, size=size.tiny, offset=-pivot_len)
-plotshape(show_pivots and has_pivot_low, "Pivot Low", shape.triangle_up, location.belowbar, color.green, size=size.tiny, offset=-pivot_len)
+plotshape(show_pivots and has_pivot_high, "Pivot High", shape.triangledown, location.abovebar, color.red, size=size.tiny, offset=-pivot_len)
+plotshape(show_pivots and has_pivot_low, "Pivot Low", shape.triangleup, location.belowbar, color.green, size=size.tiny, offset=-pivot_len)
 
 // --- State Variables ---
 var string structure_type = "None" // "Accumulation" or "Distribution"
