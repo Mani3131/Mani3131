@@ -19,10 +19,15 @@ color colorQ3 = input.color(color.new(color.green, 90), "NY (Q3) Color")
 color colorQ4 = input.color(color.new(color.orange, 90), "PM (Q4) Color")
 
 // --- Session Logic ---
-bool inQ1 = not na(time("D", asianSessionTime, timezone = timezoneInput))
-bool inQ2 = not na(time("D", londonSessionTime, timezone = timezoneInput))
-bool inQ3 = not na(time("D", nySessionTime, timezone = timezoneInput))
-bool inQ4 = not na(time("D", pmSessionTime, timezone = timezoneInput))
+tQ1 = time("D", asianSessionTime, timezone = timezoneInput)
+tQ2 = time("D", londonSessionTime, timezone = timezoneInput)
+tQ3 = time("D", nySessionTime, timezone = timezoneInput)
+tQ4 = time("D", pmSessionTime, timezone = timezoneInput)
+
+bool inQ1 = not na(tQ1)
+bool inQ2 = not na(tQ2)
+bool inQ3 = not na(tQ3)
+bool inQ4 = not na(tQ4)
 
 // Background Highlighting
 bgcolor(inQ1 ? colorQ1 : na)
@@ -35,7 +40,7 @@ var float asianHigh = na
 var float asianLow = na
 var int asianStartIdx = na
 
-isQ1Start = inQ1 and (na(inQ1[1]) or not inQ1[1])
+isQ1Start = inQ1 and na(tQ1[1])
 
 if isQ1Start
     asianHigh := high
