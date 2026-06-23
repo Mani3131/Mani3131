@@ -1,0 +1,288 @@
+//@version=6
+indicator("Mani3131 Super Indicator [V6]", overlay = true, max_labels_count = 500, max_boxes_count = 500, max_lines_count = 500)
+
+// --- S&D Logic Inputs ---
+grp_sd = "Supply & Demand Engine"
+sd_show_zones = input.bool(true, "Show S&D Zones", group = grp_sd)
+sd_displacement_thresh = input.float(1.5, "Displacement Threshold (ATR)", minval = 0.5, step = 0.1, group = grp_sd)
+sd_atr_len = input.int(14, "ATR Lookback", minval = 1, group = grp_sd)
+sd_zone_style = input.string("Box", "Zone Style", options = ["Box", "Extended"], group = grp_sd)
+sd_show_breakers = input.bool(true, "Show Breaker Zones", group = grp_sd)
+sd_color_demand = input.color(color.rgb(0, 255, 127, 85), "Demand Color", group = grp_sd)
+sd_color_supply = input.color(color.rgb(255, 69, 0, 85), "Supply Color", group = grp_sd)
+sd_color_breaker = input.color(color.rgb(128, 128, 128, 85), "Breaker Color", group = grp_sd)
+
+// --- S&D Calculations ---
+float sd_atr = ta.atr(sd_atr_len)
+
+type SD_Zone
+    float top
+    float bottom
+    int start_bar
+    bool is_demand
+    bool is_active = true
+    string zone_type = "SD"
+    box display_box
+
+var SD_Zone[] sd_zones = array.new<SD_Zone>()
+
+// Market Structure Detection for S&D context
+var float last_ph = na
+var float last_pl = na
+ph = ta.pivothigh(3, 3)
+pl = ta.pivotlow(3, 3)
+
+if not na(ph)
+    last_ph := ph
+if not na(pl)
+    last_pl := pl
+
+// BOS/CHoCH Detection
+var string ms_bias = "Neutral"
+if close > last_ph and not na(last_ph)
+    label.new(bar_index, high, "BOS", color = color.new(color.green, 100), textcolor = color.green, style = label.style_label_down, size = size.small)
+    ms_bias := "Bullish"
+    last_ph := na // Reset after break
+
+if close < last_pl and not na(last_pl)
+    label.new(bar_index, low, "BOS", color = color.new(color.red, 100), textcolor = color.red, style = label.style_label_up, size = size.small)
+    ms_bias := "Bearish"
+    last_pl := na // Reset after break
+
+// Displacement detection for zone creation
+is_bull_disp = (close - open) > sd_atr * sd_displacement_thresh and close > high[1]
+is_bear_disp = (open - close) > sd_atr * sd_displacement_thresh and close < low[1]
+
+if sd_show_zones
+    if is_bull_disp
+        float z_top = high[1]
+        float z_bot = low[1]
+        // Check for base candle
+        for i = 1 to 3
+            if math.abs(close[i] - open[i]) < sd_atr[i] * 0.7
+                z_top := high[i]
+                z_bot := low[i]
+                break
+
+        new_zone = SD_Zone.new(top = z_top, bottom = z_bot, start_bar = bar_index[1], is_demand = true)
+        new_zone.display_box := box.new(bar_index[1], z_top, bar_index, z_bot, border_color = na, bgcolor = sd_color_demand, extend = sd_zone_style == "Extended" ? extend.right : extend.none)
+        sd_zones.push(new_zone)
+        if sd_zones.size() > 50
+            box.delete(sd_zones.remove(0).display_box)
+
+    if is_bear_disp
+        float z_top = high[1]
+        float z_bot = low[1]
+        for i = 1 to 3
+            if math.abs(close[i] - open[i]) < sd_atr[i] * 0.7
+                z_top := high[i]
+                z_bot := low[i]
+                break
+
+        new_zone = SD_Zone.new(top = z_top, bottom = z_bot, start_bar = bar_index[1], is_demand = false)
+        new_zone.display_box := box.new(bar_index[1], z_top, bar_index, z_bot, border_color = na, bgcolor = sd_color_supply, extend = sd_zone_style == "Extended" ? extend.right : extend.none)
+        sd_zones.push(new_zone)
+        if sd_zones.size() > 50
+            box.delete(sd_zones.remove(0).display_box)
+
+// Zone Management & Breakout detection
+if sd_zones.size() > 0
+    for i = 0 to sd_zones.size() - 1
+        z = sd_zones.get(i)
+        if z.is_active
+            if sd_zone_style == "Box"
+                z.display_box.set_right(bar_index)
+
+            bool broken = z.is_demand ? close < z.bottom : close > z.top
+            if broken
+                z.is_active := false
+                if sd_show_breakers
+                    z.zone_type := "Breaker"
+                    z.display_box.set_bgcolor(sd_color_breaker)
+                if sd_zone_style == "Extended"
+                    z.display_box.set_extend(extend.none)
+                    z.display_box.set_right(bar_index)
+
+// --- Big Boss Algorithm Logic ---
+grp_bb = "Big Boss Algorithm"
+bb_tz = input.string("UTC+3", "Timezone", group = grp_bb)
+bb_target_col = input.color(color.rgb(255, 215, 0), "Bounce Point Color", group = grp_bb)
+
+bb_yr = year(time, bb_tz)
+bb_mt = month(time, bb_tz)
+bb_dy = dayofmonth(time, bb_tz)
+
+// Daily Code: Sum of last digits of M, D, Y
+bb_dc_m = bb_mt % 10
+bb_dc_d = bb_dy % 10
+bb_dc_y = bb_yr % 10
+bb_daily_code = bb_dc_m + bb_dc_d + bb_dc_y
+
+// Fetch Previous 4H candle data
+[bb_ph4, bb_pl4, bb_pc4] = request.security(syminfo.tickerid, "240", [high[1], low[1], close[1]], lookahead = barmerge.lookahead_off)
+
+bb_range4h = not na(bb_ph4) and not na(bb_pl4) ? bb_ph4 - bb_pl4 : na
+// Estimated Range (ER) = (Month / Day) * 4H_Range
+bb_er = not na(bb_range4h) ? (float(bb_mt) / float(bb_dy)) * bb_range4h : na
+// Bounce Point = Prev 4H Close - ER
+bb_bounce_point = not na(bb_pc4) and not na(bb_er) ? bb_pc4 - bb_er : na
+
+// Plotting Big Boss Target
+var line bb_target_line = line.new(na, na, na, na, color = bb_target_col, width = 2, style = line.style_dashed)
+var label bb_target_lbl = label.new(na, na, "", style = label.style_label_left, size = size.small, textcolor = color.white, color = bb_target_col)
+
+if barstate.islast and not na(bb_bounce_point)
+    line.set_xy1(bb_target_line, bar_index - 20, bb_bounce_point)
+    line.set_xy2(bb_target_line, bar_index + 10, bb_bounce_point)
+    label.set_xy(bb_target_lbl, bar_index + 10, bb_bounce_point)
+    label.set_text(bb_target_lbl, "Bounce Point: " + str.tostring(bb_bounce_point, format.mintick))
+
+// --- Box Theory Logic ---
+grp_bx = "Box Theory"
+bx_box_col = input.color(color.rgb(173, 216, 230, 90), "Daily Box Color", group = grp_bx)
+bx_mid_col = input.color(color.rgb(128, 128, 128, 50), "Median Color", group = grp_bx)
+
+[bx_pdh, bx_pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+bx_median = (bx_pdh + bx_pdl) / 2
+
+var box bx_daily_box = box.new(na, na, na, na, border_color = na, bgcolor = bx_box_col)
+var line bx_median_line = line.new(na, na, na, na, color = bx_mid_col, style = line.style_dashed)
+
+bx_is_new_day = ta.change(time("D")) != 0
+if bx_is_new_day
+    bx_daily_box.set_lefttop(bar_index, bx_pdh)
+    bx_daily_box.set_rightbottom(bar_index, bx_pdl)
+    bx_median_line.set_xy1(bar_index, bx_median)
+    bx_median_line.set_xy2(bar_index, bx_median)
+else
+    bx_daily_box.set_right(bar_index)
+    bx_median_line.set_x2(bar_index)
+
+// John Wick (Pin Bar) Detection near Box extremes
+bx_range_size = bx_pdh - bx_pdl
+bx_prox = bx_range_size * 0.05
+bx_body = math.abs(close - open)
+bx_upper_w = high - math.max(open, close)
+bx_lower_w = math.min(open, close) - low
+bx_is_jwick_bear = bx_upper_w >= bx_body * 2 and high >= (bx_pdh - bx_prox)
+bx_is_jwick_bull = bx_lower_w >= bx_body * 2 and low <= (bx_pdl + bx_prox)
+
+plotshape(bx_is_jwick_bear, "John Wick Bearish", shape.labeldown, location.abovebar, color.rgb(255, 0, 0), text = "JW", textcolor = color.white, size = size.tiny)
+plotshape(bx_is_jwick_bull, "John Wick Bullish", shape.labelup, location.belowbar, color.rgb(0, 255, 0), text = "JW", textcolor = color.white, size = size.tiny)
+
+// --- TradeAxis Draw On Liquidity (DOL) ---
+grp_dol = "TradeAxis DOL"
+dol_show = input.bool(true, "Show DOL Target", group = grp_dol)
+
+// Fetch HTF Levels for DOL
+[bx_pwh, bx_pwl] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[bx_pmh, bx_pml] = request.security(syminfo.tickerid, "M", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+
+// Detect Equal Highs/Lows (EQH/EQL)
+f_is_equal(p1, p2) =>
+    diff = math.abs(p1 - p2)
+    threshold = p1 * 0.0005 // 0.05% threshold
+    diff <= threshold
+
+var float eqh_level = na
+var float eql_level = na
+
+ph_5 = ta.pivothigh(5, 5)
+pl_5 = ta.pivotlow(5, 5)
+
+if not na(ph_5)
+    if f_is_equal(ph_5, last_ph)
+        eqh_level := ph_5
+if not na(pl_5)
+    if f_is_equal(pl_5, last_pl)
+        eql_level := pl_5
+
+// Identify Draw On Liquidity (DOL)
+float dol_target = na
+string dol_label = "None"
+
+if ms_bias == "Bullish"
+    if not na(eqh_level) and eqh_level > close
+        dol_target := eqh_level
+        dol_label := "EQH"
+    else if bx_pdh > close
+        dol_target := bx_pdh
+        dol_label := "PDH"
+    else if bx_pwh > close
+        dol_target := bx_pwh
+        dol_label := "PWH"
+    else if bx_pmh > close
+        dol_target := bx_pmh
+        dol_label := "PMH"
+else if ms_bias == "Bearish"
+    if not na(eql_level) and eql_level < close
+        dol_target := eql_level
+        dol_label := "EQL"
+    else if bx_pdl < close
+        dol_target := bx_pdl
+        dol_label := "PDL"
+    else if bx_pwl < close
+        dol_target := bx_pwl
+        dol_label := "PWL"
+    else if bx_pml < close
+        dol_target := bx_pml
+        dol_label := "PML"
+
+var line dol_line = line.new(na, na, na, na, color = color.rgb(0, 191, 255), width = 2, style = line.style_arrow_right)
+var label dol_lbl = label.new(na, na, "", style = label.style_label_left, size = size.small, textcolor = color.white, color = color.rgb(0, 191, 255))
+
+if dol_show and not na(dol_target)
+    line.set_xy1(dol_line, bar_index, dol_target)
+    line.set_xy2(dol_line, bar_index + 15, dol_target)
+    label.set_xy(dol_lbl, bar_index + 15, dol_target)
+    label.set_text(dol_lbl, "DOL: " + dol_label)
+
+// --- Unified Dashboard ---
+grp_dash = "Unified Dashboard"
+dash_show = input.bool(true, "Show Dashboard", group = grp_dash)
+dash_pos = input.string("Top Right", "Position", options = ["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group = grp_dash)
+
+var table dash = table.new(dash_pos == "Top Right" ? position.top_right : dash_pos == "Bottom Right" ? position.bottom_right : dash_pos == "Top Left" ? position.top_left : position.bottom_left, 2, 12, bgcolor = color.rgb(0, 0, 0, 70), border_width = 1, border_color = color.gray)
+
+if dash_show and barstate.islast
+    // Header
+    table.cell(dash, 0, 0, "Metric", bgcolor = color.rgb(128, 128, 128, 50), text_color = color.white)
+    table.cell(dash, 1, 0, "Value", bgcolor = color.rgb(128, 128, 128, 50), text_color = color.white)
+
+    // Bias
+    table.cell(dash, 0, 1, "Trend Bias", text_halign = text.align_left, text_color = color.white)
+    bias_color = ms_bias == "Bullish" ? color.green : ms_bias == "Bearish" ? color.red : color.gray
+    table.cell(dash, 1, 1, ms_bias, bgcolor = bias_color, text_color = color.white)
+
+    // Big Boss
+    table.cell(dash, 0, 2, "Daily Code", text_halign = text.align_left, text_color = color.white)
+    table.cell(dash, 1, 2, str.tostring(bb_daily_code), text_color = color.yellow)
+
+    table.cell(dash, 0, 3, "ER (Estimated Range)", text_halign = text.align_left, text_color = color.white)
+    table.cell(dash, 1, 3, str.tostring(bb_er, format.mintick), text_color = color.orange)
+
+    table.cell(dash, 0, 4, "Bounce Point", text_halign = text.align_left, text_color = color.white)
+    table.cell(dash, 1, 4, str.tostring(bb_bounce_point, format.mintick), text_color = color.rgb(0, 255, 127))
+
+    // Box
+    table.cell(dash, 0, 5, "Prev Day High", text_halign = text.align_left, text_color = color.white)
+    table.cell(dash, 1, 5, str.tostring(bx_pdh, format.mintick), text_color = color.white)
+
+    table.cell(dash, 0, 6, "Prev Day Low", text_halign = text.align_left, text_color = color.white)
+    table.cell(dash, 1, 6, str.tostring(bx_pdl, format.mintick), text_color = color.white)
+
+    // DOL
+    table.cell(dash, 0, 7, "DOL Target", text_halign = text.align_left, text_color = color.white)
+    table.cell(dash, 1, 7, dol_label, text_color = color.rgb(0, 191, 255))
+
+    table.cell(dash, 0, 8, "Target Price", text_halign = text.align_left, text_color = color.white)
+    table.cell(dash, 1, 8, str.tostring(dol_target, format.mintick), text_color = color.white)
+
+    // S&D Info
+    sd_active_c = 0
+    if sd_zones.size() > 0
+        for i = 0 to sd_zones.size() - 1
+            if sd_zones.get(i).is_active
+                sd_active_c += 1
+    table.cell(dash, 0, 9, "Active S&D Zones", text_halign = text.align_left, text_color = color.white)
+    table.cell(dash, 1, 9, str.tostring(sd_active_c), text_color = color.white)
