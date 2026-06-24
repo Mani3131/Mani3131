@@ -1,0 +1,318 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Elliott Wave Pro v6", "EW Pro v6", overlay = true, max_lines_count = 500, max_labels_count = 500)
+
+// --- Inputs ---
+grp_pivot = "Pivot Settings"
+pivot_lookback = input.int(5, "Pivot Lookback (Left/Right)", minval = 2, group = grp_pivot)
+
+grp_fib = "Fibonacci Targets"
+wave2_min = input.float(0.5, "Wave 2 Min Retrace", step = 0.1, group = grp_fib)
+wave2_max = input.float(0.618, "Wave 2 Max Retrace", step = 0.1, group = grp_fib)
+wave4_target = input.float(0.382, "Wave 4 Target Retrace", step = 0.1, group = grp_fib)
+wave3_ext = input.float(1.618, "Wave 3 Target Extension", step = 0.1, group = grp_fib)
+wave5_ext1 = input.float(1.0, "Wave 5 Target Ext (W1)", step = 0.1, group = grp_fib)
+wave5_ext2 = input.float(0.618, "Wave 5 Target Ext (W1-3)", step = 0.1, group = grp_fib)
+
+grp_conf = "Confluence Indicators"
+rsi_len = input.int(14, "RSI Length", group = grp_conf)
+macd_fast = input.int(12, "MACD Fast", group = grp_conf)
+macd_slow = input.int(26, "MACD Slow", group = grp_conf)
+macd_sig = input.int(9, "MACD Signal", group = grp_conf)
+
+grp_vis = "Visualization"
+up_col = input.color(color.green, "Bullish Wave Color", group = grp_vis)
+dn_col = input.color(color.red, "Bearish Wave Color", group = grp_vis)
+show_labels = input.bool(true, "Show Wave Labels", group = grp_vis)
+show_dashboard = input.bool(true, "Show Status Dashboard", group = grp_vis)
+
+// --- Types ---
+type Pivot
+    int   index
+    float price
+    bool  is_high
+
+type WaveSequence
+    Pivot p0
+    Pivot p1
+    Pivot p2
+    Pivot p3
+    Pivot p4
+    Pivot p5
+    bool  is_valid = false
+    string status = ""
+    string confluence = "None"
+
+type FibZone
+    float top
+    float bottom
+
+// --- Rule Validations ---
+
+// Rule 1: Wave 2 Limit
+validate_rule1(WaveSequence seq, bool is_bull) =>
+    valid = true
+    if not na(seq.p0) and not na(seq.p1) and not na(seq.p2)
+        if is_bull
+            valid := seq.p2.price > seq.p0.price
+        else
+            valid := seq.p2.price < seq.p0.price
+    valid
+
+// Rule 2: Wave 3 Shortness Law
+validate_rule2(WaveSequence seq) =>
+    valid = true
+    if not na(seq.p0) and not na(seq.p1) and not na(seq.p2) and not na(seq.p3) and not na(seq.p4) and not na(seq.p5)
+        w1_len = math.abs(seq.p1.price - seq.p0.price)
+        w3_len = math.abs(seq.p3.price - seq.p2.price)
+        w5_len = math.abs(seq.p5.price - seq.p4.price)
+        valid := not (w3_len < w1_len and w3_len < w5_len)
+    valid
+
+// Rule 3: Wave 3 Territory Law
+validate_rule3(WaveSequence seq, bool is_bull) =>
+    valid = true
+    if not na(seq.p1) and not na(seq.p3)
+        if is_bull
+            valid := seq.p3.price > seq.p1.price
+        else
+            valid := seq.p3.price < seq.p1.price
+    valid
+
+// Rule 4: Overlap Rule
+validate_rule4(WaveSequence seq, bool is_bull) =>
+    valid = true
+    if not na(seq.p1) and not na(seq.p4)
+        if is_bull
+            valid := seq.p4.price > seq.p1.price
+        else
+            valid := seq.p4.price < seq.p1.price
+    valid
+
+// --- Fibonacci Calculations ---
+
+calc_retracement(float start, float end, float level) =>
+    start + (end - start) * (1.0 - level)
+
+calc_extension(float start, float end, float anchor, float level) =>
+    anchor + (end - start) * level
+
+get_wave2_zone(WaveSequence seq) =>
+    FibZone.new(calc_retracement(seq.p0.price, seq.p1.price, wave2_min), calc_retracement(seq.p0.price, seq.p1.price, wave2_max))
+
+get_wave4_zone(WaveSequence seq) =>
+    float target = calc_retracement(seq.p2.price, seq.p3.price, wave4_target)
+    FibZone.new(target, target)
+
+get_wave3_target(WaveSequence seq) =>
+    calc_extension(seq.p0.price, seq.p1.price, seq.p2.price, wave3_ext)
+
+get_wave5_targets(WaveSequence seq) =>
+    t1 = calc_extension(seq.p0.price, seq.p1.price, seq.p4.price, wave5_ext1)
+    t2 = calc_extension(seq.p0.price, seq.p3.price, seq.p4.price, wave5_ext2)
+    FibZone.new(t1, t2)
+
+// --- Visualization Engine ---
+
+var line[] wave_lines = array.new<line>()
+var label[] wave_labels = array.new<label>()
+
+draw_wave(Pivot p1, Pivot p2, color col) =>
+    if not na(p1) and not na(p2)
+        array.push(wave_lines, line.new(p1.index, p1.price, p2.index, p2.price, xloc.bar_index, color = col, width = 2))
+
+clear_waves() =>
+    if array.size(wave_lines) > 0
+        for i = 0 to array.size(wave_lines) - 1
+            line.delete(array.get(wave_lines, i))
+        array.clear(wave_lines)
+
+draw_label(Pivot p, string txt, color col, bool is_high) =>
+    if not na(p)
+        style = is_high ? label.style_label_down : label.style_label_up
+        array.push(wave_labels, label.new(p.index, p.price, txt, xloc.bar_index, color = col, textcolor = color.white, style = style))
+
+clear_labels() =>
+    if array.size(wave_labels) > 0
+        for i = 0 to array.size(wave_labels) - 1
+            label.delete(array.get(wave_labels, i))
+        array.clear(wave_labels)
+
+var table status_tbl = table.new(position.top_right, 2, 9, bgcolor = color.new(color.black, 50), border_color = color.gray, border_width = 1)
+
+update_dashboard(WaveSequence seq, bool is_bull) =>
+    if show_dashboard
+        col = is_bull ? up_col : dn_col
+        v1 = validate_rule1(seq, is_bull)
+        v2 = validate_rule2(seq)
+        v3 = validate_rule3(seq, is_bull)
+        v4 = validate_rule4(seq, is_bull)
+
+        table.cell(status_tbl, 0, 0, "Wave Pattern", text_color = color.white)
+        table.cell(status_tbl, 1, 0, is_bull ? "Bullish 1-5" : "Bearish 1-5", text_color = col)
+
+        table.cell(status_tbl, 0, 1, "Rule 1: Wave 2 Limit", text_color = color.white)
+        table.cell(status_tbl, 1, 1, v1 ? "Passed" : "Failed", text_color = v1 ? color.green : color.red)
+
+        table.cell(status_tbl, 0, 2, "Rule 2: Wave 3 Length", text_color = color.white)
+        table.cell(status_tbl, 1, 2, v2 ? "Passed" : "Failed", text_color = v2 ? color.green : color.red)
+
+        table.cell(status_tbl, 0, 3, "Rule 3: W3 Territory", text_color = color.white)
+        table.cell(status_tbl, 1, 3, v3 ? "Passed" : "Failed", text_color = v3 ? color.green : color.red)
+
+        table.cell(status_tbl, 0, 4, "Rule 4: Overlap", text_color = color.white)
+        table.cell(status_tbl, 1, 4, v4 ? "Passed" : "Failed", text_color = v4 ? color.green : color.red)
+
+        table.cell(status_tbl, 0, 5, "Rule 5: Subdivision", text_color = color.white)
+        table.cell(status_tbl, 1, 5, "Check LTF", text_color = color.yellow)
+
+        table.cell(status_tbl, 0, 6, "Corrective Type", text_color = color.white)
+        table.cell(status_tbl, 1, 6, seq.status == "" ? "None" : seq.status, text_color = color.gray)
+
+        table.cell(status_tbl, 0, 7, "Confluence", text_color = color.white)
+        table.cell(status_tbl, 1, 7, seq.confluence, text_color = seq.confluence == "None" ? color.gray : color.rgb(255, 165, 0))
+
+        // Fibonacci Targets
+        w3_target = get_wave3_target(seq)
+        table.cell(status_tbl, 0, 8, "W3 Target (1.618)", text_color = color.white)
+        table.cell(status_tbl, 1, 8, str.tostring(w3_target, format.mintick), text_color = color.white)
+
+// --- Corrective Waves (A-B-C) ---
+type CorrectiveSequence
+    Pivot p0 // Wave 5 end
+    Pivot pa
+    Pivot pb
+    Pivot pc
+    string pattern // "Zigzag", "Flat", "Triangle"
+
+detect_corrective(Pivot p0, Pivot pa, Pivot pb, Pivot pc, bool is_bull) =>
+    string res = "Unknown"
+    if not na(p0) and not na(pa) and not na(pb) and not na(pc)
+        retrace_b = math.abs(pb.price - pa.price) / math.abs(pa.price - p0.price)
+        if retrace_b < 0.618
+            res := "Zigzag"
+        else if retrace_b >= 0.9 and retrace_b <= 1.05
+            res := "Regular Flat"
+        else if retrace_b > 1.05
+            res := "Expanded Flat"
+    res
+
+// --- Candlestick Patterns ---
+is_engulfing(bool bull) =>
+    if bull
+        close > open[1] and open < close[1] and close > open and open[1] > close[1]
+    else
+        close < open[1] and open > close[1] and close < open and open[1] < close[1]
+
+is_pinbar(bool bull) =>
+    body = math.abs(close - open)
+    bar_hl_dist = high - low
+    if bull
+        low < math.min(open, close) - body * 2 and (bar_hl_dist > 0 ? (math.min(open, close) - low) / bar_hl_dist > 0.6 : false)
+    else
+        high > math.max(open, close) + body * 2 and (bar_hl_dist > 0 ? (high - math.max(open, close)) / bar_hl_dist > 0.6 : false)
+
+// --- Confluence Logic ---
+
+rsi_val = ta.rsi(close, rsi_len)
+[macd_line, signal_line, _] = ta.macd(close, macd_fast, macd_slow, macd_sig)
+
+check_divergence(Pivot p_old, Pivot p_new, bool is_high) =>
+    bool div = false
+    if not na(p_old) and not na(p_new)
+        old_rsi = rsi_val[bar_index - p_old.index]
+        new_rsi = rsi_val[bar_index - p_new.index]
+        if is_high
+            div := p_new.price > p_old.price and new_rsi < old_rsi
+        else
+            div := p_new.price < p_old.price and new_rsi > old_rsi
+    div
+
+// --- Main Execution ---
+
+ph = ta.pivothigh(pivot_lookback, pivot_lookback)
+pl = ta.pivotlow(pivot_lookback, pivot_lookback)
+
+var Pivot[] pivots = array.new<Pivot>()
+
+if not na(ph)
+    pivots.unshift(Pivot.new(bar_index - pivot_lookback, ph, true))
+    if pivots.size() > 50
+        pivots.pop()
+
+if not na(pl)
+    pivots.unshift(Pivot.new(bar_index - pivot_lookback, pl, false))
+    if pivots.size() > 50
+        pivots.pop()
+
+if (not na(ph) or not na(pl)) and pivots.size() >= 6
+    // We try to find the best motive wave in the last few pivots
+    // and then see if there's an ABC correction following it.
+
+    found_any = false
+    max_idx = math.min(3, pivots.size() - 6)
+    for i = 0 to max_idx
+        if found_any
+            break
+
+        p0 = pivots.get(i + 5), p1 = pivots.get(i + 4), p2 = pivots.get(i + 3), p3 = pivots.get(i + 2), p4 = pivots.get(i + 1), p5 = pivots.get(i)
+        is_alt = p1.is_high != p0.is_high and p2.is_high != p1.is_high and p3.is_high != p2.is_high and p4.is_high != p3.is_high and p5.is_high != p4.is_high
+
+        if is_alt
+            is_bull = not p0.is_high
+            seq = WaveSequence.new(p0, p1, p2, p3, p4, p5)
+
+            v1 = validate_rule1(seq, is_bull)
+            v2 = validate_rule2(seq)
+            v3 = validate_rule3(seq, is_bull)
+            v4 = validate_rule4(seq, is_bull)
+
+            if v1 and v2 and v3 and v4
+                found_any := true
+                clear_waves(), clear_labels()
+                col = is_bull ? up_col : dn_col
+
+                // Draw Motive
+                draw_wave(seq.p0, seq.p1, col)
+                draw_wave(seq.p1, seq.p2, col)
+                draw_wave(seq.p2, seq.p3, col)
+                draw_wave(seq.p3, seq.p4, col)
+                draw_wave(seq.p4, seq.p5, col)
+
+                if show_labels
+                    draw_label(seq.p1, "1", col, is_bull)
+                    draw_label(seq.p2, "2", col, not is_bull)
+                    draw_label(seq.p3, "3", col, is_bull)
+                    draw_label(seq.p4, "4", col, not is_bull)
+                    draw_label(seq.p5, "5", col, is_bull)
+
+                // Confluence at Wave 5
+                div5 = check_divergence(seq.p3, seq.p5, is_bull)
+                offset5 = bar_index - seq.p5.index
+                cand5 = is_engulfing(not is_bull)[offset5] or is_pinbar(not is_bull)[offset5]
+                if div5 or cand5
+                    seq.confluence := "W5: " + (div5 ? "Divergence " : "") + (cand5 ? "Candlestick" : "")
+
+                // Check for Corrective (A-B-C) if we have enough pivots AFTER p5
+                if i >= 3
+                    pa = pivots.get(i - 1), pb = pivots.get(i - 2), pc = pivots.get(i - 3)
+                    pattern = detect_corrective(p5, pa, pb, pc, is_bull)
+                    draw_wave(p5, pa, color.gray)
+                    draw_wave(pa, pb, color.gray)
+                    draw_wave(pb, pc, color.gray)
+                    if show_labels
+                        draw_label(pa, "A", color.gray, not is_bull)
+                        draw_label(pb, "B", color.gray, is_bull)
+                        draw_label(pc, "C", color.gray, not is_bull)
+                    seq.status := pattern
+
+                    // Confluence at Wave C
+                    divC = check_divergence(pa, pc, not is_bull)
+                    offsetC = bar_index - pc.index
+                    candC = is_engulfing(is_bull)[offsetC] or is_pinbar(is_bull)[offsetC]
+                    if divC or candC
+                        seq.confluence += " | WC: " + (divC ? "Divergence " : "") + (candC ? "Candlestick" : "")
+
+                update_dashboard(seq, is_bull)
