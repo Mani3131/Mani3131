@@ -165,11 +165,11 @@ trend_1h = request.security(syminfo.tickerid, "60", calc_trend(3))
 trend_4h = request.security(syminfo.tickerid, "240", calc_trend(3))
 trend_1d = request.security(syminfo.tickerid, "D", calc_trend(3))
 
+// Helper for dashboard coloring
+t_color(t) => t == "BULLISH" ? color.green : t == "BEARISH" ? color.red : color.gray
+
 if barstate.islast
     var table mtf_table = table.new(position.top_right, 2, 6, bgcolor = color.new(color.black, 0), border_width = 1, border_color = color.gray)
-
-    // Header Style
-    t_color(t) => t == "BULLISH" ? color.green : t == "BEARISH" ? color.red : color.gray
 
     table.cell(mtf_table, 0, 0, "15", text_color = color.white, text_size = size.small)
     table.cell(mtf_table, 1, 0, trend_15m, text_color = t_color(trend_15m), text_size = size.small)
