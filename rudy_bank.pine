@@ -1,0 +1,48 @@
+// @version=6
+indicator("Rudy Bank", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// --------------------------------------------------------------------------------
+// 1. Data Retrieval
+// --------------------------------------------------------------------------------
+// Fetching OHLC data from the previous 4-hour candle
+[h4_high, h4_low, h4_close] = request.security(syminfo.tickerid, "240", [high[1], low[1], close[1]], lookahead=barmerge.lookahead_on)
+
+// --------------------------------------------------------------------------------
+// 2. Algorithm Calculations (Bank Engine)
+// --------------------------------------------------------------------------------
+// Date components for current bar
+m = month
+d = dayofmonth
+y = year
+
+// Estimated Price Spread (ER)
+// Formula: (Month / Day) * Range
+// 'range' is a reserved keyword in v6, so we use 'h4_dist'
+h4_dist = h4_high - h4_low
+est_spread = (float(m) / d) * h4_dist
+
+// Predictive Bounce Level
+// Formula: Previous 4H Close - Estimated Range
+bounce_lvl = h4_close - est_spread
+
+// Daily Code (DC)
+// Formula: Last digit of Month + Last digit of Day + Last digit of Year
+dc_val = (m % 10) + (d % 10) + (y % 10)
+
+// --------------------------------------------------------------------------------
+// 3. Visualization & Dashboard
+// --------------------------------------------------------------------------------
+// Plot the predictive level on chart
+plot(bounce_lvl, "Bounce Level", color.new(color.blue, 0), linewidth=2, style=plot.style_linebr)
+
+// On-screen Dashboard
+var table dash = table.new(position.top_right, 2, 3, bgcolor=color.new(color.black, 70), border_color=color.gray, border_width=1)
+if barstate.islast
+    table.cell(dash, 0, 0, "Est. Spread", text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 1, 0, str.tostring(est_spread, format.mintick), text_color=color.yellow, text_halign=text.align_right)
+
+    table.cell(dash, 0, 1, "Bounce Level", text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 1, 1, str.tostring(bounce_lvl, format.mintick), text_color=color.yellow, text_halign=text.align_right)
+
+    table.cell(dash, 0, 2, "Daily Code", text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 1, 2, str.tostring(dc_val), text_color=color.yellow, text_halign=text.align_right)
