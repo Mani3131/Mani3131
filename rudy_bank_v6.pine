@@ -29,7 +29,7 @@ bank_bg_col    = input.color(color.new(color.black, 50), "Dashboard BG Color", g
 
 grp_structure = "Market Structure"
 pivot_lookback = input.int(3, "Pivot Lookback", minval = 1, group = grp_structure)
-structure_col  = input.color(color.magenta, "Structure Line Color", group = grp_structure)
+structure_col  = input.color(color.fuchsia, "Structure Line Color", group = grp_structure)
 
 // --- Bank Engine Algorithm ---
 [h4_high, h4_low, h4_close] = request.security(syminfo.tickerid, "240", [high[1], low[1], close[1]], lookahead = barmerge.lookahead_on)
