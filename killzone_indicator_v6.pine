@@ -100,16 +100,19 @@ q2_active = in_session(q2_time)
 q3_active = in_session(q3_time)
 q4_active = in_session(q4_time)
 
-if show_bb
-    bgcolor(q1_active ? color.new(color.blue, 90) : na)
-    bgcolor(q2_active ? color.new(color.orange, 90) : na)
-    bgcolor(q3_active ? color.new(color.green, 90) : na)
-    bgcolor(q4_active ? color.new(color.gray, 90) : na)
+bgcolor(show_bb and q1_active ? color.new(color.blue, 90) : na)
+bgcolor(show_bb and q2_active ? color.new(color.orange, 90) : na)
+bgcolor(show_bb and q3_active ? color.new(color.green, 90) : na)
+bgcolor(show_bb and q4_active ? color.new(color.gray, 90) : na)
 
 // Triple ORB Resets (Vertical Lines)
-is_orb1 = timeframe.isintraday and ta.change(time("1", "0105-0106:1234567", tz_input)) != 0
-is_orb2 = timeframe.isintraday and ta.change(time("1", "1000-1001:1234567", tz_input)) != 0
-is_orb3 = timeframe.isintraday and ta.change(time("1", "1630-1631:1234567", tz_input)) != 0
+t_orb1 = time("1", "0105-0106:1234567", tz_input)
+t_orb2 = time("1", "1000-1001:1234567", tz_input)
+t_orb3 = time("1", "1630-1631:1234567", tz_input)
+
+is_orb1 = timeframe.isintraday and not na(t_orb1) and na(t_orb1[1])
+is_orb2 = timeframe.isintraday and not na(t_orb2) and na(t_orb2[1])
+is_orb3 = timeframe.isintraday and not na(t_orb3) and na(t_orb3[1])
 
 if show_orb
     if is_orb1
