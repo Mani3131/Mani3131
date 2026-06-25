@@ -1,0 +1,156 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("NitroTrades Candle Range Theory (CRT) H1 - Rudy Bank", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// ==========================================
+// Branding & Inputs
+// ==========================================
+string BRANDING_TEXT = "SERAH WA RUDY BANK\n@JIMNJOGU\n+254111829303\n+254141304980"
+
+grp_gen = "General Settings"
+lookback_h1 = input.int(1, "H1 Lookback", minval = 1, tooltip = "Number of H1 candles to look back for the reference range.", group = grp_gen)
+show_dashboard = input.bool(true, "Show Dashboard", group = grp_gen)
+
+grp_color = "Visual Settings"
+h1_zone_color = input.color(color.new(color.gray, 80), "H1 Zone Color", group = grp_color)
+bull_fvg_color = input.color(color.new(color.green, 70), "Bullish FVG Color", group = grp_color)
+bear_fvg_color = input.color(color.new(color.red, 70), "Bearish FVG Color", group = grp_color)
+signal_label_color = input.color(color.fuchsia, "Signal Label Color", group = grp_color)
+
+// ==========================================
+// H1 Range Logic
+// ==========================================
+// Fetch previous H1 High and Low
+[prev_h1_high, prev_h1_low, prev_h1_time] = request.security(syminfo.tickerid, "60", [high[lookback_h1], low[lookback_h1], time[lookback_h1]], lookahead = barmerge.lookahead_on)
+
+// Detect H1 candle change to reset states if needed
+bool new_h1 = ta.change(prev_h1_time) != 0
+
+// Variables to track state
+var float current_h1_high = na
+var float current_h1_low = na
+var box h1_box = na
+var label h1_label = na
+
+if new_h1 and not na(prev_h1_high)
+    current_h1_high := prev_h1_high
+    current_h1_low := prev_h1_low
+
+    float zone_height = current_h1_high - current_h1_low
+    int points = int(zone_height / syminfo.mintick)
+    float percentage = math.round((zone_height / close) * 10000) / 100
+    string label_text = "H1 Range\n" + str.tostring(points) + " Pts (" + str.tostring(percentage) + "%)"
+
+    if not na(current_h1_high) and not na(current_h1_low)
+        h1_box := box.new(left = bar_index, top = current_h1_high, right = bar_index, bottom = current_h1_low,
+             border_color = color.new(color.gray, 50), bgcolor = h1_zone_color)
+        h1_label := label.new(bar_index, current_h1_high, label_text, style = label.style_label_down, color = color.new(color.black, 100), textcolor = color.gray, size = size.small)
+else
+    if not na(h1_box)
+        box.set_right(h1_box, bar_index)
+        label.set_x(h1_label, bar_index)
+
+// ==========================================
+// Sweep & Reclaim Logic
+// ==========================================
+var bool swept_high = false
+var bool swept_low = false
+var bool reclaimed_high = false
+var bool reclaimed_low = false
+
+// Reset sweep/reclaim on new H1
+if new_h1
+    swept_high := false
+    swept_low := false
+    reclaimed_high := false
+    reclaimed_low := false
+
+// Detect Sweep
+if not swept_high and high > current_h1_high
+    swept_high := true
+
+if not swept_low and low < current_h1_low
+    swept_low := true
+
+// Detect Reclaim (Close back inside range)
+if swept_high and not reclaimed_high and close < current_h1_high
+    reclaimed_high := true
+
+if swept_low and not reclaimed_low and close > current_h1_low
+    reclaimed_low := true
+
+// ==========================================
+// FVG Detection (Post-Reclaim)
+// ==========================================
+var bool bull_signal_fired = false
+var bool bear_signal_fired = false
+
+if new_h1
+    bull_signal_fired := false
+    bear_signal_fired := false
+
+// Bullish FVG: low[0] > high[2]
+bool is_bull_fvg = barstate.isconfirmed and reclaimed_low and not bull_signal_fired and low > high[2] and close > open and (not reclaimed_high)
+// Bearish FVG: high[0] < low[2]
+bool is_bear_fvg = barstate.isconfirmed and reclaimed_high and not bear_signal_fired and high < low[2] and close < open and (not reclaimed_low)
+
+var fvg_boxes = array.new<box>(0)
+
+if is_bull_fvg
+    bull_signal_fired := true
+    box b = box.new(bar_index - 2, low, bar_index, high[2], bgcolor = bull_fvg_color, border_color = color.new(color.green, 50))
+    fvg_boxes.push(b)
+    label.new(bar_index, high, "Bullish CRT Setup\nTarget: " + str.tostring(current_h1_high), color = color.green, textcolor = color.white, style = label.style_label_up)
+    if fvg_boxes.size() > 50
+        box.delete(fvg_boxes.shift())
+
+if is_bear_fvg
+    bear_signal_fired := true
+    box b = box.new(bar_index - 2, high, bar_index, low[2], bgcolor = bear_fvg_color, border_color = color.new(color.red, 50))
+    fvg_boxes.push(b)
+    label.new(bar_index, low, "Bearish CRT Setup\nTarget: " + str.tostring(current_h1_low), color = color.red, textcolor = color.white, style = label.style_label_down)
+    if fvg_boxes.size() > 50
+        box.delete(fvg_boxes.shift())
+
+// ==========================================
+// Dashboard
+// ==========================================
+if show_dashboard and barstate.islast
+    var table dash = table.new(position.top_right, 2, 8, bgcolor = color.rgb(10, 10, 10), border_color = color.gray, border_width = 1)
+
+    table.cell(dash, 0, 0, "CRT H1 MONITOR", text_color = color.white, bgcolor = color.gray)
+    table.cell(dash, 1, 0, "STATUS", text_color = color.white, bgcolor = color.gray)
+
+    table.cell(dash, 0, 1, "H1 High", text_color = color.white)
+    table.cell(dash, 1, 1, str.tostring(current_h1_high), text_color = color.yellow)
+
+    table.cell(dash, 0, 2, "H1 Low", text_color = color.white)
+    table.cell(dash, 1, 2, str.tostring(current_h1_low), text_color = color.yellow)
+
+    table.cell(dash, 0, 3, "High Swept", text_color = color.white)
+    table.cell(dash, 1, 3, swept_high ? "YES" : "NO", bgcolor = swept_high ? color.red : color.gray)
+
+    table.cell(dash, 0, 4, "Low Swept", text_color = color.white)
+    table.cell(dash, 1, 4, swept_low ? "YES" : "NO", bgcolor = swept_low ? color.green : color.gray)
+
+    table.cell(dash, 0, 5, "Reclaim H", text_color = color.white)
+    table.cell(dash, 1, 5, reclaimed_high ? "YES" : "NO", bgcolor = reclaimed_high ? color.fuchsia : color.gray)
+
+    table.cell(dash, 0, 6, "Reclaim L", text_color = color.white)
+    table.cell(dash, 1, 6, reclaimed_low ? "YES" : "NO", bgcolor = reclaimed_low ? color.fuchsia : color.gray)
+
+    table.cell(dash, 0, 7, "BRANDING", text_color = color.white)
+    table.cell(dash, 1, 7, BRANDING_TEXT, text_color = color.rgb(0, 255, 255), text_size = size.small)
+
+// ==========================================
+// Branding Labels (Watermark style)
+// ==========================================
+var label branding_lbl = na
+if barstate.islast
+    label.delete(branding_lbl)
+    branding_lbl := label.new(bar_index, high, BRANDING_TEXT, xloc = xloc.bar_index, yloc = yloc.price,
+         color = color.new(color.black, 100), textcolor = color.new(color.gray, 50), style = label.style_label_center, size = size.large)
+    label.set_x(branding_lbl, bar_index + 10)
+    label.set_y(branding_lbl, hl2)
