@@ -9,10 +9,13 @@ var string TELEGRAM_HANDLE = "@JIMNJOGU"
 var string CONTACT_1 = "+254111829303"
 var string CONTACT_2 = "+254141304980"
 
+// ATR for positioning
+atr_val = ta.atr(14)
+
 // Branding Display
-var label branding_label = label.new(bar_index, low, text = BRAND_TEXT + "\nTelegram: " + TELEGRAM_HANDLE + "\nContacts: " + CONTACT_1 + " / " + CONTACT_2, style = label.style_none, textcolor = color.new(color.gray, 50), size = size.small, text_align = text.align_right)
+var label branding_label = label.new(bar_index, low, text = BRAND_TEXT + "\nTelegram: " + TELEGRAM_HANDLE + "\nContacts: " + CONTACT_1 + " / " + CONTACT_2, style = label.style_none, textcolor = color.new(color.gray, 50), size = size.small, text_halign = text.align_right)
 if barstate.islast
-    label.set_xy(branding_label, bar_index, low - ta.atr(14) * 2)
+    label.set_xy(branding_label, bar_index, low - atr_val * 2)
 
 // Watermark in Footer
 var table footer_table = table.new(position.bottom_right, 1, 1)
@@ -76,7 +79,6 @@ if show_structure
         label.new(last_pl_idx, pl, trend == "BEARISH" ? "LL" : "HL", style = label.style_none, textcolor = color.gray, size = size.tiny)
 
 // --- Supply and Demand Zones ---
-atr_val = ta.atr(14)
 sd_displacement_mult = input.float(1.5, "S&D Displacement Multiplier", minval = 0.1)
 
 is_sd_candidate = math.abs(close - open) > atr_val * sd_displacement_mult
@@ -139,31 +141,34 @@ if barstate.islast
     table.cell(bank_table, 1, 2, str.tostring(bounce_level, "#.##"), text_color = color.yellow)
 
 // --- MTF Dashboard ---
-// Trend detection function for MTF
-calc_trend(lookback) =>
+// Trend detection logic for MTF (Avoids var inside security call)
+get_mtf_trend(lookback) =>
     _ph = ta.pivothigh(high, lookback, lookback)
     _pl = ta.pivotlow(low, lookback, lookback)
-    var _trend = "NONE"
-    var _last_ph = 0.0
-    var _last_pl = 0.0
-    if not na(_ph)
-        _last_ph := _ph
-    if not na(_pl)
-        _last_pl := _pl
+    _last_ph = ta.valuewhen(not na(_ph), _ph, 0)
+    _last_pl = ta.valuewhen(not na(_pl), _pl, 0)
 
-    if high > _last_ph and _last_ph > 0
-        _trend := "BULLISH"
-    else if low < _last_pl and _last_pl > 0
-        _trend := "BEARISH"
-    _trend
+    _is_bullish = high > _last_ph and _last_ph > 0
+    _is_bearish = low < _last_pl and _last_pl > 0
+
+    // We return an integer state to be safe with security calls
+    _trend_state = 0 // 0 = NONE, 1 = BULLISH, -1 = BEARISH
+    _trend_state := ta.valuewhen(_is_bullish or _is_bearish, _is_bullish ? 1 : -1, 0)
+    _trend_state
 
 // Requesting MTF trends
-// Note: In Pine Script v6, security calls with functions must be careful.
-// We'll use simple series for the security call.
-trend_15m = request.security(syminfo.tickerid, "15", calc_trend(3))
-trend_1h = request.security(syminfo.tickerid, "60", calc_trend(3))
-trend_4h = request.security(syminfo.tickerid, "240", calc_trend(3))
-trend_1d = request.security(syminfo.tickerid, "D", calc_trend(3))
+trend_15m_val = request.security(syminfo.tickerid, "15", get_mtf_trend(3))
+trend_1h_val = request.security(syminfo.tickerid, "60", get_mtf_trend(3))
+trend_4h_val = request.security(syminfo.tickerid, "240", get_mtf_trend(3))
+trend_1d_val = request.security(syminfo.tickerid, "D", get_mtf_trend(3))
+
+// Convert state to string
+trend_to_str(val) => val == 1 ? "BULLISH" : val == -1 ? "BEARISH" : "NONE"
+
+trend_15m = trend_to_str(trend_15m_val)
+trend_1h = trend_to_str(trend_1h_val)
+trend_4h = trend_to_str(trend_4h_val)
+trend_1d = trend_to_str(trend_1d_val)
 
 // Helper for dashboard coloring
 t_color(t) => t == "BULLISH" ? color.green : t == "BEARISH" ? color.red : color.gray
