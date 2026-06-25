@@ -82,7 +82,7 @@ update_session(idx, active, sess_name, col) =>
             b = box.new(bar_index, high, bar_index, low, bgcolor = col, border_color = color.new(col, 50), border_style = line.style_dotted)
             array.set(s_boxes, idx, b)
             label.new(bar_index, high, sess_name, color = color.new(color.white, 100), textcolor = color.white, style = label.style_label_down, size = size.small)
-            na
+            float(na)
         else
             b = array.get(s_boxes, idx)
             if not na(b)
@@ -93,7 +93,8 @@ update_session(idx, active, sess_name, col) =>
                 box.set_top(b, hi)
                 box.set_bottom(b, lo)
                 box.set_right(b, bar_index)
-    na
+            float(na)
+    float(na)
 
 if show_asian
     update_session(0, asian_active, "Asian", asian_col)
