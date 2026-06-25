@@ -19,8 +19,8 @@ var bool  Has_Traded  = false // Safety switch to prevent multiple entries per s
 var int   Window_End  = 0     // Internal tracking for measurement expiration
 
 // --- Inputs ---
-duration = input.int(15, "Measurement Duration (Minutes)", minval=1, help="Duration to track the high and low after each reset time.")
-tz       = input.string("UTC+3", "Timezone", help="Timezone for the reset times. Use 'UTC+3' for Nairobi/EAT.")
+duration = input.int(15, "Measurement Duration (Minutes)", minval=1, tooltip="Duration to track the high and low after each reset time.")
+tz       = input.string("UTC+3", "Timezone", tooltip="Timezone for the reset times. Use 'UTC+3' for Nairobi/EAT.")
 
 // ==========================================
 // 2. Time-Phased Logic Flow
