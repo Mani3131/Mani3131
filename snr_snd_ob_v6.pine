@@ -1,0 +1,242 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("S&R, S&D, and Order Blocks [Mani3131]", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// --- Inputs ---
+grp_pivot = "Pivot Settings"
+pivot_lookback = input.int(5, "Pivot Lookback", minval = 1, group = grp_pivot, tooltip = "N candles to the left and right for pivot detection.")
+
+grp_snr = "Support & Resistance (S&R)"
+show_snr = input.bool(true, "Show S&R Lines", group = grp_snr)
+snr_threshold = input.float(0.1, "S&R Threshold (%)", minval = 0.0, step = 0.01, group = grp_snr, tooltip = "Price threshold to group pivots together.")
+snr_touches = input.int(3, "Min Touches", minval = 2, group = grp_snr, tooltip = "Minimum number of pivot touches to draw an S&R line.")
+
+grp_snd = "Supply & Demand (S&D)"
+show_snd = input.bool(true, "Show S&D Zones", group = grp_snd)
+atr_period = input.int(14, "ATR Period", minval = 1, group = grp_snd)
+displacement_mult = input.float(2.0, "Displacement Multiplier", minval = 1.0, step = 0.1, group = grp_snd, tooltip = "Body size must be > N * ATR to qualify as displacement.")
+
+grp_ob = "Order Blocks (OB)"
+show_ob = input.bool(true, "Show Order Blocks", group = grp_ob)
+
+grp_clean = "Cleanup Settings"
+max_zones = input.int(5, "Max Active Zones per Type", minval = 1, maxval = 50, group = grp_clean, tooltip = "Limits the number of fresh, active unmitigated zones displayed.")
+
+// --- Colors ---
+color_res = color.new(color.red, 0)
+color_sup = color.new(color.green, 0)
+color_supply = color.new(color.red, 80)
+color_demand = color.new(color.green, 80)
+color_ob_bear = color.new(color.maroon, 70)
+color_ob_bull = color.new(color.teal, 70)
+
+// --- Core Variables ---
+atr = ta.atr(atr_period)
+body_size = math.abs(close - open)
+
+// --- Phase 1: Pivot Points & Market Structure ---
+ph = ta.pivothigh(pivot_lookback, pivot_lookback)
+pl = ta.pivotlow(pivot_lookback, pivot_lookback)
+
+var float last_ph_price = na
+var int last_ph_index = na
+var float last_pl_price = na
+var int last_pl_index = na
+
+if not na(ph)
+    last_ph_price := ph
+    last_ph_index := bar_index[pivot_lookback]
+
+if not na(pl)
+    last_pl_price := pl
+    last_pl_index := bar_index[pivot_lookback]
+
+// Market Structure Breaks (BOS/MSS)
+var bool bullish_mss = false
+var bool bearish_mss = false
+
+bullish_mss := not na(last_ph_price) and ta.crossover(close, last_ph_price)
+bearish_mss := not na(last_pl_price) and ta.crossunder(close, last_pl_price)
+
+// Visualizing Pivots (Optional for Debugging)
+plotshape(ph, "Pivot High", shape.triangledown, location.abovebar, color.new(color.red, 50), offset = -pivot_lookback)
+plotshape(pl, "Pivot Low", shape.triangleup, location.belowbar, color.new(color.green, 50), offset = -pivot_lookback)
+
+// --- Phase 2: Support & Resistance (S&R) ---
+var float[] snr_prices = array.new_float()
+var int[] snr_touches_count = array.new_int()
+var line[] snr_lines = array.new_line()
+var bool[] snr_active = array.new_bool()
+
+if show_snr
+    float current_p = na
+    if not na(ph)
+        current_p := ph
+    else if not na(pl)
+        current_p := pl
+
+    if not na(current_p)
+        bool found = false
+        if array.size(snr_prices) > 0
+            for i = 0 to array.size(snr_prices) - 1
+                float lp = array.get(snr_prices, i)
+                if math.abs(current_p - lp) <= lp * (snr_threshold / 100)
+                    array.set(snr_touches_count, i, array.get(snr_touches_count, i) + 1)
+                    found := true
+                    break
+        if not found
+            array.push(snr_prices, current_p)
+            array.push(snr_touches_count, 1)
+            array.push(snr_lines, line(na))
+            array.push(snr_active, true)
+
+    // Update lines and handle invalidation
+    if array.size(snr_prices) > 0
+        for i = 0 to array.size(snr_prices) - 1
+            if array.get(snr_active, i)
+                float price = array.get(snr_prices, i)
+                int touches = array.get(snr_touches_count, i)
+                line l = array.get(snr_lines, i)
+
+                if touches >= snr_touches
+                    if na(l)
+                        l := line.new(bar_index[pivot_lookback], price, bar_index, price, color = color.new(color.gray, 20), width = 1)
+                        array.set(snr_lines, i, l)
+                    else
+                        line.set_x2(l, bar_index)
+
+                    // Invalidation: Decisive close past
+                    // Using close vs price comparison
+                    if (close[1] < price and close > price) or (close[1] > price and close < price)
+                        array.set(snr_active, i, false)
+                        line.set_color(l, color.new(color.gray, 80))
+
+// --- Phase 3: Supply & Demand (S&D) ---
+var box[] supply_zones = array.new_box()
+var box[] demand_zones = array.new_box()
+
+is_displacement = body_size > displacement_mult * atr
+is_green = close > open
+is_red = close < open
+
+if show_snd
+    if is_displacement
+        if is_green // Potential Demand Zone
+            float zone_top = math.max(open[1], close[1])
+            float zone_bottom = low[1]
+            demand_zones.push(box.new(bar_index[1], zone_top, bar_index, zone_bottom, bgcolor = color_demand, border_color = color.new(color.green, 50)))
+        else if is_red // Potential Supply Zone
+            float zone_bottom = math.min(open[1], close[1])
+            float zone_top = high[1]
+            supply_zones.push(box.new(bar_index[1], zone_top, bar_index, zone_bottom, bgcolor = color_supply, border_color = color.new(color.red, 50)))
+
+    // Update and Invalidate S&D Zones
+    if array.size(demand_zones) > 0
+        for i = array.size(demand_zones) - 1 to 0
+            b = array.get(demand_zones, i)
+            float b_top = box.get_top(b)
+            float b_bottom = box.get_bottom(b)
+
+            if box.get_right(b) == bar_index - 1
+                box.set_right(b, bar_index)
+
+            // Mitigation: Close through the zone (below bottom)
+            if close < b_bottom
+                array.remove(demand_zones, i)
+                box.set_bgcolor(b, color.new(color.gray, 90))
+                box.set_border_color(b, color.new(color.gray, 80))
+
+    if array.size(supply_zones) > 0
+        for i = array.size(supply_zones) - 1 to 0
+            b = array.get(supply_zones, i)
+            float b_top = box.get_top(b)
+            float b_bottom = box.get_bottom(b)
+
+            if box.get_right(b) == bar_index - 1
+                box.set_right(b, bar_index)
+
+            // Mitigation: Close through the zone (above top)
+            if close > b_top
+                array.remove(supply_zones, i)
+                box.set_bgcolor(b, color.new(color.gray, 90))
+                box.set_border_color(b, color.new(color.gray, 80))
+
+// --- Phase 4: Order Blocks (OB) ---
+var box[] bull_obs = array.new_box()
+var box[] bear_obs = array.new_box()
+
+// Track last candidate candles
+var int last_down_idx = na
+var float last_down_h = na
+var float last_down_l = na
+if close < open
+    last_down_idx := bar_index
+    last_down_h := high
+    last_down_l := low
+
+var int last_up_idx = na
+var float last_up_h = na
+var float last_up_l = na
+if close > open
+    last_up_idx := bar_index
+    last_up_h := high
+    last_up_l := low
+
+if show_ob
+    if bullish_mss and not na(last_down_idx)
+        bull_obs.push(box.new(last_down_idx, last_down_h, last_down_idx + 1, last_down_l, bgcolor = color_ob_bull, border_color = color.new(color.teal, 40)))
+
+    if bearish_mss and not na(last_up_idx)
+        bear_obs.push(box.new(last_up_idx, last_up_h, last_up_idx + 1, last_up_l, bgcolor = color_ob_bear, border_color = color.new(color.maroon, 40)))
+
+    // Update and Invalidate OBs
+    if array.size(bull_obs) > 0
+        for i = array.size(bull_obs) - 1 to 0
+            b = array.get(bull_obs, i)
+            float b_low = box.get_bottom(b)
+
+            if box.get_right(b) < bar_index
+                box.set_right(b, bar_index)
+
+            // Invalidation: Close below OB low
+            if close < b_low
+                array.remove(bull_obs, i)
+                box.set_bgcolor(b, color.new(color.gray, 90))
+                box.set_border_color(b, color.new(color.gray, 80))
+
+    if array.size(bear_obs) > 0
+        for i = array.size(bear_obs) - 1 to 0
+            b = array.get(bear_obs, i)
+            float b_high = box.get_top(b)
+
+            if box.get_right(b) < bar_index
+                box.set_right(b, bar_index)
+
+            // Invalidation: Close above OB high
+            if close > b_high
+                array.remove(bear_obs, i)
+                box.set_bgcolor(b, color.new(color.gray, 90))
+                box.set_border_color(b, color.new(color.gray, 80))
+
+// --- Phase 5: Cleanup Loop ---
+// Ensures we don't clutter the chart by keeping only the fresh, active zones
+f_cleanup(box_array) =>
+    if array.size(box_array) > max_zones
+        for i = 0 to array.size(box_array) - max_zones - 1
+            box.delete(array.shift(box_array))
+
+if barstate.islast
+    f_cleanup(supply_zones)
+    f_cleanup(demand_zones)
+    f_cleanup(bull_obs)
+    f_cleanup(bear_obs)
+
+// S&R cleanup is slightly different since it uses lines and indices
+if barstate.islast and array.size(snr_lines) > 20 // Keep slightly more S&R lines but still limit
+    for i = 0 to array.size(snr_lines) - 21
+        line.delete(array.shift(snr_lines))
+        array.shift(snr_prices)
+        array.shift(snr_touches_count)
+        array.shift(snr_active)
