@@ -1,0 +1,87 @@
+//@version=6
+// Triple ORB Strategy v6
+// Implementation of the 3-phase Opening Range Breakout strategy with resets at 01:05, 10:00, and 16:30 UTC+3.
+
+indicator("Triple ORB Strategy v6", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ==========================================
+// 1. Core Variable Structure
+// ==========================================
+// Using 'var' to maintain state across bars.
+// Note: 'Range_Set' is renamed to 'Is_ORB_Set' to avoid potential conflicts with the
+// reserved keyword 'range' in Pine Script v6.
+
+var float ORB_High    = na
+var float ORB_Low     = na
+var bool  In_Window   = false
+var bool  Is_ORB_Set  = false // Confirmation that session high/low are locked
+var bool  Has_Traded  = false // Safety switch to prevent multiple entries per session
+var int   Window_End  = 0     // Internal tracking for measurement expiration
+
+// --- Inputs ---
+duration = input.int(15, "Measurement Duration (Minutes)", minval=1, help="Duration to track the high and low after each reset time.")
+tz       = input.string("UTC+3", "Timezone", help="Timezone for the reset times. Use 'UTC+3' for Nairobi/EAT.")
+
+// ==========================================
+// 2. Time-Phased Logic Flow
+// ==========================================
+
+// Get current time components in the specified timezone
+curr_hour   = hour(time, tz)
+curr_min    = minute(time, tz)
+
+// --- [ Phase 1: Reset & Measure ] ---
+// Reset times: 01:05, 10:00, and 16:30
+is_reset_time = (curr_hour == 1 and curr_min == 5) or (curr_hour == 10 and curr_min == 0) or (curr_hour == 16 and curr_min == 30)
+
+// Detect the start of the reset bar
+is_new_reset = is_reset_time and not (curr_hour[1] == curr_hour and curr_min[1] == curr_min)
+
+if is_new_reset
+    ORB_High   := high
+    ORB_Low    := low
+    In_Window  := true
+    Is_ORB_Set := false
+    Has_Traded := false
+    Window_End := time + (duration * 60 * 1000)
+
+// --- [ Phase 2: Lock Range ] ---
+if In_Window
+    // Check if measurement window has expired
+    if time >= Window_End
+        In_Window  := false
+        Is_ORB_Set := true
+    else
+        // Expansion Check: Track highest high and lowest low during window
+        ORB_High := math.max(ORB_High, high)
+        ORB_Low  := math.min(ORB_Low, low)
+
+// --- [ Phase 3: Evaluate Breakout ] ---
+// Signal triggers based on Close breakout of frozen levels.
+// 'Lookback Insulation': Signals only trigger on bar confirmation to prevent repainting.
+
+long_entry  = Is_ORB_Set and not Has_Traded and close > ORB_High and close[1] <= ORB_High and barstate.isconfirmed
+short_entry = Is_ORB_Set and not Has_Traded and close < ORB_Low  and close[1] >= ORB_Low  and barstate.isconfirmed
+
+// Mark as traded immediately upon trigger
+if long_entry or short_entry
+    Has_Traded := true
+
+// ==========================================
+// 3. Visualization & Output
+// ==========================================
+
+// Plot frozen levels once locked
+plot(Is_ORB_Set ? ORB_High : na, "ORB High", color.new(color.green, 0), 2, style=plot.style_linebr)
+plot(Is_ORB_Set ? ORB_Low  : na, "ORB Low",  color.new(color.red, 0),   2, style=plot.style_linebr)
+
+// Plot Entry Signals
+plotshape(long_entry,  "Long Signal",  shape.triangleup,   location.belowbar, color.green, size=size.small, text="BUY")
+plotshape(short_entry, "Short Signal", shape.triangledown, location.abovebar, color.red,   size=size.small, text="SELL")
+
+// Highlight measurement window background
+bgcolor(In_Window ? color.new(color.blue, 90) : na)
+
+// Label for session resets
+if is_new_reset
+    label.new(bar_index, high, "Reset: " + str.format("{0,number,00}:{1,number,00}", curr_hour, curr_min), color=color.gray, textcolor=color.white, style=label.style_label_down, size=size.tiny)
