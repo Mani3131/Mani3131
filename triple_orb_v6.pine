@@ -2,70 +2,58 @@
 // Triple ORB Strategy v6
 // Implementation of the 3-phase Opening Range Breakout strategy with resets at 01:05, 10:00, and 16:30 UTC+3.
 
-indicator("Triple ORB Strategy v6", overlay=true, max_lines_count=500, max_labels_count=500)
+indicator("Triple ORB Strategy v6 (5m)", overlay=true, max_lines_count=500, max_labels_count=500)
 
 // ==========================================
 // 1. Core Variable Structure
 // ==========================================
-// Using 'var' to maintain state across bars.
-// Note: 'Range_Set' is renamed to 'Is_ORB_Set' to avoid potential conflicts with the
-// reserved keyword 'range' in Pine Script v6.
-
 var float ORB_High    = na
 var float ORB_Low     = na
-var bool  In_Window   = false
-var bool  Is_ORB_Set  = false // Confirmation that session high/low are locked
-var bool  Has_Traded  = false // Safety switch to prevent multiple entries per session
-var int   Window_End  = 0     // Internal tracking for measurement expiration
+var bool  Is_ORB_Set  = false
+var bool  Has_Traded  = false
 
 // --- Inputs ---
-duration = input.int(15, "Measurement Duration (Minutes)", minval=1, tooltip="Duration to track the high and low after each reset time.")
-tz       = input.string("UTC+3", "Timezone", tooltip="Timezone for the reset times. Use 'UTC+3' for Nairobi/EAT.")
+tz = input.string("UTC+3", "Timezone", tooltip="Timezone for the reset times. Use 'UTC+3' for Nairobi/EAT.")
 
 // ==========================================
 // 2. Time-Phased Logic Flow
 // ==========================================
 
-// Get current time components in the specified timezone
-curr_hour   = hour(time, tz)
-curr_min    = minute(time, tz)
+// Get 5-minute candle data using request.security for cross-timeframe consistency.
+// With default lookahead=barmerge.lookahead_off, these return data for the last COMPLETED 5m bar.
+[m5_high, m5_low, m5_close, m5_time] = request.security(syminfo.tickerid, "5", [high, low, close, time])
 
-// --- [ Phase 1: Reset & Measure ] ---
-// Reset times: 01:05, 10:00, and 16:30
-is_reset_time = (curr_hour == 1 and curr_min == 5) or (curr_hour == 10 and curr_min == 0) or (curr_hour == 16 and curr_min == 30)
+// Detect when a new 5-minute bar has been completed
+is_new_m5 = ta.change(m5_time) != 0
 
-// Detect the start of the reset bar
-is_new_reset = is_reset_time and not (curr_hour[1] == curr_hour and curr_min[1] == curr_min)
+// Variables for signal triggers
+bool long_entry  = false
+bool short_entry = false
 
-if is_new_reset
-    ORB_High   := high
-    ORB_Low    := low
-    In_Window  := true
-    Is_ORB_Set := false
-    Has_Traded := false
-    Window_End := time + (duration * 60 * 1000)
+// --- [ State Machine ] ---
+if is_new_m5
+    // Current m5_* variables represent the 5m candle that just finished.
+    // Check if the finished candle matches a reset time (start of the 5m candle).
+    m5_h = hour(m5_time, tz)
+    m5_m = minute(m5_time, tz)
+    is_reset_m5 = (m5_h == 1 and m5_m == 5) or (m5_h == 10 and m5_m == 0) or (m5_h == 16 and m5_m == 30)
 
-// --- [ Phase 2: Lock Range ] ---
-if In_Window
-    // Check if measurement window has expired
-    if time >= Window_End
-        In_Window  := false
+    if is_reset_m5
+        // [ Phase 1 & 2: Reset & Lock ]
+        // The reset candle is now complete, lock its range.
+        ORB_High   := m5_high
+        ORB_Low    := m5_low
         Is_ORB_Set := true
-    else
-        // Expansion Check: Track highest high and lowest low during window
-        ORB_High := math.max(ORB_High, high)
-        ORB_Low  := math.min(ORB_Low, low)
-
-// --- [ Phase 3: Evaluate Breakout ] ---
-// Signal triggers based on Close breakout of frozen levels.
-// 'Lookback Insulation': Signals only trigger on bar confirmation to prevent repainting.
-
-long_entry  = Is_ORB_Set and not Has_Traded and close > ORB_High and close[1] <= ORB_High and barstate.isconfirmed
-short_entry = Is_ORB_Set and not Has_Traded and close < ORB_Low  and close[1] >= ORB_Low  and barstate.isconfirmed
-
-// Mark as traded immediately upon trigger
-if long_entry or short_entry
-    Has_Traded := true
+        Has_Traded := false
+    else if Is_ORB_Set and not Has_Traded
+        // [ Phase 3: Evaluate Breakout ]
+        // A non-reset 5m candle has finished, check if it broke the range.
+        if m5_close > ORB_High
+            long_entry := true
+            Has_Traded := true
+        else if m5_close < ORB_Low
+            short_entry := true
+            Has_Traded := true
 
 // ==========================================
 // 3. Visualization & Output
@@ -79,9 +67,14 @@ plot(Is_ORB_Set ? ORB_Low  : na, "ORB Low",  color.new(color.red, 0),   2, style
 plotshape(long_entry,  "Long Signal",  shape.triangleup,   location.belowbar, color.green, size=size.small, text="BUY")
 plotshape(short_entry, "Short Signal", shape.triangledown, location.abovebar, color.red,   size=size.small, text="SELL")
 
-// Highlight measurement window background
-bgcolor(In_Window ? color.new(color.blue, 90) : na)
+// Highlight measurement window background (the 5m reset candle)
+is_reset_m5 = (hour(m5_time, tz) == 1 and minute(m5_time, tz) == 5) or (hour(m5_time, tz) == 10 and minute(m5_time, tz) == 0) or (hour(m5_time, tz) == 16 and minute(m5_time, tz) == 30)
+bgcolor(is_reset_m5 ? color.new(color.blue, 90) : na)
 
 // Label for session resets
-if is_new_reset
-    label.new(bar_index, high, "Reset: " + str.format("{0,number,00}:{1,number,00}", curr_hour, curr_min), color=color.gray, textcolor=color.white, style=label.style_label_down, size=size.tiny)
+m5_h_curr = hour(m5_time, tz)
+m5_m_curr = minute(m5_time, tz)
+is_reset_m5_curr = (m5_h_curr == 1 and m5_m_curr == 5) or (m5_h_curr == 10 and m5_m_curr == 0) or (m5_h_curr == 16 and m5_m_curr == 30)
+
+if is_new_m5 and is_reset_m5_curr
+    label.new(bar_index, high, "Reset: " + str.format("{0,number,00}:{1,number,00}", m5_h_curr, m5_m_curr), color=color.gray, textcolor=color.white, style=label.style_label_down, size=size.tiny)
