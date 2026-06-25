@@ -2,9 +2,13 @@
 // © Mani3131
 
 //@version=6
-indicator("S&R, S&D, and Order Blocks [Mani3131]", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+indicator("S&R, S&D, OB & Triple ORB [Mani3131]", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
 
 // --- Inputs ---
+grp_orb = "Triple ORB Settings"
+show_orb = input.bool(true, "Show Triple ORB", group = grp_orb)
+tz = input.string("UTC+3", "Timezone", group = grp_orb, tooltip = "Timezone for the reset times (01:05, 10:00, 16:30).")
+
 grp_pivot = "Pivot Settings"
 pivot_lookback = input.int(5, "Pivot Lookback", minval = 1, group = grp_pivot, tooltip = "N candles to the left and right for pivot detection.")
 
@@ -35,6 +39,52 @@ color_ob_bull = color.new(color.teal, 70)
 // --- Core Variables ---
 atr = ta.atr(atr_period)
 body_size = math.abs(close - open)
+
+// --- Triple ORB Core Logic ---
+var float ORB_High = na
+var float ORB_Low = na
+var bool Is_ORB_Set = false
+var bool Has_Traded = false
+
+[m5_high, m5_low, m5_close, m5_time] = request.security(syminfo.tickerid, "5", [high, low, close, time])
+is_new_m5 = ta.change(m5_time) != 0
+
+bool orb_long_entry = false
+bool orb_short_entry = false
+
+if is_new_m5 and show_orb
+    m5_h = hour(m5_time, tz)
+    m5_m = minute(m5_time, tz)
+    is_reset_m5 = (m5_h == 1 and m5_m == 5) or (m5_h == 10 and m5_m == 0) or (m5_h == 16 and m5_m == 30)
+
+    if is_reset_m5
+        ORB_High := m5_high
+        ORB_Low := m5_low
+        Is_ORB_Set := true
+        Has_Traded := false
+    else if Is_ORB_Set and not Has_Traded
+        if m5_close > ORB_High
+            orb_long_entry := true
+            Has_Traded := true
+        else if m5_close < ORB_Low
+            orb_short_entry := true
+            Has_Traded := true
+
+// --- Triple ORB Visualization ---
+plot(show_orb and Is_ORB_Set ? ORB_High : na, "ORB High", color.new(color.green, 20), 2, style = plot.style_linebr)
+plot(show_orb and Is_ORB_Set ? ORB_Low : na, "ORB Low", color.new(color.red, 20), 2, style = plot.style_linebr)
+
+plotshape(show_orb and orb_long_entry, "ORB BUY", shape.triangleup, location.belowbar, color.green, size = size.small, text = "ORB BUY")
+plotshape(show_orb and orb_short_entry, "ORB SELL", shape.triangledown, location.abovebar, color.red, size = size.small, text = "ORB SELL")
+
+m5_h_plot = hour(m5_time, tz)
+m5_m_plot = minute(m5_time, tz)
+is_reset_m5_plot = (m5_h_plot == 1 and m5_m_plot == 5) or (m5_h_plot == 10 and m5_m_plot == 0) or (m5_h_plot == 16 and m5_m_plot == 30)
+
+bgcolor(show_orb and is_reset_m5_plot ? color.new(color.blue, 90) : na)
+
+if show_orb and is_new_m5 and is_reset_m5_plot
+    label.new(bar_index, high, "Reset: " + str.format("{0,number,00}:{1,number,00}", m5_h_plot, m5_m_plot), color = color.gray, textcolor = color.white, style = label.style_label_down, size = size.tiny)
 
 // --- Phase 1: Pivot Points & Market Structure ---
 ph = ta.pivothigh(pivot_lookback, pivot_lookback)
