@@ -1,0 +1,207 @@
+//@version=6
+strategy("Volatility Squeeze Breakout Strategy - RUDY BANK", overlay=true, margin_long=100, margin_short=100)
+
+// ==========================================
+// BRANDING & INFO
+// ==========================================
+// SERAH WA RUDY BANK
+// Telegram: @JIMNJOGU
+// Contact: +254111829303 / +254141304980
+// ==========================================
+
+// ==========================================
+// INPUTS
+// ==========================================
+grp_structure = "Structure Mapping"
+pivot_lookback = input.int(5, "Pivot Lookback", minval=1, group=grp_structure, tooltip="Number of bars on each side to detect a pivot.")
+touch_threshold = input.float(0.1, "Touch Threshold (%)", minval=0.01, step=0.01, group=grp_structure, tooltip="Maximum percentage difference for a pivot to be considered touching a level.")
+min_touches = input.int(2, "Minimum Touches", minval=2, group=grp_structure, tooltip="Minimum number of touches required to establish a horizontal consolidation level.")
+
+grp_squeeze = "Volatility Squeeze"
+squeeze_lookback = input.int(20, "Squeeze Lookback", minval=5, group=grp_squeeze, tooltip="Lookback period to calculate volatility contraction.")
+squeeze_threshold = input.float(1.5, "Squeeze Threshold (ATR Multiplier)", minval=0.5, step=0.1, group=grp_squeeze, tooltip="ATR multiplier to define the squeeze width.")
+
+grp_breakout = "Breakout & Confirmation"
+vol_ma_len = input.int(20, "Volume MA Length", minval=5, group=grp_breakout)
+vol_multiplier = input.float(1.5, "Volume Multiplier", minval=1.0, step=0.1, group=grp_breakout, tooltip="Breakout volume must be this many times the average volume.")
+
+grp_risk = "Risk Management"
+rr_ratio = input.float(2.0, "Risk:Reward Ratio", minval=0.1, step=0.1, group=grp_risk)
+use_zone_height = input.bool(false, "Use Zone Height for TP", group=grp_risk, tooltip="If checked, TP is projected using the physical height of the consolidation zone.")
+sl_padding = input.float(0.0, "SL Padding (Ticks)", minval=0.0, group=grp_risk)
+
+// ==========================================
+// CONSTANTS & COLORS
+// ==========================================
+COLOR_SUPPLY = color.rgb(255, 82, 82, 80)
+COLOR_DEMAND = color.rgb(76, 175, 80, 80)
+COLOR_NEUTRAL = color.rgb(158, 158, 158, 80)
+BRANDING_TEXT = "SERAH WA RUDY BANK\n@JIMNJOGU\n+254111829303 / +254141304980"
+
+// Placeholder for branding display
+if barstate.islast
+    var table brand_table = table.new(position.top_right, 1, 1, frame_color=color.gray, frame_width=1)
+    table.cell(brand_table, 0, 0, BRANDING_TEXT, text_color=color.white, bgcolor=color.black, text_size=size.small)
+
+// ==========================================
+// CORE LOGIC - STRUCTURE MAPPING
+// ==========================================
+var float res_level = float(na)
+var float sup_level = float(na)
+var int res_touches = 0
+var int sup_touches = 0
+
+ph = ta.pivothigh(pivot_lookback, pivot_lookback)
+pl = ta.pivotlow(pivot_lookback, pivot_lookback)
+
+// Arrays to store recent pivots for touch detection
+var float[] recent_pivots_h = array.new_float(0)
+var float[] recent_pivots_l = array.new_float(0)
+
+if not na(ph)
+    array.push(recent_pivots_h, ph)
+    if array.size(recent_pivots_h) > 20
+        array.shift(recent_pivots_h)
+
+if not na(pl)
+    array.push(recent_pivots_l, pl)
+    if array.size(recent_pivots_l) > 20
+        array.shift(recent_pivots_l)
+
+// Level Detection Logic
+detect_level(pivots, is_high) =>
+    float found_level = float(na)
+    int touch_count = 0
+    if array.size(pivots) >= min_touches
+        last_p = array.get(pivots, array.size(pivots) - 1)
+        touch_count := 1
+        for i = array.size(pivots) - 2 to 0
+            curr_p = array.get(pivots, i)
+            diff = math.abs(last_p - curr_p) / curr_p * 100
+            if diff <= touch_threshold
+                touch_count += 1
+
+        if touch_count >= min_touches
+            found_level := last_p
+    [found_level, touch_count]
+
+[potential_res, res_count] = detect_level(recent_pivots_h, true)
+[potential_sup, sup_count] = detect_level(recent_pivots_l, false)
+
+if not na(potential_res)
+    res_level := potential_res
+    res_touches := res_count
+
+if not na(potential_sup)
+    sup_level := potential_sup
+    sup_touches := sup_count
+
+// Volatility Squeeze Detection
+// Squeeze is defined as the current zone (Res - Sup) being smaller than a historical average zone
+// or simply being tight (less than X ATR)
+float zone_width = not na(res_level) and not na(sup_level) ? res_level - sup_level : float(na)
+float atr = ta.atr(squeeze_lookback)
+bool is_squeezed = not na(zone_width) and zone_width < (atr * squeeze_threshold)
+
+// Visuals for levels
+plot(res_level, "Resistance", color=res_touches >= min_touches ? color.red : color.gray, style=plot.style_linebr)
+plot(sup_level, "Support", color=sup_touches >= min_touches ? color.green : color.gray, style=plot.style_linebr)
+
+// ==========================================
+// PRE-BREAK BEHAVIOR (BUILDING PRESSURE)
+// ==========================================
+check_pressure(pivots, trend_up) =>
+    bool has_pressure = false
+    if array.size(pivots) >= 3
+        p1 = array.get(pivots, array.size(pivots) - 1)
+        p2 = array.get(pivots, array.size(pivots) - 2)
+        p3 = array.get(pivots, array.size(pivots) - 3)
+        if trend_up
+            has_pressure := p1 > p2 and p2 > p3 // Higher Lows
+        else
+            has_pressure := p1 < p2 and p2 < p3 // Lower Highs
+    has_pressure
+
+bool bearish_pressure = check_pressure(recent_pivots_h, false)
+bool bullish_pressure = check_pressure(recent_pivots_l, true)
+
+// Debug Visuals for Pressure
+plotshape(bearish_pressure, "Bearish Pressure", shape.triangledown, location.abovebar, color.red, size=size.tiny)
+plotshape(bullish_pressure, "Bullish Pressure", shape.triangleup, location.belowbar, color.green, size=size.tiny)
+
+// ==========================================
+// BREAKOUT DETECTION & CONFIRMATION
+// ==========================================
+float vol_ma = ta.sma(volume, vol_ma_len)
+bool volume_confirmed = volume > vol_ma * vol_multiplier
+
+bool break_up = close > res_level and not (close[1] > res_level) and bullish_pressure and is_squeezed and volume_confirmed
+bool break_down = close < sup_level and not (close[1] < sup_level) and bearish_pressure and is_squeezed and volume_confirmed
+
+// Only trigger on confirmed bar
+bool long_condition = break_up and barstate.isconfirmed
+bool short_condition = break_down and barstate.isconfirmed
+
+plotshape(long_condition, "Long Signal", shape.triangleup, location.belowbar, color.lime, size=size.small, text="BUY")
+plotshape(short_condition, "Short Signal", shape.triangledown, location.abovebar, color.maroon, size=size.small, text="SELL")
+
+// ==========================================
+// SYSTEM EXECUTION PARAMETERS (RISK ENGINE)
+// ==========================================
+var float entry_price = float(na)
+var float sl_price = float(na)
+var float tp_price = float(na)
+
+if long_condition
+    entry_price := close + (syminfo.mintick)
+    sl_price := math.min(low, sup_level) - (sl_padding * syminfo.mintick)
+    risk = entry_price - sl_price
+    tp_price := use_zone_height ? entry_price + zone_width : entry_price + (risk * rr_ratio)
+    strategy.entry("Long", strategy.long, stop=entry_price)
+    strategy.exit("Exit Long", "Long", stop=sl_price, limit=tp_price)
+
+if short_condition
+    entry_price := close - (syminfo.mintick)
+    sl_price := math.max(high, res_level) + (sl_padding * syminfo.mintick)
+    risk = sl_price - entry_price
+    tp_price := use_zone_height ? entry_price - zone_width : entry_price - (risk * rr_ratio)
+    strategy.entry("Short", strategy.short, stop=entry_price)
+    strategy.exit("Exit Short", "Short", stop=sl_price, limit=tp_price)
+
+// Visuals for active trade levels
+plot(strategy.position_size != 0 ? entry_price : na, "Entry Level", color.blue, style=plot.style_linebr)
+plot(strategy.position_size != 0 ? sl_price : na, "SL Level", color.red, style=plot.style_linebr)
+plot(strategy.position_size != 0 ? tp_price : na, "TP Level", color.green, style=plot.style_linebr)
+
+// ==========================================
+// VISUALS & DASHBOARD
+// ==========================================
+var box zone_box = box(na)
+if not na(res_level) and not na(sup_level)
+    if na(zone_box)
+        zone_box := box.new(bar_index, res_level, bar_index, sup_level, border_color=color.gray, bgcolor=COLOR_NEUTRAL)
+    else
+        box.set_right(zone_box, bar_index)
+        box.set_top(zone_box, res_level)
+        box.set_bottom(zone_box, sup_level)
+        box.set_bgcolor(zone_box, is_squeezed ? color.rgb(255, 165, 0, 80) : COLOR_NEUTRAL)
+
+// Dashboard Updates
+if barstate.islast
+    var table status_table = table.new(position.bottom_right, 2, 5, frame_color=color.gray, frame_width=1)
+    table.cell(status_table, 0, 0, "Strategy Status", bgcolor=color.gray, text_color=color.white)
+    table.cell(status_table, 1, 0, "Value", bgcolor=color.gray, text_color=color.white)
+
+    table.cell(status_table, 0, 1, "Squeeze Active", text_color=color.white)
+    table.cell(status_table, 1, 1, is_squeezed ? "YES" : "NO", bgcolor=is_squeezed ? color.green : color.red)
+
+    table.cell(status_table, 0, 2, "Bearish Pressure", text_color=color.white)
+    table.cell(status_table, 1, 2, bearish_pressure ? "HIGH" : "LOW", bgcolor=bearish_pressure ? color.rgb(255, 165, 0) : color.black)
+
+    table.cell(status_table, 0, 3, "Bullish Pressure", text_color=color.white)
+    table.cell(status_table, 1, 3, bullish_pressure ? "HIGH" : "LOW", bgcolor=bullish_pressure ? color.rgb(255, 165, 0) : color.black)
+
+    table.cell(status_table, 0, 4, "Current Zone", text_color=color.white)
+    table.cell(status_table, 1, 4, str.tostring(zone_width, "#.####"), text_color=color.white)
+
+plot(na)
