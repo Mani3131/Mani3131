@@ -1,0 +1,190 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © RudyBank
+// @version=6
+indicator("Rudy Bank Indicator", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// Branding Constants
+var string BRAND_TEXT = "SERAH WA RUDY BANK"
+var string TELEGRAM_HANDLE = "@JIMNJOGU"
+var string CONTACT_1 = "+254111829303"
+var string CONTACT_2 = "+254141304980"
+
+// Branding Display
+var label branding_label = label.new(bar_index, low, text = BRAND_TEXT + "\nTelegram: " + TELEGRAM_HANDLE + "\nContacts: " + CONTACT_1 + " / " + CONTACT_2, style = label.style_none, textcolor = color.new(color.gray, 50), size = size.small, text_align = text.align_right)
+if barstate.islast
+    label.set_xy(branding_label, bar_index, low - ta.atr(14) * 2)
+
+// Watermark in Footer
+var table footer_table = table.new(position.bottom_right, 1, 1)
+if barstate.islast
+    table.cell(footer_table, 0, 0, "© RUDYBANK INDICATOR", text_color = color.new(color.gray, 50), text_size = size.tiny)
+
+// --- Market Structure Inputs ---
+pivot_lb = input.int(3, "Pivot Lookback", minval = 1)
+show_structure = input.bool(true, "Show Market Structure")
+
+// --- Market Structure Logic ---
+var float last_ph = na
+var float last_pl = na
+var int last_ph_idx = na
+var int last_pl_idx = na
+var int last_broken_ph_idx = na
+var int last_broken_pl_idx = na
+
+ph = ta.pivothigh(high, pivot_lb, pivot_lb)
+pl = ta.pivotlow(low, pivot_lb, pivot_lb)
+
+if not na(ph)
+    last_ph := ph
+    last_ph_idx := bar_index - pivot_lb
+
+if not na(pl)
+    last_pl := pl
+    last_pl_idx := bar_index - pivot_lb
+
+// Trend Tracking
+var string trend = "NONE"
+var float high_target = na
+var float low_target = na
+
+if show_structure
+    if not na(last_ph) and high > last_ph and last_broken_ph_idx != last_ph_idx
+        if trend == "BEARISH"
+            label.new(bar_index, high, "CHoCH", color = color.green, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+            trend := "BULLISH"
+        else
+            label.new(bar_index, high, "BOS", color = color.green, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+        last_broken_ph_idx := last_ph_idx
+
+    if not na(last_pl) and low < last_pl and last_broken_pl_idx != last_pl_idx
+        if trend == "BULLISH"
+            label.new(bar_index, low, "CHoCH", color = color.red, textcolor = color.white, style = label.style_label_up, size = size.tiny)
+            trend := "BEARISH"
+        else
+            label.new(bar_index, low, "BOS", color = color.red, textcolor = color.white, style = label.style_label_up, size = size.tiny)
+        last_broken_pl_idx := last_pl_idx
+
+    if trend == "NONE"
+        if not na(last_ph) and high > last_ph
+            trend := "BULLISH"
+        else if not na(last_pl) and low < last_pl
+            trend := "BEARISH"
+
+    if not na(ph)
+        label.new(last_ph_idx, ph, trend == "BULLISH" ? "HH" : "LH", style = label.style_none, textcolor = color.gray, size = size.tiny)
+    if not na(pl)
+        label.new(last_pl_idx, pl, trend == "BEARISH" ? "LL" : "HL", style = label.style_none, textcolor = color.gray, size = size.tiny)
+
+// --- Supply and Demand Zones ---
+atr_val = ta.atr(14)
+sd_displacement_mult = input.float(1.5, "S&D Displacement Multiplier", minval = 0.1)
+
+is_sd_candidate = math.abs(close - open) > atr_val * sd_displacement_mult
+
+var box[] supply_boxes = array.new_box()
+var box[] demand_boxes = array.new_box()
+
+if is_sd_candidate
+    box_color = close < open ? color.new(color.red, 80) : color.new(color.green, 80)
+    txt_color = close < open ? color.red : color.green
+
+    // Calculate "percentage" - in the screenshot it looks like (Size / Price) * 100 or relative to something else.
+    // Let's assume it's relative to a fixed scale or ATR for now.
+    float zone_size = math.abs(high - low)
+    float zone_points = zone_size / syminfo.mintick
+    int zone_percent = math.round((zone_size / close) * 10000) // Rough approximation of the % in screenshot
+
+    new_box = box.new(bar_index - 1, high, bar_index + 20, low, bgcolor = box_color, border_color = box_color,
+                      text = str.format("{0} ({1}%)", math.round(zone_points), zone_percent),
+                      text_color = txt_color, text_size = size.normal, text_halign = text.align_center, text_valign = text.align_center)
+
+    if close < open
+        array.push(supply_boxes, new_box)
+    else
+        array.push(demand_boxes, new_box)
+
+// Cleanup old boxes
+if array.size(supply_boxes) > 10
+    box.delete(array.shift(supply_boxes))
+if array.size(demand_boxes) > 10
+    box.delete(array.shift(demand_boxes))
+
+// --- Bank Engine Mathematical Projections ---
+// Daily Code (DC): Last digit of Month + Last digit of Day + Last digit of Year
+last_digit(val) => val % 10
+
+dc_month = last_digit(month)
+dc_day = last_digit(dayofmonth)
+dc_year = last_digit(year)
+daily_code = dc_month + dc_day + dc_year
+
+// Estimated Range (ER): (Month / Day) * Previous 4H Range
+// Bounce Level: Previous 4H Close - Estimated Range
+[prev_4h_high, prev_4h_low, prev_4h_close] = request.security(syminfo.tickerid, "240", [high[1], low[1], close[1]], lookahead = barmerge.lookahead_on)
+prev_4h_range = prev_4h_high - prev_4h_low
+
+estimated_range = (month / dayofmonth) * prev_4h_range
+bounce_level = prev_4h_close - estimated_range
+
+plot(bounce_level, "Bank Bounce Level", color = color.new(color.yellow, 50), style = plot.style_linebr)
+
+// Visualizing Bank Engine Data
+if barstate.islast
+    var table bank_table = table.new(position.bottom_left, 2, 3, bgcolor = color.new(color.black, 50), border_width = 1)
+    table.cell(bank_table, 0, 0, "Daily Code", text_color = color.white)
+    table.cell(bank_table, 1, 0, str.tostring(daily_code), text_color = color.yellow)
+    table.cell(bank_table, 0, 1, "Est. Range", text_color = color.white)
+    table.cell(bank_table, 1, 1, str.tostring(estimated_range, "#.##"), text_color = color.yellow)
+    table.cell(bank_table, 0, 2, "Bounce Lvl", text_color = color.white)
+    table.cell(bank_table, 1, 2, str.tostring(bounce_level, "#.##"), text_color = color.yellow)
+
+// --- MTF Dashboard ---
+// Trend detection function for MTF
+calc_trend(lookback) =>
+    _ph = ta.pivothigh(high, lookback, lookback)
+    _pl = ta.pivotlow(low, lookback, lookback)
+    var _trend = "NONE"
+    var _last_ph = 0.0
+    var _last_pl = 0.0
+    if not na(_ph)
+        _last_ph := _ph
+    if not na(_pl)
+        _last_pl := _pl
+
+    if high > _last_ph and _last_ph > 0
+        _trend := "BULLISH"
+    else if low < _last_pl and _last_pl > 0
+        _trend := "BEARISH"
+    _trend
+
+// Requesting MTF trends
+// Note: In Pine Script v6, security calls with functions must be careful.
+// We'll use simple series for the security call.
+trend_15m = request.security(syminfo.tickerid, "15", calc_trend(3))
+trend_1h = request.security(syminfo.tickerid, "60", calc_trend(3))
+trend_4h = request.security(syminfo.tickerid, "240", calc_trend(3))
+trend_1d = request.security(syminfo.tickerid, "D", calc_trend(3))
+
+if barstate.islast
+    var table mtf_table = table.new(position.top_right, 2, 6, bgcolor = color.new(color.black, 0), border_width = 1, border_color = color.gray)
+
+    // Header Style
+    t_color(t) => t == "BULLISH" ? color.green : t == "BEARISH" ? color.red : color.gray
+
+    table.cell(mtf_table, 0, 0, "15", text_color = color.white, text_size = size.small)
+    table.cell(mtf_table, 1, 0, trend_15m, text_color = t_color(trend_15m), text_size = size.small)
+
+    table.cell(mtf_table, 0, 1, "1H", text_color = color.white, text_size = size.small)
+    table.cell(mtf_table, 1, 1, trend_1h, text_color = t_color(trend_1h), text_size = size.small)
+
+    table.cell(mtf_table, 0, 2, "4H", text_color = color.white, text_size = size.small)
+    table.cell(mtf_table, 1, 2, trend_4h, text_color = t_color(trend_4h), text_size = size.small)
+
+    table.cell(mtf_table, 0, 3, "1D", text_color = color.white, text_size = size.small)
+    table.cell(mtf_table, 1, 3, trend_1d, text_color = t_color(trend_1d), text_size = size.small)
+
+    table.cell(mtf_table, 0, 4, "Detected Pattern", text_color = color.white, text_size = size.small)
+    table.merge_cells(mtf_table, 0, 4, 1, 4)
+
+    table.cell(mtf_table, 0, 5, "None", text_color = color.red, text_size = size.small)
+    table.merge_cells(mtf_table, 0, 5, 1, 5)
