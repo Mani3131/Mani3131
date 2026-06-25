@@ -1,0 +1,145 @@
+//@version=6
+indicator("Killzone Indicator by Ombututu", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ==========================================
+// Branding & Inputs
+// ==========================================
+string G_BRAND = "Branding"
+string G_SESS  = "Killzone Sessions (EAT/UTC+3)"
+string G_BB    = "Big Boss Quarters (EAT/UTC+3)"
+string G_ORB   = "Triple ORB Resets"
+
+show_branding = input.bool(true, "Show Branding Dashboard", group=G_BRAND)
+tz_input      = input.string("UTC+3", "Timezone", options=["UTC-5", "UTC-4", "UTC+0", "UTC+1", "UTC+2", "UTC+3", "UTC+8"], group=G_SESS)
+
+// ICT Killzones
+show_asian = input.bool(true, "Asian Session", group=G_SESS)
+asian_time = input.session("0000-0600:1234567", "Asian Session Time", group=G_SESS)
+asian_col  = input.color(color.rgb(33, 150, 243, 80), "Asian Color", group=G_SESS)
+
+show_london = input.bool(true, "London Killzone", group=G_SESS)
+london_time = input.session("1000-1300:1234567", "London Killzone Time", group=G_SESS)
+london_col  = input.color(color.rgb(255, 152, 0, 80), "London Color", group=G_SESS)
+
+show_ny     = input.bool(true, "New York Killzone", group=G_SESS)
+ny_time     = input.session("1500-1800:1234567", "New York Killzone Time", group=G_SESS)
+ny_col      = input.color(color.rgb(76, 175, 80, 80), "New York Color", group=G_SESS)
+
+show_lc     = input.bool(true, "London Close Killzone", group=G_SESS)
+lc_time     = input.session("1800-2000:1234567", "London Close Time", group=G_SESS)
+lc_col      = input.color(color.rgb(156, 39, 176, 80), "London Close Color", group=G_SESS)
+
+// Big Boss Quarters
+show_bb = input.bool(false, "Show Big Boss Quarters", group=G_BB)
+q1_time = "0200-0800:1234567"
+q2_time = "0800-1400:1234567"
+q3_time = "1400-2000:1234567"
+q4_time = "2000-0200:1234567"
+
+// ORB Resets
+show_orb = input.bool(true, "Show Triple ORB Resets", group=G_ORB)
+
+// ==========================================
+// Logic & Helper Functions
+// ==========================================
+// Function to check if we are in a session
+in_session(sess_str) =>
+    not na(time(timeframe.period, sess_str, tz_input))
+
+// Use a type to manage session data
+type SessionData
+    box b
+    label l
+    float high = -1.0
+    float low  = -1.0
+    int start_bar = 0
+
+// Map to store active session data to avoid global var issues in functions if any,
+// though here we'll handle them bar by bar.
+var SessionData asian_data  = SessionData.new()
+var SessionData london_data = SessionData.new()
+var SessionData ny_data     = SessionData.new()
+var SessionData lc_data     = SessionData.new()
+
+// Generic session drawing logic
+update_session(sess_active, sess_str, sess_col, data, label_text) =>
+    bool is_in = sess_active and in_session(sess_str)
+    bool was_in = not na(data.start_bar) and data.start_bar != 0
+
+    if is_in
+        if not was_in or (not in_session(sess_str)[1])
+            // Just entered session
+            data.start_bar := bar_index
+            data.high := high
+            data.low  := low
+            data.b    := box.new(bar_index, data.high, bar_index, data.low, border_color=sess_col, bgcolor=sess_col)
+            data.l    := label.new(bar_index, data.high, label_text, color=color.new(color.white, 100), textcolor=color.white, style=label.style_label_down, size=size.small)
+        else
+            // Continuing session
+            data.high := math.max(data.high, high)
+            data.low  := math.min(data.low, low)
+            box.set_top(data.b, data.high)
+            box.set_bottom(data.b, data.low)
+            box.set_right(data.b, bar_index)
+            label.set_xy(data.l, int(math.avg(data.start_bar, bar_index)), data.high)
+    else
+        // Not in session
+        data.start_bar := 0
+
+// ==========================================
+// Execution
+// ==========================================
+update_session(show_asian,  asian_time, asian_col, asian_data,  "Asian")
+update_session(show_london, london_time, london_col, london_data, "London KZ")
+update_session(show_ny,     ny_time,     ny_col,     ny_data,     "NY KZ")
+update_session(show_lc,     lc_time,     lc_col,     lc_data,     "London Close")
+
+// Big Boss Quarters Logic (Simple background coloring for clarity if enabled)
+q1_active = in_session(q1_time)
+q2_active = in_session(q2_time)
+q3_active = in_session(q3_time)
+q4_active = in_session(q4_time)
+
+if show_bb
+    bgcolor(q1_active ? color.new(color.blue, 90) : na)
+    bgcolor(q2_active ? color.new(color.orange, 90) : na)
+    bgcolor(q3_active ? color.new(color.green, 90) : na)
+    bgcolor(q4_active ? color.new(color.gray, 90) : na)
+
+// Triple ORB Resets (Vertical Lines)
+is_orb1 = timeframe.isintraday and ta.change(time("1", "0105-0106:1234567", tz_input)) != 0
+is_orb2 = timeframe.isintraday and ta.change(time("1", "1000-1001:1234567", tz_input)) != 0
+is_orb3 = timeframe.isintraday and ta.change(time("1", "1630-1631:1234567", tz_input)) != 0
+
+if show_orb
+    if is_orb1
+        line.new(bar_index, low * 0.999, bar_index, high * 1.001, extend=extend.both, color=color.fuchsia, style=line.style_dashed, width=1)
+        label.new(bar_index, high, "ORB Reset 01:05", color=color.fuchsia, textcolor=color.white, style=label.style_label_down, size=size.tiny)
+    if is_orb2
+        line.new(bar_index, low * 0.999, bar_index, high * 1.001, extend=extend.both, color=color.fuchsia, style=line.style_dashed, width=1)
+        label.new(bar_index, high, "ORB Reset 10:00", color=color.fuchsia, textcolor=color.white, style=label.style_label_down, size=size.tiny)
+    if is_orb3
+        line.new(bar_index, low * 0.999, bar_index, high * 1.001, extend=extend.both, color=color.fuchsia, style=line.style_dashed, width=1)
+        label.new(bar_index, high, "ORB Reset 16:30", color=color.fuchsia, textcolor=color.white, style=label.style_label_down, size=size.tiny)
+
+// ==========================================
+// Branding Dashboard
+// ==========================================
+var table branding_table = table.new(position.top_right, 2, 6, bgcolor=color.rgb(0, 0, 0, 80), border_color=color.gray, border_width=1)
+if show_branding and barstate.islast
+    table.cell(branding_table, 0, 0, "KILLZONE INDICATOR", text_color=color.white, text_size=size.small)
+    table.merge_cells(branding_table, 0, 0, 1, 0)
+    table.cell(branding_table, 0, 1, "BY OMBUTUTU", text_color=color.rgb(255, 235, 59), text_size=size.small)
+    table.merge_cells(branding_table, 0, 1, 1, 1)
+
+    table.cell(branding_table, 0, 2, "Telegram:", text_color=color.gray, text_size=size.tiny)
+    table.cell(branding_table, 1, 2, "@JIMNJOGU", text_color=color.white, text_size=size.tiny)
+
+    table.cell(branding_table, 0, 3, "Contact 1:", text_color=color.gray, text_size=size.tiny)
+    table.cell(branding_table, 1, 3, "+254111829303", text_color=color.white, text_size=size.tiny)
+
+    table.cell(branding_table, 0, 4, "Contact 2:", text_color=color.gray, text_size=size.tiny)
+    table.cell(branding_table, 1, 4, "+254141304980", text_color=color.white, text_size=size.tiny)
+
+    table.cell(branding_table, 0, 5, "SERAH WA RUDY BANK", text_color=color.rgb(244, 67, 54), text_size=size.tiny)
+    table.merge_cells(branding_table, 0, 5, 1, 5)
