@@ -1,0 +1,227 @@
+//@version=6
+indicator("Advanced Price Action", overlay=true, max_boxes_count=500, max_labels_count=500)
+
+// --- Inputs ---
+grp_general = "General Settings"
+pivot_lookback = input.int(5, "Pivot Lookback", minval=2, group=grp_general, tooltip="Number of candles on each side to confirm a swing high/low.")
+max_objects = input.int(50, "Max Objects per Feature", minval=1, maxval=100, group=grp_general, tooltip="Maximum number of boxes/labels to keep on chart.")
+
+grp_sweeps = "Liquidity Sweeps"
+show_sweeps = input.bool(true, "Show Liquidity Sweeps", group=grp_sweeps)
+sweep_color_bull = input.color(color.new(color.green, 50), "Bullish Sweep Color", group=grp_sweeps)
+sweep_color_bear = input.color(color.new(color.red, 50), "Bearish Sweep Color", group=grp_sweeps)
+
+grp_mss = "Market Structure Shift (MSS)"
+show_mss = input.bool(true, "Show MSS", group=grp_mss)
+mss_color_bull = input.color(color.green, "Bullish MSS Color", group=grp_mss)
+mss_color_bear = input.color(color.red, "Bearish MSS Color", group=grp_mss)
+
+grp_fvg = "Fair Value Gaps (FVG)"
+show_fvg = input.bool(true, "Show FVGs", group=grp_fvg)
+fvg_color_bull = input.color(color.new(color.teal, 80), "Bullish FVG Color", group=grp_fvg)
+fvg_color_bear = input.color(color.new(color.orange, 80), "Bearish FVG Color", group=grp_fvg)
+fvg_mitigation = input.bool(true, "Remove Mitigated FVGs", group=grp_fvg, tooltip="Automatically delete FVGs when price fills them.")
+
+grp_ob = "Order Blocks (OB)"
+show_ob = input.bool(true, "Show Order Blocks", group=grp_ob)
+ob_color_bull = input.color(color.new(color.blue, 80), "Bullish OB Color", group=grp_ob)
+ob_color_bear = input.color(color.new(color.maroon, 80), "Bearish OB Color", group=grp_ob)
+ob_mitigation = input.bool(true, "Remove Mitigated OBs", group=grp_ob, tooltip="Automatically delete OBs when price closes through them.")
+
+// --- Types & Globals ---
+type PivotPoint
+    int index
+    float price
+    bool is_high
+
+var ph_pivots = array.new<PivotPoint>()
+var pl_pivots = array.new<PivotPoint>()
+
+// --- Pivot Detection ---
+ph_price = ta.pivothigh(pivot_lookback, pivot_lookback)
+pl_price = ta.pivotlow(pivot_lookback, pivot_lookback)
+
+if not na(ph_price)
+    array.unshift(ph_pivots, PivotPoint.new(bar_index[pivot_lookback], ph_price, true))
+    if array.size(ph_pivots) > max_objects
+        array.pop(ph_pivots)
+
+if not na(pl_price)
+    array.unshift(pl_pivots, PivotPoint.new(bar_index[pivot_lookback], pl_price, false))
+    if array.size(pl_pivots) > max_objects
+        array.pop(pl_pivots)
+
+// --- Helper Functions ---
+method is_broken(PivotPoint p) =>
+    p.is_high ? high > p.price : low < p.price
+
+// --- Liquidity Sweeps ---
+var sweep_labels = array.new<label>()
+
+detect_sweep(array<PivotPoint> pivots, bool is_high) =>
+    bool swept = false
+    float pivot_price = na
+    if array.size(pivots) > 0
+        for i = 0 to array.size(pivots) - 1
+            p = array.get(pivots, i)
+            // Check if price wicked past but closed back
+            if is_high
+                if high > p.price and close < p.price
+                    swept := true
+                    pivot_price := p.price
+                    break
+            else
+                if low < p.price and close > p.price
+                    swept := true
+                    pivot_price := p.price
+                    break
+    [swept, pivot_price]
+
+[bull_sweep, pl_swept_price] = detect_sweep(pl_pivots, false)
+[bear_sweep, ph_swept_price] = detect_sweep(ph_pivots, true)
+
+if show_sweeps
+    if bull_sweep
+        array.unshift(sweep_labels, label.new(bar_index, low, "LIQ SWEEP", color=sweep_color_bull, style=label.style_label_up, textcolor=color.white, size=size.small))
+    if bear_sweep
+        array.unshift(sweep_labels, label.new(bar_index, high, "LIQ SWEEP", color=sweep_color_bear, style=label.style_label_down, textcolor=color.white, size=size.small))
+
+if array.size(sweep_labels) > max_objects
+    label.delete(array.pop(sweep_labels))
+
+// --- Market Structure Shift (MSS) ---
+var mss_labels = array.new<label>()
+var bool potential_bull_mss = false
+var bool potential_bear_mss = false
+
+if bull_sweep
+    potential_bull_mss := true
+if bear_sweep
+    potential_bear_mss := true
+
+detect_mss(array<PivotPoint> pivots, bool is_high) =>
+    bool shifted = false
+    if array.size(pivots) > 0
+        p = array.get(pivots, 0) // Check the most recent pivot
+        if is_high
+            if close > p.price
+                shifted := true
+        else
+            if close < p.price
+                shifted := true
+    shifted
+
+bull_mss = potential_bull_mss and detect_mss(ph_pivots, true)
+bear_mss = potential_bear_mss and detect_mss(pl_pivots, false)
+
+if bull_mss
+    potential_bull_mss := false
+if bear_mss
+    potential_bear_mss := false
+
+if show_mss
+    if bull_mss
+        array.unshift(mss_labels, label.new(bar_index, low, "MSS", color=mss_color_bull, style=label.style_label_up, textcolor=color.white, size=size.small))
+    if bear_mss
+        array.unshift(mss_labels, label.new(bar_index, high, "MSS", color=mss_color_bear, style=label.style_label_down, textcolor=color.white, size=size.small))
+
+if array.size(mss_labels) > max_objects
+    label.delete(array.pop(mss_labels))
+
+// --- Fair Value Gaps (FVG) ---
+type FVG
+    box b
+    float top
+    float bottom
+    bool bull
+
+var fvgs = array.new<FVG>()
+
+if show_fvg
+    if low > high[2] // Bullish FVG
+        top_price = low
+        btm_price = high[2]
+        bx = box.new(bar_index[2], top_price, bar_index, btm_price, border_color=na, bgcolor=fvg_color_bull)
+        array.unshift(fvgs, FVG.new(bx, top_price, btm_price, true))
+
+    if high < low[2] // Bearish FVG
+        top_price = low[2]
+        btm_price = high
+        bx = box.new(bar_index[2], top_price, bar_index, btm_price, border_color=na, bgcolor=fvg_color_bear)
+        array.unshift(fvgs, FVG.new(bx, top_price, btm_price, false))
+
+// FVG Management & Mitigation
+if array.size(fvgs) > 0
+    i = array.size(fvgs) - 1
+    while i >= 0
+        f = array.get(fvgs, i)
+        box.set_right(f.b, bar_index + 5)
+
+        mitigated = false
+        if f.bull
+            if low < f.bottom
+                mitigated := true
+        else
+            if high > f.top
+                mitigated := true
+
+        if (fvg_mitigation and mitigated) or i >= max_objects
+            box.delete(f.b)
+            array.remove(fvgs, i)
+        i := i - 1
+
+// --- Order Blocks (OB) ---
+type OB
+    box b
+    float top
+    float bottom
+    bool bull
+
+var obs = array.new<OB>()
+
+if show_ob
+    if bull_mss
+        // Bullish OB: last bearish candle before the move
+        int ob_idx = 1
+        for i = 1 to 10
+            if close[i] < open[i]
+                ob_idx := i
+                break
+
+        top_price = open[ob_idx]
+        btm_price = low[ob_idx]
+        bx = box.new(bar_index[ob_idx], top_price, bar_index, btm_price, border_color=na, bgcolor=ob_color_bull)
+        array.unshift(obs, OB.new(bx, top_price, btm_price, true))
+
+    if bear_mss
+        // Bearish OB: last bullish candle before the move
+        int ob_idx = 1
+        for i = 1 to 10
+            if close[i] > open[i]
+                ob_idx := i
+                break
+
+        top_price = high[ob_idx]
+        btm_price = open[ob_idx]
+        bx = box.new(bar_index[ob_idx], top_price, bar_index, btm_price, border_color=na, bgcolor=ob_color_bear)
+        array.unshift(obs, OB.new(bx, top_price, btm_price, false))
+
+// OB Management & Mitigation
+if array.size(obs) > 0
+    i = array.size(obs) - 1
+    while i >= 0
+        o = array.get(obs, i)
+        box.set_right(o.b, bar_index + 5)
+
+        mitigated = false
+        if o.bull
+            if close < o.bottom
+                mitigated := true
+        else
+            if close > o.top
+                mitigated := true
+
+        if (ob_mitigation and mitigated) or i >= max_objects
+            box.delete(o.b)
+            array.remove(obs, i)
+        i := i - 1
