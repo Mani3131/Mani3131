@@ -83,6 +83,7 @@ type Zone
     line poc_obj
     label lbl_obj
     label disp_lbl_obj
+    label retr_lbl_obj
 
 var Zone[] active_zones = array.new<Zone>()
 
@@ -118,7 +119,14 @@ if active_zones.size() > 0
         Zone z = active_zones.get(i)
 
         if not z.is_mitigated and z.is_valid
-            // Check for Mitigation
+            // Check for Retracement (Vacuum Fill)
+            if na(z.retr_lbl_obj) and bar_index > z.b_end + 2
+                // If price has moved away and starts coming back
+                bool is_retracing = z.is_bull ? (high < high[1] and low < low[1]) : (low > low[1] and high > high[1])
+                if is_retracing
+                    z.retr_lbl_obj := label.new(bar_index, z.is_bull ? high : low, "3. VACUUM FILL (Retracement)", color=color.new(color.red, 100), textcolor=color.red, style=z.is_bull ? label.style_label_down : label.style_label_up)
+
+            // Check for Mitigation (Re-entry)
             bool touched = false
             if z.is_bull
                 touched := low <= z.b_h and high >= z.b_l
@@ -127,7 +135,7 @@ if active_zones.size() > 0
 
             if touched and bar_index > z.b_end + 1
                 z.is_mitigated := true
-                label.new(bar_index, z.is_bull ? z.b_l : z.b_h, "MITIGATION", color=color.white, textcolor=color.black, style=label.style_label_center)
+                label.new(bar_index, z.is_bull ? z.b_l : z.b_h, "4. RE-ENTRY (Mitigation)", color=color.white, textcolor=color.teal, style=label.style_label_center)
 
         // Cleanup: Invalidate if price breaks through the zone
         if z.is_bull and close < z.b_l
@@ -140,8 +148,8 @@ if active_zones.size() > 0
             if na(z.box_obj)
                 z.box_obj := box.new(z.b_start, z.b_h, bar_index, z.b_l, border_color=color.gray, bgcolor=z.is_bull ? bull_color : bear_color)
                 z.poc_obj := line.new(z.b_start, z.b_poc, bar_index, z.b_poc, color=poc_color, style=line.style_dashed)
-                z.lbl_obj := label.new(z.b_start, z.is_bull ? z.b_l : z.b_h, (z.is_bull ? "DEMAND" : "SUPPLY") + " (HVN/POC)", color=color.new(color.black, 100), textcolor=color.gray, style=label.style_label_up)
-                z.disp_lbl_obj := label.new(z.b_end + 1, z.is_bull ? z.b_h : z.b_l, "DISPLACEMENT (LVN)", color=color.new(color.black, 100), textcolor=color.blue, style=label.style_label_down)
+                z.lbl_obj := label.new(z.b_start, z.is_bull ? z.b_l : z.b_h, "1. THE BASE (Orders Accumulated) - POC: " + str.tostring(z.b_poc, format.mintick), color=color.new(color.black, 100), textcolor=color.white, style=label.style_label_up)
+                z.disp_lbl_obj := label.new(z.b_end + 1, z.is_bull ? z.b_h : z.b_l, "2. DISPLACEMENT (Market Imbalance)", color=color.new(color.black, 100), textcolor=color.teal, style=label.style_label_down)
             else
                 box.set_right(z.box_obj, bar_index)
                 line.set_right(z.poc_obj, bar_index)
@@ -150,13 +158,27 @@ if active_zones.size() > 0
             line.delete(z.poc_obj)
             label.delete(z.lbl_obj)
             label.delete(z.disp_lbl_obj)
+            label.delete(z.retr_lbl_obj)
             active_zones.remove(i)
 
 // Dashboard
 var table dash = table.new(position.top_right, 2, 2, bgcolor=dashboard_color, border_width=1)
 if barstate.islast
     table.cell(dash, 0, 0, "Current Phase", text_color=color.white)
-    phase_str = in_base ? "Accumulation (Base)" : is_displacement ? "Displacement" : "Scanning"
+    string phase_str = "Scanning"
+    if in_base
+        phase_str := "1. THE BASE"
+    else if is_displacement
+        phase_str := "2. DISPLACEMENT"
+    else if active_zones.size() > 0
+        Zone last_z = active_zones.get(active_zones.size() - 1)
+        if last_z.is_mitigated
+            phase_str := "4. RE-ENTRY"
+        else if not na(last_z.retr_lbl_obj)
+            phase_str := "3. VACUUM FILL"
+        else
+            phase_str := "2. DISPLACEMENT (Leg)"
+
     table.cell(dash, 1, 0, phase_str, text_color=color.yellow)
     table.cell(dash, 0, 1, "Active Zones", text_color=color.white)
     table.cell(dash, 1, 1, str.tostring(active_zones.size()), text_color=color.yellow)
