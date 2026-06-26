@@ -152,7 +152,7 @@ if active_zones.size() > 0
                 z.disp_lbl_obj := label.new(z.b_end + 1, z.is_bull ? z.b_h : z.b_l, "2. DISPLACEMENT (Market Imbalance)", color=color.new(color.black, 100), textcolor=color.teal, style=label.style_label_down)
             else
                 box.set_right(z.box_obj, bar_index)
-                line.set_right(z.poc_obj, bar_index)
+                line.set_x2(z.poc_obj, bar_index)
         else
             box.delete(z.box_obj)
             line.delete(z.poc_obj)
