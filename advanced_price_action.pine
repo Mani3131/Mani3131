@@ -152,7 +152,8 @@ if show_fvg
 
 // FVG Management & Mitigation
 if array.size(fvgs) > 0
-    for i = array.size(fvgs) - 1 to 0 by -1
+    i = array.size(fvgs) - 1
+    while i >= 0
         f = array.get(fvgs, i)
         box.set_right(f.b, bar_index + 5)
 
@@ -164,9 +165,10 @@ if array.size(fvgs) > 0
             if high > f.top
                 mitigated := true
 
-        if (fvg_mitigation and mitigated) or i > max_objects
+        if (fvg_mitigation and mitigated) or i >= max_objects
             box.delete(f.b)
             array.remove(fvgs, i)
+        i := i - 1
 
 // --- Order Blocks (OB) ---
 type OB
@@ -206,7 +208,8 @@ if show_ob
 
 // OB Management & Mitigation
 if array.size(obs) > 0
-    for i = array.size(obs) - 1 to 0 by -1
+    i = array.size(obs) - 1
+    while i >= 0
         o = array.get(obs, i)
         box.set_right(o.b, bar_index + 5)
 
@@ -218,6 +221,7 @@ if array.size(obs) > 0
             if close > o.top
                 mitigated := true
 
-        if (ob_mitigation and mitigated) or i > max_objects
+        if (ob_mitigation and mitigated) or i >= max_objects
             box.delete(o.b)
             array.remove(obs, i)
+        i := i - 1
