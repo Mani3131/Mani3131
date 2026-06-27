@@ -1,0 +1,337 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Order Flow Confluence Strategy [Mani3131]", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=500)
+
+// ==========================================
+// STRATEGY INPUTS
+// ==========================================
+
+// 1. Macro Zone Detection (Volume Profile)
+grp_macro = "1. Macro Zone Detection (VP)"
+macro_tf      = input.timeframe("240", "Macro Timeframe", group=grp_macro, tooltip="Timeframe used to detect POC, HVN, and LVN zones.")
+vp_lookback   = input.int(100, "VP Lookback Bars", minval=10, group=grp_macro)
+vp_row_size   = input.int(50, "VP Row Size", minval=10, group=grp_macro)
+
+// 2. Order Book Validation (Proxy)
+grp_ob = "2. Order Book Validation (Proxy)"
+ob_lookback = input.int(20, "OB Liquidity Lookback", minval=5, group=grp_ob, tooltip="Lookback to identify large historical volume clusters as proxy for resting liquidity.")
+ob_threshold = input.float(2.0, "Liquidity Wall Multiplier", minval=1.1, step=0.1, group=grp_ob, tooltip="Multiplier for average volume at price to define a liquidity wall.")
+
+// 3. Momentum Divergence Filter (CVD)
+grp_cvd = "3. Momentum Divergence (CVD)"
+cvd_lookback  = input.int(20, "CVD Divergence Lookback", minval=5, group=grp_cvd)
+show_cvd      = input.bool(true, "Show CVD on Chart", group=grp_cvd)
+
+// 4. Micro Execution Trigger (Footprint/Imbalance)
+grp_footprint = "4. Micro Execution (Footprint)"
+imbalance_ratio = input.float(3.0, "Diagonal Imbalance Ratio", minval=1.1, step=0.1, group=grp_footprint, tooltip="Buy/Sell volume ratio to trigger initiation/absorption patterns (e.g., 3.0 = 300%).")
+lower_tf        = input.timeframe("1", "Lower Timeframe for Imbalance", group=grp_footprint, tooltip="LTF data used for diagonal imbalance detection.")
+
+// 5. Time-Based Opening Manipulation
+grp_time = "5. Opening Manipulation (Time)"
+use_time_filter = input.bool(true, "Use Time-Based Filter", group=grp_time)
+macro_window    = input.int(10, "1H/4H Window (Mins)", minval=1, group=grp_time)
+mid_window      = input.int(5, "30m Window (Mins)", minval=1, group=grp_time)
+scalp_window    = input.int(3, "15m Window (Mins)", minval=1, group=grp_time)
+
+// Colors & Visuals
+grp_vis = "Visual Settings"
+color_poc = input.color(color.new(color.orange, 0), "POC Color", group=grp_vis)
+color_hvn = input.color(color.new(color.gray, 50), "HVN Color", group=grp_vis)
+color_lvn = input.color(color.new(color.blue, 50), "LVN Color", group=grp_vis)
+
+// ==========================================
+// PLACEHOLDERS FOR LOGIC
+// ==========================================
+
+// [Step 2 Logic: Volume Profile]
+var float macro_poc = float(na)
+var float macro_hvn_high = float(na)
+var float macro_hvn_low = float(na)
+var float macro_lvn_high = float(na)
+var float macro_lvn_low = float(na)
+
+// Fixed Range Volume Profile Calculation
+f_calc_vp(len, rows) =>
+    float hi = ta.highest(high, len)
+    float lo = ta.lowest(low, len)
+    float step = (hi - lo) / rows
+
+    array<float> volumes = array.new_float(rows, 0.0)
+    array<float> prices = array.new_float(rows, 0.0)
+
+    for i = 0 to rows - 1
+        array.set(prices, i, lo + (i * step))
+
+    for i = 0 to len - 1
+        float bar_v = nz(volume[i])
+        float bar_avg_p = (high[i] + low[i] + close[i]) / 3
+        int bin = math.min(rows - 1, math.max(0, int((bar_avg_p - lo) / step)))
+        array.set(volumes, bin, array.get(volumes, bin) + bar_v)
+
+    int poc_idx = 0
+    float max_v = -1.0
+    for i = 0 to rows - 1
+        float v = array.get(volumes, i)
+        if v > max_v
+            max_v := v
+            poc_idx := i
+
+    float poc_p = array.get(prices, poc_idx)
+
+    float avg_v = array.size(volumes) > 0 ? array.avg(volumes) : 0.0
+    // Identify prominent HVN and LVN zones
+    int hvn_idx = -1
+    float max_hvn_v = 0.0
+    int lvn_idx = -1
+    float min_lvn_v = 1e10
+
+    for i = 0 to rows - 1
+        float v = array.get(volumes, i)
+        // Optimization: use relative volume strength
+        if v > avg_v * 1.5 and i != poc_idx
+            if v > max_hvn_v
+                max_hvn_v := v
+                hvn_idx := i
+        if v < avg_v * 0.5 and v > 0
+            if v < min_lvn_v
+                min_lvn_v := v
+                lvn_idx := i
+
+    float hvn_p = hvn_idx != -1 ? array.get(prices, hvn_idx) : float(na)
+    float lvn_p = lvn_idx != -1 ? array.get(prices, lvn_idx) : float(na)
+
+    [poc_p, hvn_p, lvn_p, step]
+
+// Higher Timeframe VP calculation wrapper
+f_get_macro_vp() =>
+    [p, h, l, s] = f_calc_vp(vp_lookback, vp_row_size)
+    [p, h, l, s]
+
+[p_sec, h_sec, l_sec, s_sec] = request.security(syminfo.tickerid, macro_tf, f_get_macro_vp())
+
+macro_poc      := p_sec
+macro_hvn_low  := h_sec
+macro_hvn_high := h_sec + s_sec
+macro_lvn_low  := l_sec
+macro_lvn_high := l_sec + s_sec
+
+// Plot Macro Levels
+plot(macro_poc, "Macro POC", color=color_poc, style=plot.style_linebr, linewidth=2)
+var box hvn_box = box.new(int(na), float(na), int(na), float(na), bgcolor=color_hvn, border_color=color(na))
+var box lvn_box = box.new(int(na), float(na), int(na), float(na), bgcolor=color_lvn, border_color=color(na))
+
+if barstate.islast
+    // Approximate the left coordinate based on current timeframe bars
+    // Since we don't know the exact starting bar_index of the macro lookback on the current chart easily,
+    // we use a large enough window or just show it on the right.
+    box.set_lefttop(hvn_box, bar_index - 500, macro_hvn_high)
+    box.set_rightbottom(hvn_box, bar_index + 10, macro_hvn_low)
+    box.set_lefttop(lvn_box, bar_index - 500, macro_lvn_high)
+    box.set_rightbottom(lvn_box, bar_index + 10, macro_lvn_low)
+
+// [Step 3 Logic: CVD]
+float cvd = 0.0
+// Proxy for Buy/Sell Volume using price action within the bar
+float vol_buy  = (close - low) / (high - low + 1e-10) * volume
+float vol_sell = (high - close) / (high - low + 1e-10) * volume
+float delta    = vol_buy - vol_sell
+
+cvd := nz(cvd[1]) + delta
+
+// Divergence Detection
+f_detect_div(src, lookback) =>
+    bool div_bull = false
+    bool div_bear = false
+
+    // Bullish Exhaustion: Price at its minimum, but CVD has already bottomed and is rising
+    if low == ta.lowest(low, lookback) and cvd > ta.lowest(cvd, lookback)
+        div_bull := true
+    // Bearish Exhaustion: Price at its maximum, but CVD has already topped and is falling
+    if high == ta.highest(high, lookback) and cvd < ta.highest(cvd, lookback)
+        div_bear := true
+
+    [div_bull, div_bear]
+
+[bull_div, bear_div] = f_detect_div(cvd, cvd_lookback)
+
+plotshape(bull_div and show_cvd, "CVD Bull Div", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(bear_div and show_cvd, "CVD Bear Div", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// [Step 4 Logic: Footprint Imbalances]
+// We use request.security_lower_tf to get price/volume distribution within the bar
+type FootprintBar
+    float[] buy_vol
+    float[] sell_vol
+    float[] prices
+
+f_get_imbalances() =>
+    // For the current bar, get LTF data
+    float[] ltf_high   = request.security_lower_tf(syminfo.tickerid, lower_tf, high)
+    float[] ltf_low    = request.security_lower_tf(syminfo.tickerid, lower_tf, low)
+    float[] ltf_close  = request.security_lower_tf(syminfo.tickerid, lower_tf, close)
+    float[] ltf_volume = request.security_lower_tf(syminfo.tickerid, lower_tf, volume)
+
+    int buy_imb_count  = 0
+    int sell_imb_count = 0
+
+    int size = array.size(ltf_close)
+    if size > 2
+        // We approximate diagonal imbalances by binning LTF volume into "ticks" or small price levels
+        // and comparing Buy Volume at Price P with Sell Volume at Price P - 1 step
+        float bar_hi = ta.highest(high, 1)
+        float bar_lo = ta.lowest(low, 1)
+        float tick_size = syminfo.mintick * 10 // Use 10 ticks for binning performance
+        int bins = math.max(1, int((bar_hi - bar_lo) / tick_size))
+
+        array<float> bin_buy_vol  = array.new_float(bins + 1, 0.0)
+        array<float> bin_sell_vol = array.new_float(bins + 1, 0.0)
+
+        for i = 0 to size - 1
+            float c = array.get(ltf_close, i)
+            float v = array.get(ltf_volume, i)
+            float h = array.get(ltf_high, i)
+            float l = array.get(ltf_low, i)
+
+            // Apportion volume based on candle body/wicks (Buy/Sell Proxy)
+            float b_ratio = (c - l) / (h - l + 1e-10)
+            float b_vol = v * b_ratio
+            float s_vol = v * (1.0 - b_ratio)
+
+            int bin_idx = math.min(bins, math.max(0, int((c - bar_lo) / tick_size)))
+            array.set(bin_buy_vol, bin_idx, array.get(bin_buy_vol, bin_idx) + b_vol)
+            array.set(bin_sell_vol, bin_idx, array.get(bin_sell_vol, bin_idx) + s_vol)
+
+        // Check Diagonal Imbalances: Buy[P] vs Sell[P-1]
+        if bins > 1
+            for i = 1 to bins
+                float b_vol = array.get(bin_buy_vol, i)
+                float s_vol = array.get(bin_sell_vol, i-1)
+                if b_vol > s_vol * imbalance_ratio and s_vol > 0
+                    buy_imb_count += 1
+                if s_vol > b_vol * imbalance_ratio and b_vol > 0
+                    sell_imb_count += 1
+
+    [buy_imb_count > 0, sell_imb_count > 0]
+
+[has_buy_imbalance, has_sell_imbalance] = f_get_imbalances()
+
+// [Step 2 Logic: Order Book Validation Proxy]
+// Since we don't have DOM, we identify "Liquidity Walls" by checking if current price
+// aligns with a historically high volume-at-price cluster within the OB lookback.
+f_check_liquidity_wall(p) =>
+    float total_v_at_p = 0.0
+    float count_at_p = 0.0
+    float threshold = ta.sma(volume, ob_lookback) * ob_threshold
+
+    // Check if price is within a high-volume cluster
+    bool wall_detected = false
+    if not na(p)
+        for i = 0 to ob_lookback - 1
+            if high[i] >= p and low[i] <= p
+                if volume[i] > threshold
+                    wall_detected := true
+                    break
+    wall_detected
+
+bool has_liquidity_wall = f_check_liquidity_wall(close)
+
+// [Step 5 Logic: Time-Based Opening Manipulation]
+f_get_opening_range(mins) =>
+    var float hi = float(na)
+    var float lo = float(na)
+    var int start_time = 0
+
+    // Detect new session or candle open based on timeframe
+    int reset_mins = timeframe.isintraday ?
+          (timeframe.multiplier >= 60 ? 60 :
+           timeframe.multiplier == 30 ? 30 :
+           timeframe.multiplier == 15 ? 15 : 60) : 1440
+
+    bool is_new_period = ta.change(time(str.tostring(reset_mins))) != 0
+
+    if is_new_period
+        hi := high
+        lo := low
+        start_time := time
+    else if time < start_time + (mins * 60 * 1000)
+        hi := math.max(hi, high)
+        lo := math.min(lo, low)
+
+    bool window_closed = time >= start_time + (mins * 60 * 1000)
+    [hi, lo, window_closed]
+
+// Auto-select window duration based on chart timeframe
+int current_window = timeframe.isintraday ?
+      (timeframe.multiplier >= 60 ? macro_window :
+       timeframe.multiplier == 30 ? mid_window :
+       timeframe.multiplier == 15 ? scalp_window : macro_window) : macro_window
+
+[win_hi, win_lo, win_closed] = f_get_opening_range(current_window)
+
+// Visualization for Opening Window
+var box win_box = box.new(int(na), float(na), int(na), float(na), border_color=color.new(color.yellow, 50), bgcolor=color.new(color.yellow, 90))
+if not win_closed
+    box.set_lefttop(win_box, bar_index[1], win_hi)
+    box.set_rightbottom(win_box, bar_index, win_lo)
+
+// [Step 6 Logic: Signals & Visuals]
+
+// Logic for confluence
+bool in_macro_zone_bull = (low <= macro_poc + nz(s_sec) and low >= macro_poc - nz(s_sec)) or (low <= macro_hvn_high and high >= macro_hvn_low)
+bool in_macro_zone_bear = (high >= macro_poc - nz(s_sec) and high <= macro_poc + nz(s_sec)) or (high >= macro_hvn_low and low <= macro_hvn_high)
+
+// Time-Based Constraint: Execute after window closes and respects H/L
+bool time_ok_bull = not use_time_filter or (win_closed and low > win_lo)
+bool time_ok_bear = not use_time_filter or (win_closed and high < win_hi)
+
+bool buy_signal  = in_macro_zone_bull and bull_div and has_buy_imbalance and has_liquidity_wall and time_ok_bull
+bool sell_signal = in_macro_zone_bear and bear_div and has_sell_imbalance and has_liquidity_wall and time_ok_bear
+
+plotshape(buy_signal, "BUY ENTRY", shape.labelup, location.belowbar, color.new(color.green, 0), text="BUY\n(OF)", textcolor=color.white, size=size.normal)
+plotshape(sell_signal, "SELL ENTRY", shape.labeldown, location.abovebar, color.new(color.red, 0), text="SELL\n(OF)", textcolor=color.white, size=size.normal)
+
+// Plot SL and TP Levels
+var line sl_line = line.new(na, na, na, na, color=color.red, style=line.style_dashed)
+var line tp_line = line.new(na, na, na, na, color=color.green, style=line.style_dashed)
+
+if buy_signal
+    line.set_xy1(sl_line, bar_index, win_lo)
+    line.set_xy2(sl_line, bar_index + 20, win_lo)
+    line.set_xy1(tp_line, bar_index, macro_poc)
+    line.set_xy2(tp_line, bar_index + 20, macro_poc)
+else if sell_signal
+    line.set_xy1(sl_line, bar_index, win_hi)
+    line.set_xy2(sl_line, bar_index + 20, win_hi)
+    line.set_xy1(tp_line, bar_index, macro_poc)
+    line.set_xy2(tp_line, bar_index + 20, macro_poc)
+
+// Trade Management Dashboard
+var table dash = table.new(position.top_right, 2, 7, bgcolor=color.new(color.black, 70), border_width=1, border_color=color.gray)
+
+if barstate.islast
+    table.cell(dash, 0, 0, "Metric", text_color=color.white)
+    table.cell(dash, 1, 0, "Status", text_color=color.white)
+
+    table.cell(dash, 0, 1, "Macro Zone", text_color=color.white)
+    table.cell(dash, 1, 1, in_macro_zone_bull or in_macro_zone_bear ? "YES" : "NO", text_color=in_macro_zone_bull or in_macro_zone_bear ? color.green : color.red)
+
+    table.cell(dash, 0, 2, "CVD Div", text_color=color.white)
+    table.cell(dash, 1, 2, bull_div or bear_div ? "YES" : "NO", text_color=bull_div or bear_div ? color.green : color.red)
+
+    table.cell(dash, 0, 3, "OF Imbalance", text_color=color.white)
+    table.cell(dash, 1, 3, has_buy_imbalance or has_sell_imbalance ? "YES" : "NO", text_color=has_buy_imbalance or has_sell_imbalance ? color.green : color.red)
+
+    table.cell(dash, 0, 4, "Liq. Wall", text_color=color.white)
+    table.cell(dash, 1, 4, has_liquidity_wall ? "YES" : "NO", text_color=has_liquidity_wall ? color.green : color.red)
+
+    table.cell(dash, 0, 5, "Time Window", text_color=color.white)
+    table.cell(dash, 1, 5, win_closed ? "CLOSED" : "PRINTING", text_color=win_closed ? color.green : color.yellow)
+
+    table.cell(dash, 0, 6, "Entry Trigger", text_color=color.white)
+    table.cell(dash, 1, 6, buy_signal or sell_signal ? "EXECUTE" : "WAIT", text_color=buy_signal or sell_signal ? color.green : color.yellow)
+
+// Clean up: explicitly type na for v6
+float final_val = float(na)
