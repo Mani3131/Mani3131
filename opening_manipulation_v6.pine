@@ -1,0 +1,111 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Opening Manipulation Axiom [V6]", overlay=true, max_boxes_count=500, max_labels_count=500)
+
+// --- Inputs ---
+grp_bias = "Directional Bias"
+bias_input = input.string("Bullish", "Current Bias", options=["Bullish", "Bearish"], group=grp_bias, tooltip="Directional bias dictates the manipulation profile during the printing window: Bullish bias expects downward manipulation to form a candle low; Bearish bias expects upward manipulation to form a high.")
+
+grp_levels = "Calculated Banking Levels"
+banking_levels_str = input.string("4030, 4023", "Banking Levels (CSV)", group=grp_levels, tooltip="Comma-separated list of price levels (e.g., 4030, 4023) to monitor for institutional confluence.")
+
+grp_visuals = "Visual Settings"
+show_4h = input.bool(true, "Show 4H Windows (10m)", group=grp_visuals)
+show_1h = input.bool(true, "Show 1H Windows (10m)", group=grp_visuals)
+show_30m = input.bool(true, "Show 30M Windows (5m)", group=grp_visuals)
+show_15m = input.bool(true, "Show 15M Windows (3m)", group=grp_visuals)
+show_key_times = input.bool(true, "Show Key Volatility Shifts (03:30 EAT)", group=grp_visuals)
+
+grp_colors = "Colors & Limits"
+color_bull = input.color(color.new(color.green, 85), "Bullish Window Fill", group=grp_colors)
+color_bear = input.color(color.new(color.red, 85), "Bearish Window Fill", group=grp_colors)
+border_bull = input.color(color.new(color.green, 40), "Bullish Window Border", group=grp_colors)
+border_bear = input.color(color.new(color.red, 40), "Bearish Window Border", group=grp_colors)
+color_level = input.color(color.new(color.gray, 50), "Banking Level Color", group=grp_colors)
+max_boxes_total = input.int(300, "Max Total Boxes", minval=10, maxval=500, group=grp_colors)
+
+// --- Types & Arrays ---
+var window_boxes = array.new<box>()
+var banking_level_lines = array.new<line>()
+
+// --- Banking Levels Parsing ---
+if barstate.isfirst
+    levels_arr = str.split(banking_levels_str, ",")
+    if array.size(levels_arr) > 0
+        for i = 0 to array.size(levels_arr) - 1
+            lvl = str.tonumber(str.replace_all(array.get(levels_arr, i), " ", ""))
+            if not na(lvl)
+                array.push(banking_level_lines, line.new(bar_index, lvl, bar_index + 1, lvl, xloc=xloc.bar_index, extend=extend.both, color=color_level, style=line.style_dashed))
+        log.info("Levels processed")
+
+// --- Utility Functions ---
+is_new_period(tf) =>
+    t = time(tf)
+    ta.change(t) != 0 or (not na(t) and na(t[1]))
+
+// --- Window Logic ---
+process_window(tf, duration_mins, tf_label, is_enabled) =>
+    var float w_high = float(na)
+    var float w_low = float(na)
+    var int w_start_time = int(na)
+    var box w_box = box(na)
+
+    bool new_p = is_new_period(tf)
+
+    if new_p and is_enabled
+        w_start_time := time
+        w_high := high
+        w_low := low
+        w_box := box.new(left=bar_index, top=w_high, right=bar_index, bottom=w_low,
+                         bgcolor=bias_input == "Bullish" ? color_bull : color_bear,
+                         border_color=bias_input == "Bullish" ? border_bull : border_bear,
+                         text=tf_label, text_size=size.tiny, text_color=bias_input == "Bullish" ? border_bull : border_bear)
+        array.push(window_boxes, w_box)
+        log.info("New window started: " + tf_label)
+
+    if not na(w_start_time) and is_enabled
+        elapsed_ms = time - w_start_time
+        if elapsed_ms < duration_mins * 60 * 1000
+            w_high := math.max(w_high, high)
+            w_low := math.min(w_low, low)
+            box.set_top(w_box, w_high)
+            box.set_bottom(w_box, w_low)
+            box.set_right(w_box, bar_index)
+        else
+            // Window closed
+            w_start_time := int(na)
+            log.info("Window closed: " + tf_label)
+
+// --- Execution ---
+process_window("240", 10, "4H", show_4h)
+process_window("60", 10, "1H", show_1h)
+process_window("30", 5, "30M", show_30m)
+process_window("15", 3, "15M", show_15m)
+
+// --- Key Volatility Shifts ---
+if show_key_times
+    // 03:30 EAT = UTC+3
+    is_330 = (hour(time, "UTC+3") == 3 and minute(time, "UTC+3") == 30)
+    if is_330
+        line.new(bar_index, low, bar_index, high, xloc=xloc.bar_index, extend=extend.both, color=color.new(color.yellow, 50), style=line.style_dotted)
+        label.new(bar_index, high, "3:30 Volatility Shift", color=color.new(color.black, 100), textcolor=color.yellow, size=size.tiny, style=label.style_none)
+        log.info("3:30 Shift detected")
+
+// --- Clean up ---
+if array.size(window_boxes) > max_boxes_total
+    while array.size(window_boxes) > max_boxes_total - 20
+        box.delete(array.shift(window_boxes))
+    log.info("Cleanup completed")
+
+// --- Background Highlighting (Sessions) ---
+// Optional: Highlights EAT sessions
+show_sessions = input.bool(false, "Show EAT Sessions Highlights", group=grp_visuals)
+is_asian = time(timeframe.period, "0000-0600:1234567", "UTC+3")
+is_london = time(timeframe.period, "1000-1300:1234567", "UTC+3")
+is_ny = time(timeframe.period, "1500-1800:1234567", "UTC+3")
+
+bgcolor(show_sessions and not na(is_asian) ? color.new(color.blue, 95) : na)
+bgcolor(show_sessions and not na(is_london) ? color.new(color.orange, 95) : na)
+bgcolor(show_sessions and not na(is_ny) ? color.new(color.green, 95) : na)
