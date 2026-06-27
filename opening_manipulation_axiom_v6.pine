@@ -1,0 +1,96 @@
+//@version=6
+strategy("Opening Manipulation Axiom", overlay=true, margin_long=100, margin_short=100, initial_capital=10000, max_boxes_count=500)
+
+// ==========================================
+// 1. State Variables (Memory Modules)
+// ==========================================
+var float zone_high = float(na)
+var float zone_low = float(na)
+var float post_zone_high = float(na)
+var float post_zone_low = float(na)
+// Strategy_Status: Idle, Searching for Expansion, Waiting for Retracement
+var string strategy_status = "Idle"
+var float entry_sl = float(na)
+
+// Reset logic
+is_new_hour = ta.change(time("60")) != 0
+is_purge_min = minute(time) == 59
+
+if is_new_hour or is_purge_min
+    zone_high := float(na)
+    zone_low := float(na)
+    post_zone_high := float(na)
+    post_zone_low := float(na)
+    strategy_status := "Idle"
+    entry_sl := float(na)
+    if is_purge_min
+        strategy.close_all(comment="Safety Purge")
+        strategy.cancel_all()
+
+// ==========================================
+// 2. Time-Window Execution Logic
+// ==========================================
+curr_min = minute(time)
+
+// Phase A: The Anchor Window (Minutes 00 to 09)
+if curr_min >= 0 and curr_min <= 9
+    if is_new_hour or na(zone_high)
+        zone_high := high
+        zone_low := low
+    else
+        zone_high := math.max(zone_high, high)
+        zone_low := math.min(zone_low, low)
+    strategy_status := "Searching for Expansion"
+
+// Phase B: The Expansion Window (Minutes 10 to 58)
+if curr_min >= 10 and curr_min <= 58
+    if na(post_zone_high)
+        post_zone_high := high
+        post_zone_low := low
+    else
+        post_zone_high := math.max(post_zone_high, high)
+        post_zone_low := math.min(post_zone_low, low)
+
+    if strategy_status == "Searching for Expansion"
+        strategy_status := "Waiting for Retracement"
+
+// ==========================================
+// 3. Order Trigger & Execution Module
+// ==========================================
+
+// Buy Execution (The Low of the Hour Setup)
+bool price_touches_low = low <= zone_low and high >= zone_low
+bool buy_condition = strategy_status == "Waiting for Retracement" and post_zone_low < zone_low and price_touches_low and strategy.position_size == 0
+
+if buy_condition
+    entry_sl := post_zone_low
+    strategy.entry("Buy", strategy.long, comment="Low of Hour")
+    strategy.exit("Exit Buy", "Buy", stop=entry_sl, comment="SL")
+
+// Sell Execution (The High of the Hour Setup)
+bool price_touches_high = high >= zone_high and low <= zone_high
+bool sell_condition = strategy_status == "Waiting for Retracement" and post_zone_high > zone_high and price_touches_high and strategy.position_size == 0
+
+if sell_condition
+    entry_sl := post_zone_high
+    strategy.entry("Sell", strategy.short, comment="High of Hour")
+    strategy.exit("Exit Sell", "Sell", stop=entry_sl, comment="SL")
+
+// ==========================================
+// Visuals for Verification
+// ==========================================
+var box anchor_box = box(na)
+if is_new_hour
+    anchor_box := box.new(bar_index, na, bar_index + 9, na, border_color=color.blue, bgcolor=color.new(color.blue, 90))
+
+if not na(anchor_box) and curr_min <= 58 // Extend box for visual clarity until end of hour
+    box.set_top(anchor_box, zone_high)
+    box.set_bottom(anchor_box, zone_low)
+    box.set_right(anchor_box, bar_index)
+
+plot(zone_high, "Zone High", color=color.new(color.green, 50), style=plot.style_stepline, linewidth=2)
+plot(zone_low, "Zone Low", color=color.new(color.red, 50), style=plot.style_stepline, linewidth=2)
+
+// Labels for debugging Strategy Status
+if barstate.islast
+    label.new(bar_index, high, "Status: " + strategy_status, color=color.white, style=label.style_label_down)
