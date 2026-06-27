@@ -29,6 +29,13 @@ grp_footprint = "4. Micro Execution (Footprint)"
 imbalance_ratio = input.float(3.0, "Diagonal Imbalance Ratio", minval=1.1, step=0.1, group=grp_footprint, tooltip="Buy/Sell volume ratio to trigger initiation/absorption patterns (e.g., 3.0 = 300%).")
 lower_tf        = input.timeframe("1", "Lower Timeframe for Imbalance", group=grp_footprint, tooltip="LTF data used for diagonal imbalance detection.")
 
+// 5. Time-Based Opening Manipulation
+grp_time = "5. Opening Manipulation (Time)"
+use_time_filter = input.bool(true, "Use Time-Based Filter", group=grp_time)
+macro_window    = input.int(10, "1H/4H Window (Mins)", minval=1, group=grp_time)
+mid_window      = input.int(5, "30m Window (Mins)", minval=1, group=grp_time)
+scalp_window    = input.int(3, "15m Window (Mins)", minval=1, group=grp_time)
+
 // Colors & Visuals
 grp_vis = "Visual Settings"
 color_poc = input.color(color.new(color.orange, 0), "POC Color", group=grp_vis)
@@ -127,8 +134,7 @@ if barstate.islast
 
 // [Step 3 Logic: CVD]
 float cvd = 0.0
-float bar_delta = (close >= open) ? volume * ( (close - low) / (high - low + 1e-10) ) : -volume * ( (high - close) / (high - low + 1e-10) )
-// Fallback for simple delta if needed, but better to use Buy/Sell Volume proxy
+// Proxy for Buy/Sell Volume using price action within the bar
 float vol_buy  = (close - low) / (high - low + 1e-10) * volume
 float vol_sell = (high - close) / (high - low + 1e-10) * volume
 float delta    = vol_buy - vol_sell
@@ -140,11 +146,11 @@ f_detect_div(src, lookback) =>
     bool div_bull = false
     bool div_bear = false
 
-    // Bullish Exhaustion: Price Lower Low, CVD Higher Low
-    if ta.lowest(low, lookback) == low and ta.lowest(cvd, lookback) > cvd
+    // Bullish Exhaustion: Price at its minimum, but CVD has already bottomed and is rising
+    if low == ta.lowest(low, lookback) and cvd > ta.lowest(cvd, lookback)
         div_bull := true
-    // Bearish Exhaustion: Price Higher High, CVD Lower High
-    if ta.highest(high, lookback) == high and ta.highest(cvd, lookback) < cvd
+    // Bearish Exhaustion: Price at its maximum, but CVD has already topped and is falling
+    if high == ta.highest(high, lookback) and cvd < ta.highest(cvd, lookback)
         div_bear := true
 
     [div_bull, div_bear]
@@ -232,20 +238,78 @@ f_check_liquidity_wall(p) =>
 
 bool has_liquidity_wall = f_check_liquidity_wall(close)
 
-// [Step 5 Logic: Signals & Visuals]
+// [Step 5 Logic: Time-Based Opening Manipulation]
+f_get_opening_range(mins) =>
+    var float hi = float(na)
+    var float lo = float(na)
+    var int start_time = 0
+
+    // Detect new session or candle open based on timeframe
+    int reset_mins = timeframe.isintraday ?
+          (timeframe.multiplier >= 60 ? 60 :
+           timeframe.multiplier == 30 ? 30 :
+           timeframe.multiplier == 15 ? 15 : 60) : 1440
+
+    bool is_new_period = ta.change(time(str.tostring(reset_mins))) != 0
+
+    if is_new_period
+        hi := high
+        lo := low
+        start_time := time
+    else if time < start_time + (mins * 60 * 1000)
+        hi := math.max(hi, high)
+        lo := math.min(lo, low)
+
+    bool window_closed = time >= start_time + (mins * 60 * 1000)
+    [hi, lo, window_closed]
+
+// Auto-select window duration based on chart timeframe
+int current_window = timeframe.isintraday ?
+      (timeframe.multiplier >= 60 ? macro_window :
+       timeframe.multiplier == 30 ? mid_window :
+       timeframe.multiplier == 15 ? scalp_window : macro_window) : macro_window
+
+[win_hi, win_lo, win_closed] = f_get_opening_range(current_window)
+
+// Visualization for Opening Window
+var box win_box = box.new(int(na), float(na), int(na), float(na), border_color=color.new(color.yellow, 50), bgcolor=color.new(color.yellow, 90))
+if not win_closed
+    box.set_lefttop(win_box, bar_index[1], win_hi)
+    box.set_rightbottom(win_box, bar_index, win_lo)
+
+// [Step 6 Logic: Signals & Visuals]
 
 // Logic for confluence
 bool in_macro_zone_bull = (low <= macro_poc + nz(s_sec) and low >= macro_poc - nz(s_sec)) or (low <= macro_hvn_high and high >= macro_hvn_low)
 bool in_macro_zone_bear = (high >= macro_poc - nz(s_sec) and high <= macro_poc + nz(s_sec)) or (high >= macro_hvn_low and low <= macro_hvn_high)
 
-bool buy_signal  = in_macro_zone_bull and bull_div and has_buy_imbalance and has_liquidity_wall
-bool sell_signal = in_macro_zone_bear and bear_div and has_sell_imbalance and has_liquidity_wall
+// Time-Based Constraint: Execute after window closes and respects H/L
+bool time_ok_bull = not use_time_filter or (win_closed and low > win_lo)
+bool time_ok_bear = not use_time_filter or (win_closed and high < win_hi)
+
+bool buy_signal  = in_macro_zone_bull and bull_div and has_buy_imbalance and has_liquidity_wall and time_ok_bull
+bool sell_signal = in_macro_zone_bear and bear_div and has_sell_imbalance and has_liquidity_wall and time_ok_bear
 
 plotshape(buy_signal, "BUY ENTRY", shape.labelup, location.belowbar, color.new(color.green, 0), text="BUY\n(OF)", textcolor=color.white, size=size.normal)
 plotshape(sell_signal, "SELL ENTRY", shape.labeldown, location.abovebar, color.new(color.red, 0), text="SELL\n(OF)", textcolor=color.white, size=size.normal)
 
+// Plot SL and TP Levels
+var line sl_line = line.new(na, na, na, na, color=color.red, style=line.style_dashed)
+var line tp_line = line.new(na, na, na, na, color=color.green, style=line.style_dashed)
+
+if buy_signal
+    line.set_xy1(sl_line, bar_index, win_lo)
+    line.set_xy2(sl_line, bar_index + 20, win_lo)
+    line.set_xy1(tp_line, bar_index, macro_poc)
+    line.set_xy2(tp_line, bar_index + 20, macro_poc)
+else if sell_signal
+    line.set_xy1(sl_line, bar_index, win_hi)
+    line.set_xy2(sl_line, bar_index + 20, win_hi)
+    line.set_xy1(tp_line, bar_index, macro_poc)
+    line.set_xy2(tp_line, bar_index + 20, macro_poc)
+
 // Trade Management Dashboard
-var table dash = table.new(position.top_right, 2, 6, bgcolor=color.new(color.black, 70), border_width=1, border_color=color.gray)
+var table dash = table.new(position.top_right, 2, 7, bgcolor=color.new(color.black, 70), border_width=1, border_color=color.gray)
 
 if barstate.islast
     table.cell(dash, 0, 0, "Metric", text_color=color.white)
@@ -263,8 +327,11 @@ if barstate.islast
     table.cell(dash, 0, 4, "Liq. Wall", text_color=color.white)
     table.cell(dash, 1, 4, has_liquidity_wall ? "YES" : "NO", text_color=has_liquidity_wall ? color.green : color.red)
 
-    table.cell(dash, 0, 5, "Entry Trigger", text_color=color.white)
-    table.cell(dash, 1, 5, buy_signal or sell_signal ? "EXECUTE" : "WAIT", text_color=buy_signal or sell_signal ? color.green : color.yellow)
+    table.cell(dash, 0, 5, "Time Window", text_color=color.white)
+    table.cell(dash, 1, 5, win_closed ? "CLOSED" : "PRINTING", text_color=win_closed ? color.green : color.yellow)
+
+    table.cell(dash, 0, 6, "Entry Trigger", text_color=color.white)
+    table.cell(dash, 1, 6, buy_signal or sell_signal ? "EXECUTE" : "WAIT", text_color=buy_signal or sell_signal ? color.green : color.yellow)
 
 // Clean up: explicitly type na for v6
 float final_val = float(na)
