@@ -37,8 +37,8 @@ if barstate.isfirst
         for i = 0 to array.size(levels_arr) - 1
             lvl = str.tonumber(str.replace_all(array.get(levels_arr, i), " ", ""))
             if not na(lvl)
-                l = line.new(bar_index, lvl, bar_index + 1, lvl, xloc=xloc.bar_index, extend=extend.both, color=color_level, style=line.style_dashed)
-                array.push(banking_level_lines, l)
+                array.push(banking_level_lines, line.new(bar_index, lvl, bar_index + 1, lvl, xloc=xloc.bar_index, extend=extend.both, color=color_level, style=line.style_dashed))
+        log.info("Levels processed")
 
 // --- Utility Functions ---
 is_new_period(tf) =>
@@ -63,6 +63,7 @@ process_window(tf, duration_mins, tf_label, is_enabled) =>
                          border_color=bias_input == "Bullish" ? border_bull : border_bear,
                          text=tf_label, text_size=size.tiny, text_color=bias_input == "Bullish" ? border_bull : border_bear)
         array.push(window_boxes, w_box)
+        log.info("New window started: " + tf_label)
 
     if not na(w_start_time) and is_enabled
         elapsed_ms = time - w_start_time
@@ -75,6 +76,7 @@ process_window(tf, duration_mins, tf_label, is_enabled) =>
         else
             // Window closed
             w_start_time := int(na)
+            log.info("Window closed: " + tf_label)
 
 // --- Execution ---
 process_window("240", 10, "4H", show_4h)
@@ -89,11 +91,13 @@ if show_key_times
     if is_330
         line.new(bar_index, low, bar_index, high, xloc=xloc.bar_index, extend=extend.both, color=color.new(color.yellow, 50), style=line.style_dotted)
         label.new(bar_index, high, "3:30 Volatility Shift", color=color.new(color.black, 100), textcolor=color.yellow, size=size.tiny, style=label.style_none)
+        log.info("3:30 Shift detected")
 
 // --- Clean up ---
 if array.size(window_boxes) > max_boxes_total
     while array.size(window_boxes) > max_boxes_total - 20
         box.delete(array.shift(window_boxes))
+    log.info("Cleanup completed")
 
 // --- Background Highlighting (Sessions) ---
 // Optional: Highlights EAT sessions
