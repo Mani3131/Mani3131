@@ -162,20 +162,21 @@ if barstate.islast
 // Dashboard
 // ==========================================
 var table dashboard = table.new(position.top_right, 2, 5, bgcolor=color.new(color.black, 70), border_width=1, border_color=color.gray)
+
+f_fill_row(table tbl, int row, string tf, window_state ws) =>
+    table.cell(tbl, 0, row, tf, text_color=color.white)
+    string status = na(ws.start_time) ? "Waiting" : (ws.is_void ? "VOID" : (ws.is_set ? (ws.has_traded ? "EXECUTED" : "LOCKED") : "PRINTING"))
+    color c = status == "VOID" ? color.red : (status == "EXECUTED" ? color.aqua : (status == "LOCKED" ? color.green : color.yellow))
+    table.cell(tbl, 1, row, status, text_color=c)
+
 if barstate.islast
     table.cell(dashboard, 0, 0, "Timeframe", text_color=color.white)
     table.cell(dashboard, 1, 0, "Status", text_color=color.white)
 
-    f_fill_row(int row, string tf, window_state ws) =>
-        table.cell(dashboard, 0, row, tf, text_color=color.white)
-        string status = na(ws.start_time) ? "Waiting" : (ws.is_void ? "VOID" : (ws.is_set ? (ws.has_traded ? "EXECUTED" : "LOCKED") : "PRINTING"))
-        color c = status == "VOID" ? color.red : (status == "EXECUTED" ? color.aqua : (status == "LOCKED" ? color.green : color.yellow))
-        table.cell(dashboard, 1, row, status, text_color=c)
-
-    f_fill_row(1, "4-Hour", w4h)
-    f_fill_row(2, "1-Hour", w1h)
-    f_fill_row(3, "30-Min", w30m)
-    f_fill_row(4, "15-Min", w15m)
+    f_fill_row(dashboard, 1, "4-Hour", w4h)
+    f_fill_row(dashboard, 2, "1-Hour", w1h)
+    f_fill_row(dashboard, 3, "30-Min", w30m)
+    f_fill_row(dashboard, 4, "15-Min", w15m)
 
 // Branding
 var table brand_tbl = table.new(position.bottom_right, 1, 1)
