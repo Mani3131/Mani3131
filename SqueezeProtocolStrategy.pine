@@ -23,6 +23,11 @@ bool is_new_day = ta.change(time("D", "GMT+3")) != 0
 // Determine active threshold
 int active_threshold = is_ny ? ny_vol_thresh : is_london ? london_vol_thresh : 0
 
+var float vah = na
+var float val = na
+var float poc = na
+var float lvn = na
+
 // Layer 1: Market State & Structural Environment
 var float range_high = na
 var float range_low = na
@@ -48,10 +53,6 @@ plotshape(is_ny, "NY Session Active", shape.square, location.top, color.new(colo
 plotshape(is_london, "London Session Active", shape.square, location.top, color.new(color.red, 90), size=size.small)
 
 // Layer 2: Volume Profile & Location Engine
-var float vah = na
-var float val = na
-var float poc = na
-var float lvn = na
 
 // Fixed binning to avoid redistribution errors
 float bin_size = syminfo.mintick * 50 // 50 ticks per bin for performance
