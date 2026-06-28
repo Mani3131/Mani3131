@@ -1,0 +1,231 @@
+//@version=6
+strategy("Squeeze Protocol Strategy [AMT + Volume Profile]", overlay=true, max_boxes_count=500, max_labels_count=500)
+
+// --- Inputs ---
+// Session Times
+ny_session_input = input.session("0930-1600", "New York Session", group="Sessions")
+london_session_input = input.session("0300-1130", "London Session", group="Sessions")
+
+// Volume Thresholds
+ny_vol_thresh = input.int(30, "NY Aggression Filter (Contracts)", minval=1, group="Order Flow")
+london_vol_thresh = input.int(20, "London Aggression Filter (Contracts)", minval=1, group="Order Flow")
+
+// Risk Management
+sl_ticks = input.int(2, "Stop Loss Ticks (behind wick)", minval=1, group="Risk Management")
+tp_ratio = input.float(2.0, "Risk/Reward Ratio (Fallback)", minval=1.0, group="Risk Management")
+ext_target = input.float(1.618, "Imbalance Extension Target", minval=1.0, group="Risk Management")
+
+// --- State Management ---
+bool is_ny = not na(time(timeframe.period, ny_session_input, "America/New_York"))
+bool is_london = not na(time(timeframe.period, london_session_input, "Europe/London"))
+bool is_new_day = ta.change(time("D")) != 0
+
+// Determine active threshold
+int active_threshold = is_ny ? ny_vol_thresh : is_london ? london_vol_thresh : 0
+
+// Layer 1: Market State & Structural Environment
+var float range_high = na
+var float range_low = na
+var bool is_imbalance = false
+
+// Reset range on new day or session start
+if is_new_day or (is_ny and not is_ny[1]) or (is_london and not is_london[1])
+    range_high := high
+    range_low := low
+else if not is_imbalance
+    range_high := math.max(range_high, high)
+    range_low := math.min(range_low, low)
+
+// Imbalance detection: Breakout of the initial range
+// Updated in Layer 2 based on Value Area
+is_imbalance := (not na(vah) and (close > vah or close < val)) or is_imbalance[1]
+bool is_balance = not is_imbalance
+
+// Visuals for Market State
+bgcolor(is_imbalance ? color.new(color.green, 90) : color.new(color.gray, 90), title="Market State (Green=Imbalance, Gray=Balance)")
+
+plotshape(is_ny, "NY Session Active", shape.square, location.top, color.new(color.blue, 90), size=size.small)
+plotshape(is_london, "London Session Active", shape.square, location.top, color.new(color.red, 90), size=size.small)
+
+// Layer 2: Volume Profile & Location Engine
+var float vah = na
+var float val = na
+var float poc = na
+var float lvn = na
+
+// Fixed binning to avoid redistribution errors
+float bin_size = syminfo.mintick * 50 // 50 ticks per bin for performance
+var float session_base_price = na
+int max_bins = 1000
+var float[] vol_bins = array.new_float(max_bins, 0.0)
+
+if is_new_day or (is_ny and not is_ny[1]) or (is_london and not is_london[1])
+    session_base_price := open
+    array.fill(vol_bins, 0.0)
+
+// Request lower timeframe data for accurate volume distribution and aggression filtering
+// We use "1" (1 minute) as the lower timeframe. If the chart is already 1m, this still works.
+[ltf_v, ltf_c, ltf_o] = request.security_lower_tf(syminfo.tickerid, "1", [volume, close, open])
+
+bool has_aggression = false
+float bar_delta = 0.0
+
+if (is_ny or is_london) and not na(session_base_price)
+    for i = 0 to array.size(ltf_v) - 1
+        float v = array.get(ltf_v, i)
+        float c = array.get(ltf_c, i)
+        float o = array.get(ltf_o, i)
+
+        // Update Volume Profile
+        int bin_idx = math.floor((c - session_base_price) / bin_size) + (max_bins / 2)
+        bin_idx := math.clamp(bin_idx, 0, max_bins - 1)
+        array.set(vol_bins, bin_idx, array.get(vol_bins, bin_idx) + v)
+
+        // Update Aggression Filter (Step for Layer 3)
+        if v >= active_threshold
+            has_aggression := true
+
+        // Update Delta (Step for Layer 3)
+        bar_delta += (c >= o ? v : -v)
+
+// Calculate POC, VAH, VAL from fixed bins
+if (is_ny or is_london) and not na(session_base_price)
+    float max_vol = 0.0
+    int poc_bin = 0
+    float total_vol = 0.0
+    int first_bin = -1
+    int last_bin = -1
+
+    for i = 0 to max_bins - 1
+        float v = array.get(vol_bins, i)
+        if v > 0
+            total_vol += v
+            if first_bin == -1
+                first_bin := i
+            last_bin := i
+            if v > max_vol
+                max_vol := v
+                poc_bin := i
+
+    if total_vol > 0
+        poc := session_base_price + (poc_bin - (max_bins / 2)) * bin_size
+
+        float target_va_vol = total_vol * 0.70
+        float current_va_vol = max_vol
+        int lower_idx = poc_bin
+        int upper_idx = poc_bin
+
+        while current_va_vol < target_va_vol and (lower_idx > first_bin or upper_idx < last_bin)
+            float lower_v = lower_idx > first_bin ? array.get(vol_bins, lower_idx - 1) : 0.0
+            float upper_v = upper_idx < last_bin ? array.get(vol_bins, upper_idx + 1) : 0.0
+
+            if (lower_v >= upper_v and lower_idx > first_bin) or upper_idx == last_bin
+                current_va_vol += lower_v
+                lower_idx -= 1
+            else if upper_idx < last_bin
+                current_va_vol += upper_v
+                upper_idx += 1
+            else
+                break
+
+        val := session_base_price + (lower_idx - (max_bins / 2)) * bin_size
+        vah := session_base_price + (upper_idx + 1 - (max_bins / 2)) * bin_size
+
+        // LVN Detection
+        float min_vol = max_vol
+        int lvn_bin = poc_bin
+        for i = lower_idx to upper_idx
+            float v = array.get(vol_bins, i)
+            if v < min_vol and v > 0
+                min_vol := v
+                lvn_bin := i
+        lvn := session_base_price + (lvn_bin - (max_bins / 2)) * bin_size
+
+// Plots for Volume Profile
+plot(vah, "VAH", color.new(color.red, 50), style=plot.style_stepline)
+plot(val, "VAL", color.new(color.blue, 50), style=plot.style_stepline)
+plot(poc, "POC", color.new(color.orange, 0), linewidth=2, style=plot.style_stepline)
+plot(lvn, "LVN", color.new(color.white, 50), style=plot.style_circles)
+
+// Alert for LVN Touch
+bool touch_lvn = ta.cross(close, lvn)
+if touch_lvn
+    alert("Price touching Low Volume Node (LVN) - Structural Protection Zone", alert.freq_once_per_bar)
+
+// Layer 3: Order Flow Validation & Filter Settings
+// Cumulative Volume Delta (CVD)
+var float cvd = 0.0
+cvd += bar_delta
+
+if is_new_day
+    cvd := bar_delta
+
+// Aggression Filtering: Large market orders (Captured in Layer 2 loop)
+bool is_aggressive = has_aggression and active_threshold > 0
+
+// CVD Divergence Detection
+bool cvd_bull_div = low <= ta.lowest(low, 10) and cvd > ta.lowest(cvd, 10)
+bool cvd_bear_div = high >= ta.highest(high, 10) and cvd < ta.highest(cvd, 10)
+
+plot(cvd, "CVD", color.new(color.purple, 50), display=display.none)
+
+// Aggressive Trend Validation for Model 1
+bool cvd_bull_trend = ta.change(cvd) > 0 and is_imbalance and close > open
+bool cvd_bear_trend = ta.change(cvd) < 0 and is_imbalance and close < open
+
+plotshape(cvd_bull_trend, "CVD Bull Trend", shape.arrowup, location.top, color.green, size=size.tiny, display=display.none)
+plotshape(cvd_bear_trend, "CVD Bear Trend", shape.arrowdown, location.top, color.red, size=size.tiny, display=display.none)
+
+// Layer 4 (Part A): Liquidity Sweeps & Trap Confirmation
+// Step 1: Wait for Fake Breakout
+bool sweep_high = high > vah and close < vah
+bool sweep_low = low < val and close > val
+
+// Step 2: Trap Confirmation
+// Opposing aggressive orders print with 0 follow-through
+// Bullish Trap: Price sweeps low, high volume (aggressive), and CVD exhibits divergence (absorbed auction)
+bool bull_trap = sweep_low and is_aggressive and (close > open or cvd_bull_div)
+// Bearish Trap: Price sweeps high, high volume (aggressive), and CVD exhibits divergence (absorbed auction)
+bool bear_trap = sweep_high and is_aggressive and (close < open or cvd_bear_div)
+
+plotshape(bull_trap, "Bull Trap", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(bear_trap, "Bear Trap", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// Layer 4 (Part B): Entry Trigger
+// [ Step 3: Trigger Entry ] ──► Enter when 1m candle closes decisively above breakout box
+// In our case, the "breakout box" is the immediate trap candle's range or the VA boundary.
+// We enter on the next candle if the trap is confirmed.
+
+bool long_entry_signal = bull_trap
+bool short_entry_signal = bear_trap
+
+// Layer 4 (Part C): Risk Management & Profit Take
+// Risk Mitigation Placement: Stop-losses are drawn extremely tight, tucked exactly one to two ticks behind the structural wick extreme
+float long_sl = low - (sl_ticks * syminfo.mintick)
+float short_sl = high + (sl_ticks * syminfo.mintick)
+
+// Dynamic Profit Take Engine: Position targets are explicitly mapped to the opposing Point of Control (POC) or structural high/low value areas
+// Model 2 (Balance) targets POC. Model 1 (Imbalance) targets Extensions.
+float extension_val = is_imbalance ? (range_high - range_low) * ext_target : 0.0
+float long_tp = is_balance ? poc : (range_low + extension_val)
+float short_tp = is_balance ? poc : (range_high - extension_val)
+
+// Fallback TP based on ratio if VA is too tight
+if not na(long_sl) and (long_tp - close) / (close - long_sl) < 1.0
+    long_tp := close + (close - long_sl) * tp_ratio
+
+if not na(short_sl) and (close - short_tp) / (short_sl - close) < 1.0
+    short_tp := close - (short_sl - close) * tp_ratio
+
+// Strategy Execution
+if long_entry_signal and strategy.position_size == 0
+    strategy.entry("Long Squeeze", strategy.long)
+    strategy.exit("Exit Long", "Long Squeeze", stop=long_sl, limit=long_tp)
+
+if short_entry_signal and strategy.position_size == 0
+    strategy.entry("Short Squeeze", strategy.short)
+    strategy.exit("Exit Short", "Short Squeeze", stop=short_sl, limit=short_tp)
+
+// Closing all positions at end of session (Safety Purge)
+if (not is_ny and is_ny[1]) or (not is_london and is_london[1])
+    strategy.close_all(comment="Session End Purge")
