@@ -23,6 +23,7 @@ var float lvn = na
 var float range_high = na
 var float range_low = na
 var bool is_imbalance = false
+var bool confirmed_imbalance = false
 
 // Locked levels for non-repainting signals
 var float locked_vah = na
@@ -51,7 +52,6 @@ else if not is_imbalance
 
 // Imbalance detection: Breakout of the initial range
 // Updated on bar confirmation to prevent state repainting
-var bool confirmed_imbalance = false
 if barstate.isconfirmed
     confirmed_imbalance := (not na(locked_vah) and (close > locked_vah or close < locked_val)) or confirmed_imbalance
 
