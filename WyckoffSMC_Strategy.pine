@@ -1,0 +1,171 @@
+//@version=6
+indicator("Wyckoff + SMC High-Performance Strategy", overlay=true, max_boxes_count=500, max_labels_count=500)
+
+// --- Layer 1: Structural Mapping & Range Engine ---
+swing_lookback = input.int(10, "Swing Lookback", minval=2)
+
+var float macro_high = float(na)
+var float macro_low = float(na)
+var float range_mid = float(na)
+
+ph = ta.pivothigh(high, swing_lookback, swing_lookback)
+pl = ta.pivotlow(low, swing_lookback, swing_lookback)
+
+if not na(ph)
+    macro_high := ph
+if not na(pl)
+    macro_low := pl
+
+if not na(macro_high) and not na(macro_low)
+    range_mid := (macro_high + macro_low) / 2
+
+// Structure Break Engine
+bool is_bos_bull = close > macro_high[1]
+bool is_bos_bear = close < macro_low[1]
+
+// Equilibrium Zones
+bool in_premium = close > range_mid
+bool in_discount = close < range_mid
+
+// --- Layer 2 & 3: Wyckoff State-Machine & SMC Filter ---
+var int wyckoff_state = 0 // 0: Idle, 1: Climax, 2: Auto Rally, 3: Test, 4: Purge, 5: RTO
+var float range_ceiling = float(na)
+var float range_floor = float(na)
+var float purge_wick_low = float(na)
+var float purge_wick_high = float(na)
+var float ob_top = float(na)
+var float ob_bottom = float(na)
+
+// Persistent FVG tracking for Layer 3 confluence
+var float fvg_persistent_top = float(na)
+var float fvg_persistent_bottom = float(na)
+
+atr_val = ta.atr(14)
+expansion_mult = input.float(2.5, "Climax Expansion Multiplier", minval=1.0)
+
+// Reset state-machine on BOS
+if is_bos_bull or is_bos_bear
+    wyckoff_state := 0
+    range_ceiling := float(na)
+    range_floor := float(na)
+    purge_wick_low := float(na)
+    purge_wick_high := float(na)
+    ob_top := float(na)
+    ob_bottom := float(na)
+    fvg_persistent_top := float(na)
+    fvg_persistent_bottom := float(na)
+
+// State 1: Climax Check
+candle_body = math.abs(close - open)
+is_climax = candle_body > expansion_mult * atr_val
+
+if wyckoff_state == 0 and is_climax
+    wyckoff_state := 1
+
+// State 2: Automatic Rally
+bool is_sharp_reversal = (wyckoff_state[1] == 1) and ((close[1] > open[1] and close < open) or (close[1] < open[1] and close > open))
+
+if wyckoff_state == 1 and is_sharp_reversal
+    wyckoff_state := 2
+    range_ceiling := math.max(high, high[1])
+    range_floor := math.min(low, low[1])
+
+// State 3: The Test
+bool touches_extreme = (not na(range_ceiling)) and (high >= range_ceiling or low <= range_floor)
+bool respects_extreme = (not na(range_ceiling)) and (close <= range_ceiling and close >= range_floor)
+
+if wyckoff_state == 2 and touches_extreme and respects_extreme
+    wyckoff_state := 3
+
+// State 4: The Purge / Liquidity Hunt
+bool wick_purge_high = (not na(range_ceiling)) and (high > range_ceiling and close <= range_ceiling)
+bool wick_purge_low = (not na(range_floor)) and (low < range_floor and close >= range_floor)
+
+if (wyckoff_state == 2 or wyckoff_state == 3) and (wick_purge_high or wick_purge_low)
+    wyckoff_state := 4
+    if wick_purge_low
+        purge_wick_low := low
+        for i = 1 to 20
+            if close[i] < open[i]
+                ob_top := high[i]
+                ob_bottom := low[i]
+                box.new(bar_index[i], ob_top, bar_index + 30, ob_bottom, bgcolor=color.new(color.green, 80), border_color=color.green, extend=extend.right)
+                break
+    if wick_purge_high
+        purge_wick_high := high
+        for i = 1 to 20
+            if close[i] > open[i]
+                ob_top := high[i]
+                ob_bottom := low[i]
+                box.new(bar_index[i], ob_top, bar_index + 30, ob_bottom, bgcolor=color.new(color.red, 80), border_color=color.red, extend=extend.right)
+                break
+
+// Fair Value Gap (FVG) Detector
+bool is_fvg_bear = low[2] > high[0]
+bool is_fvg_bull = high[2] < low[0]
+
+if is_fvg_bull
+    fvg_persistent_top := low[0]
+    fvg_persistent_bottom := high[2]
+    box.new(bar_index - 2, fvg_persistent_top, bar_index, fvg_persistent_bottom, bgcolor=color.new(color.blue, 80), border_color=color(na))
+else if is_fvg_bear
+    fvg_persistent_top := low[2]
+    fvg_persistent_bottom := high[0]
+    box.new(bar_index - 2, fvg_persistent_top, bar_index, fvg_persistent_bottom, bgcolor=color.new(color.orange, 80), border_color=color(na))
+
+// State 5: Return to Origin (RTO)
+bool return_to_ob = (not na(ob_top)) and (close <= ob_top and close >= ob_bottom)
+if wyckoff_state == 4 and return_to_ob
+    wyckoff_state := 5
+
+// Confluence logic
+bool fvg_ob_overlap = (not na(fvg_persistent_top)) and (not na(ob_top)) and ((fvg_persistent_bottom <= ob_top and fvg_persistent_top >= ob_bottom))
+
+// --- Layer 4: Execution & Risk Management Logic ---
+bool buy_signal = wyckoff_state == 5 and fvg_ob_overlap and in_discount
+bool sell_signal = wyckoff_state == 5 and fvg_ob_overlap and in_premium
+
+float sl_bull = purge_wick_low - (0.5 * atr_val)
+float sl_bear = purge_wick_high + (0.5 * atr_val)
+
+float risk_bull = math.abs(close - sl_bull)
+float risk_bear = math.abs(close - sl_bear)
+
+float tp1_bull = close + (2 * risk_bull)
+float tp1_bear = close - (2 * risk_bear)
+
+float tp2_bull = macro_high
+float tp2_bear = macro_low
+
+// --- Visualization ---
+plot(macro_high, "Macro High", color.red, style=plot.style_linebr, linewidth=2)
+plot(macro_low, "Macro Low", color.green, style=plot.style_linebr, linewidth=2)
+plot(range_mid, "Equilibrium", color.gray, style=plot.style_linebr, linewidth=1)
+
+plotshape(is_bos_bull, "BOS BULL", shape.triangleup, location.abovebar, color.green, text="BOS")
+plotshape(is_bos_bear, "BOS BEAR", shape.triangledown, location.belowbar, color.red, text="BOS")
+
+plotshape(wyckoff_state == 1 and wyckoff_state[1] == 0, "SC/BC", shape.labeldown, location.abovebar, color.red, text="Climax")
+plotshape(wyckoff_state == 2 and wyckoff_state[1] == 1, "AR", shape.labelup, location.belowbar, color.blue, text="AR")
+plotshape(wyckoff_state == 3 and wyckoff_state[1] == 2, "Test", shape.labeldown, location.abovebar, color.orange, text="Test")
+plotshape(wyckoff_state == 4 and wyckoff_state[1] != 4, "Purge", shape.labelup, location.belowbar, color.purple, text="Purge")
+plotshape(wyckoff_state == 5 and wyckoff_state[1] != 5, "RTO", shape.labeldown, location.abovebar, color.green, text="RTO")
+
+plot(range_ceiling, "Range Ceiling", color.maroon, style=plot.style_linebr)
+plot(range_floor, "Range Floor", color.navy, style=plot.style_linebr)
+
+plotshape(buy_signal, "BUY ALERT", shape.triangleup, location.belowbar, color.green, size=size.large, text="BUY")
+plotshape(sell_signal, "SELL ALERT", shape.triangledown, location.abovebar, color.red, size=size.large, text="SELL")
+
+if buy_signal
+    line.new(bar_index, sl_bull, bar_index + 10, sl_bull, color=color.red, width=2, style=line.style_dashed)
+    line.new(bar_index, tp1_bull, bar_index + 10, tp1_bull, color=color.green, width=2, style=line.style_dashed)
+    label.new(bar_index + 10, tp1_bull, "TP1 (1:2)", color=color.green, textcolor=color.white, style=label.style_label_left)
+
+if sell_signal
+    line.new(bar_index, sl_bear, bar_index + 10, sl_bear, color=color.red, width=2, style=line.style_dashed)
+    line.new(bar_index, tp1_bear, bar_index + 10, tp1_bear, color=color.green, width=2, style=line.style_dashed)
+    label.new(bar_index + 10, tp1_bear, "TP1 (1:2)", color=color.green, textcolor=color.white, style=label.style_label_left)
+
+alertcondition(buy_signal, title="Wyckoff SMC BUY", message="Wyckoff SMC Buy Setup Triggered")
+alertcondition(sell_signal, title="Wyckoff SMC SELL", message="Wyckoff SMC Sell Setup Triggered")
