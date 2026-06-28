@@ -60,18 +60,18 @@ plotshape(is_london, "London Session Active", shape.square, location.top, color.
 float bin_size = syminfo.mintick * 50 // 50 ticks per bin for performance
 var float session_base_price = na
 int max_bins = 1000
-var float[] vol_bins = array.new_float(max_bins, 0.0)
+var float[] persistent_vol_bins = array.new_float(max_bins, 0.0)
 
 if is_new_day or (is_ny and not is_ny[1]) or (is_london and not is_london[1])
     session_base_price := open
-    array.fill(vol_bins, 0.0)
+    array.fill(persistent_vol_bins, 0.0)
 
 // Request lower timeframe data for accurate volume distribution and aggression filtering
-// We use "1" (1 minute) as the lower timeframe. If the chart is already 1m, this still works.
 [ltf_v, ltf_c, ltf_o] = request.security_lower_tf(syminfo.tickerid, "1", [volume, close, open])
 
 bool has_aggression = false
 float bar_delta = 0.0
+float[] current_bar_bins = array.new_float(max_bins, 0.0)
 
 if (is_ny or is_london) and not na(session_base_price)
     for i = 0 to array.size(ltf_v) - 1
@@ -79,10 +79,10 @@ if (is_ny or is_london) and not na(session_base_price)
         float c = array.get(ltf_c, i)
         float o = array.get(ltf_o, i)
 
-        // Update Volume Profile
+        // Update Temporary Volume Profile for current bar to prevent over-calculation/repainting
         int bin_idx = math.floor((c - session_base_price) / bin_size) + (max_bins / 2)
         bin_idx := math.max(0, math.min(max_bins - 1, bin_idx))
-        array.set(vol_bins, bin_idx, array.get(vol_bins, bin_idx) + v)
+        array.set(current_bar_bins, bin_idx, array.get(current_bar_bins, bin_idx) + v)
 
         // Update Aggression Filter (Step for Layer 3)
         if v >= active_threshold
@@ -91,7 +91,13 @@ if (is_ny or is_london) and not na(session_base_price)
         // Update Delta (Step for Layer 3)
         bar_delta += (c >= o ? v : -v)
 
-// Calculate POC, VAH, VAL from fixed bins
+if barstate.isconfirmed
+    for i = 0 to max_bins - 1
+        float cur_v = array.get(current_bar_bins, i)
+        if cur_v > 0
+            array.set(persistent_vol_bins, i, array.get(persistent_vol_bins, i) + cur_v)
+
+// Calculate POC, VAH, VAL from fixed bins (persistent + current bar)
 if (is_ny or is_london) and not na(session_base_price)
     float max_vol = 0.0
     int poc_bin = 0
@@ -100,7 +106,7 @@ if (is_ny or is_london) and not na(session_base_price)
     int last_bin = -1
 
     for i = 0 to max_bins - 1
-        float v = array.get(vol_bins, i)
+        float v = array.get(persistent_vol_bins, i) + array.get(current_bar_bins, i)
         if v > 0
             total_vol += v
             if first_bin == -1
@@ -119,8 +125,8 @@ if (is_ny or is_london) and not na(session_base_price)
         int upper_idx = poc_bin
 
         while current_va_vol < target_va_vol and (lower_idx > first_bin or upper_idx < last_bin)
-            float lower_v = lower_idx > first_bin ? array.get(vol_bins, lower_idx - 1) : 0.0
-            float upper_v = upper_idx < last_bin ? array.get(vol_bins, upper_idx + 1) : 0.0
+            float lower_v = lower_idx > first_bin ? (array.get(persistent_vol_bins, lower_idx - 1) + array.get(current_bar_bins, lower_idx - 1)) : 0.0
+            float upper_v = upper_idx < last_bin ? (array.get(persistent_vol_bins, upper_idx + 1) + array.get(current_bar_bins, upper_idx + 1)) : 0.0
 
             if (lower_v >= upper_v and lower_idx > first_bin) or upper_idx == last_bin
                 current_va_vol += lower_v
@@ -138,7 +144,7 @@ if (is_ny or is_london) and not na(session_base_price)
         float min_vol = max_vol
         int lvn_bin = poc_bin
         for i = lower_idx to upper_idx
-            float v = array.get(vol_bins, i)
+            float v = array.get(persistent_vol_bins, i) + array.get(current_bar_bins, i)
             if v < min_vol and v > 0
                 min_vol := v
                 lvn_bin := i
@@ -157,11 +163,15 @@ if touch_lvn
 
 // Layer 3: Order Flow Validation & Filter Settings
 // Cumulative Volume Delta (CVD)
-var float cvd = 0.0
-cvd += bar_delta
+var float persistent_cvd = 0.0
 
 if is_new_day
-    cvd := bar_delta
+    persistent_cvd := 0.0
+
+float cvd = persistent_cvd + bar_delta
+
+if barstate.isconfirmed
+    persistent_cvd += bar_delta
 
 // Aggression Filtering: Large market orders (Captured in Layer 2 loop)
 bool is_aggressive = has_aggression and active_threshold > 0
