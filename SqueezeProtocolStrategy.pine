@@ -85,7 +85,7 @@ bool has_aggression = false
 float bar_delta = 0.0
 float[] current_bar_bins = array.new_float(max_bins, 0.0)
 
-if (is_ny or is_london) and not na(session_base_price)
+if (is_ny or is_london) and not na(session_base_price) and array.size(ltf_v) > 0
     for i = 0 to array.size(ltf_v) - 1
         float v = array.get(ltf_v, i)
         float c = array.get(ltf_c, i)
