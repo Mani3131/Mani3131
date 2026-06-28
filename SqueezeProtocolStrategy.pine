@@ -3,8 +3,8 @@ strategy("Squeeze Protocol Strategy [AMT + Volume Profile]", overlay=true, max_b
 
 // --- Inputs ---
 // Session Times
-ny_session_input = input.session("0930-1600", "New York Session", group="Sessions")
-london_session_input = input.session("0300-1130", "London Session", group="Sessions")
+ny_session_input = input.session("1500-2345", "New York Session", group="Sessions")
+london_session_input = input.session("1000-1900", "London Session", group="Sessions")
 
 // Volume Thresholds
 ny_vol_thresh = input.int(30, "NY Aggression Filter (Contracts)", minval=1, group="Order Flow")
@@ -16,9 +16,9 @@ tp_ratio = input.float(2.0, "Risk/Reward Ratio (Fallback)", minval=1.0, group="R
 ext_target = input.float(1.618, "Imbalance Extension Target", minval=1.0, group="Risk Management")
 
 // --- State Management ---
-bool is_ny = not na(time(timeframe.period, ny_session_input, "America/New_York"))
-bool is_london = not na(time(timeframe.period, london_session_input, "Europe/London"))
-bool is_new_day = ta.change(time("D")) != 0
+bool is_ny = not na(time(timeframe.period, ny_session_input, "GMT+3"))
+bool is_london = not na(time(timeframe.period, london_session_input, "GMT+3"))
+bool is_new_day = ta.change(time("D", "GMT+3")) != 0
 
 // Determine active threshold
 int active_threshold = is_ny ? ny_vol_thresh : is_london ? london_vol_thresh : 0
