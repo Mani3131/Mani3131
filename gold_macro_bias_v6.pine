@@ -77,16 +77,15 @@ if mssBear
     waitingForBearMSS := false
 
 // Continuation Rule (50% of sweeping leg)
-// Sweeping leg: from the pivot that was swept to the sweep extreme
-// Actually, "sweeping institutional leg" might mean the move that CAUSED the sweep.
-// Let's define it as the candle(s) that swept liquidity.
-legMidpoint = (lastPH + lastPL) / 2 // Default fallback
-if not na(sweepLow) and not na(lastPL)
-    legMidpoint := (sweepLow + lastPL) / 2
-if not na(sweepHigh) and not na(lastPH)
-    legMidpoint := (sweepHigh + lastPH) / 2
+var float bullLegMid = float(na)
+var float bearLegMid = float(na)
 
-continuationSignal = (mssBull and close > legMidpoint) or (mssBear and close < legMidpoint)
+if bullSweep
+    bullLegMid := (low + lastPL) / 2
+if bearSweep
+    bearLegMid := (high + lastPH) / 2
+
+continuationSignal = (mssBull and close > bullLegMid) or (mssBear and close < bearLegMid)
 
 // Visualization - Sweeps and MSS
 plotshape(showSweeps and bullSweep, "Bullish Sweep", shape.triangleup, location.belowbar, color.green, size=size.small)
@@ -107,23 +106,25 @@ if showFVG
         box.new(bar_index[2], low[2], bar_index, high, bgcolor=color.new(color.red, 90), border_color=color(na))
 
 // Order Block (OB) - Last opposing candle before displacement
-// Displacement is often characterized by an FVG.
+// Displacement is characterized by an FVG.
 var box lastBullOB = box(na)
 var box lastBearOB = box(na)
 
 if bullFVG
-    // Look for last bearish candle
-    for i = 3 to 10
+    // Look for last bearish candle starting from candle 2 (the start of the FVG)
+    for i = 2 to 10
         if close[i] < open[i]
             if showOB
+                box.set_extend(lastBullOB, extend.none)
                 lastBullOB := box.new(bar_index[i], high[i], bar_index[i], low[i], bgcolor=color.new(color.blue, 80), border_color=color.blue, extend=extend.right)
             break
 
 if bearFVG
-    // Look for last bullish candle
-    for i = 3 to 10
+    // Look for last bullish candle starting from candle 2
+    for i = 2 to 10
         if close[i] > open[i]
             if showOB
+                box.set_extend(lastBearOB, extend.none)
                 lastBearOB := box.new(bar_index[i], high[i], bar_index[i], low[i], bgcolor=color.new(color.orange, 80), border_color=color.orange, extend=extend.right)
             break
 
@@ -134,7 +135,7 @@ isCompression = bodySize < wickSize and bodySize < ta.sma(bodySize, 20)
 // Triangle-like consolidation: narrowing range
 isConsolidation = ta.atr(10) < ta.atr(50) * 0.8
 
-plotshape(isCompression and isConsolidation, "Compression Zone", shape.diamond, location.aroundbar, color.purple, size=size.tiny)
+plotshape(isCompression and isConsolidation, "Compression Zone", shape.diamond, location.abovebar, color.purple, size=size.tiny)
 
 // Disabled Candle Breakout
 // Large body, zero wick on one side
