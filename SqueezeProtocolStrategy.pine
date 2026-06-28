@@ -38,6 +38,7 @@ int active_threshold = is_ny ? ny_vol_thresh : is_london ? london_vol_thresh : 0
 if is_new_day or (is_ny and not is_ny[1]) or (is_london and not is_london[1])
     range_high := high
     range_low := low
+    is_imbalance := false
 else if not is_imbalance
     range_high := math.max(range_high, high)
     range_low := math.min(range_low, low)
