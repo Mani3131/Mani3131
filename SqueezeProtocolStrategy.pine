@@ -80,7 +80,7 @@ if (is_ny or is_london) and not na(session_base_price)
 
         // Update Volume Profile
         int bin_idx = math.floor((c - session_base_price) / bin_size) + (max_bins / 2)
-        bin_idx := math.clamp(bin_idx, 0, max_bins - 1)
+        bin_idx := math.max(0, math.min(max_bins - 1, bin_idx))
         array.set(vol_bins, bin_idx, array.get(vol_bins, bin_idx) + v)
 
         // Update Aggression Filter (Step for Layer 3)
