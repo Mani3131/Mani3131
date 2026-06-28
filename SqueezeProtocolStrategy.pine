@@ -24,6 +24,12 @@ var float range_high = na
 var float range_low = na
 var bool is_imbalance = false
 
+// Locked levels for non-repainting signals
+var float locked_vah = na
+var float locked_val = na
+var float locked_poc = na
+var float locked_lvn = na
+
 // --- State Management ---
 bool is_ny = not na(time(timeframe.period, ny_session_input, "GMT+3"))
 bool is_london = not na(time(timeframe.period, london_session_input, "GMT+3"))
@@ -38,14 +44,18 @@ int active_threshold = is_ny ? ny_vol_thresh : is_london ? london_vol_thresh : 0
 if is_new_day or (is_ny and not is_ny[1]) or (is_london and not is_london[1])
     range_high := high
     range_low := low
-    is_imbalance := false
+    confirmed_imbalance := false
 else if not is_imbalance
     range_high := math.max(range_high, high)
     range_low := math.min(range_low, low)
 
 // Imbalance detection: Breakout of the initial range
-// Updated in Layer 2 based on Value Area
-is_imbalance := (not na(vah) and (close > vah or close < val)) or is_imbalance[1]
+// Updated on bar confirmation to prevent state repainting
+var bool confirmed_imbalance = false
+if barstate.isconfirmed
+    confirmed_imbalance := (not na(locked_vah) and (close > locked_vah or close < locked_val)) or confirmed_imbalance
+
+is_imbalance := confirmed_imbalance
 bool is_balance = not is_imbalance
 
 // Visuals for Market State
@@ -97,7 +107,7 @@ if barstate.isconfirmed
         if cur_v > 0
             array.set(persistent_vol_bins, i, array.get(persistent_vol_bins, i) + cur_v)
 
-// Calculate POC, VAH, VAL from fixed bins (persistent + current bar)
+// Calculate POC, VAH, VAL from fixed bins (persistent only for non-repainting levels)
 if (is_ny or is_london) and not na(session_base_price)
     float max_vol = 0.0
     int poc_bin = 0
@@ -106,7 +116,7 @@ if (is_ny or is_london) and not na(session_base_price)
     int last_bin = -1
 
     for i = 0 to max_bins - 1
-        float v = array.get(persistent_vol_bins, i) + array.get(current_bar_bins, i)
+        float v = array.get(persistent_vol_bins, i)
         if v > 0
             total_vol += v
             if first_bin == -1
@@ -117,7 +127,7 @@ if (is_ny or is_london) and not na(session_base_price)
                 poc_bin := i
 
     if total_vol > 0
-        poc := session_base_price + (poc_bin - (max_bins / 2)) * bin_size
+        locked_poc := session_base_price + (poc_bin - (max_bins / 2)) * bin_size
 
         float target_va_vol = total_vol * 0.70
         float current_va_vol = max_vol
@@ -125,8 +135,8 @@ if (is_ny or is_london) and not na(session_base_price)
         int upper_idx = poc_bin
 
         while current_va_vol < target_va_vol and (lower_idx > first_bin or upper_idx < last_bin)
-            float lower_v = lower_idx > first_bin ? (array.get(persistent_vol_bins, lower_idx - 1) + array.get(current_bar_bins, lower_idx - 1)) : 0.0
-            float upper_v = upper_idx < last_bin ? (array.get(persistent_vol_bins, upper_idx + 1) + array.get(current_bar_bins, upper_idx + 1)) : 0.0
+            float lower_v = lower_idx > first_bin ? array.get(persistent_vol_bins, lower_idx - 1) : 0.0
+            float upper_v = upper_idx < last_bin ? array.get(persistent_vol_bins, upper_idx + 1) : 0.0
 
             if (lower_v >= upper_v and lower_idx > first_bin) or upper_idx == last_bin
                 current_va_vol += lower_v
@@ -137,18 +147,24 @@ if (is_ny or is_london) and not na(session_base_price)
             else
                 break
 
-        val := session_base_price + (lower_idx - (max_bins / 2)) * bin_size
-        vah := session_base_price + (upper_idx + 1 - (max_bins / 2)) * bin_size
+        locked_val := session_base_price + (lower_idx - (max_bins / 2)) * bin_size
+        locked_vah := session_base_price + (upper_idx + 1 - (max_bins / 2)) * bin_size
 
         // LVN Detection
         float min_vol = max_vol
         int lvn_bin = poc_bin
         for i = lower_idx to upper_idx
-            float v = array.get(persistent_vol_bins, i) + array.get(current_bar_bins, i)
+            float v = array.get(persistent_vol_bins, i)
             if v < min_vol and v > 0
                 min_vol := v
                 lvn_bin := i
-        lvn := session_base_price + (lvn_bin - (max_bins / 2)) * bin_size
+        locked_lvn := session_base_price + (lvn_bin - (max_bins / 2)) * bin_size
+
+// Real-time levels for visual only
+vah := locked_vah
+val := locked_val
+poc := locked_poc
+lvn := locked_lvn
 
 // Plots for Volume Profile
 plot(vah, "VAH", color.new(color.red, 50), style=plot.style_stepline)
@@ -190,9 +206,9 @@ plotshape(cvd_bull_trend, "CVD Bull Trend", shape.arrowup, location.top, color.g
 plotshape(cvd_bear_trend, "CVD Bear Trend", shape.arrowdown, location.top, color.red, size=size.tiny, display=display.none)
 
 // Layer 4 (Part A): Liquidity Sweeps & Trap Confirmation
-// Step 1: Wait for Fake Breakout
-bool sweep_high = high > vah and close < vah
-bool sweep_low = low < val and close > val
+// Step 1: Wait for Fake Breakout (Using locked levels to prevent repainting)
+bool sweep_high = high > locked_vah and close < locked_vah
+bool sweep_low = low < locked_val and close > locked_val
 
 // Step 2: Trap Confirmation
 // Opposing aggressive orders print with 0 follow-through
@@ -206,11 +222,10 @@ plotshape(bear_trap, "Bear Trap", shape.triangledown, location.abovebar, color.r
 
 // Layer 4 (Part B): Entry Trigger
 // [ Step 3: Trigger Entry ] ──► Enter when 1m candle closes decisively above breakout box
-// In our case, the "breakout box" is the immediate trap candle's range or the VA boundary.
-// We enter on the next candle if the trap is confirmed.
+// We use barstate.isconfirmed to ensure the signal is locked and backtest matches live.
 
-bool long_entry_signal = bull_trap
-bool short_entry_signal = bear_trap
+bool long_entry_signal = bull_trap and barstate.isconfirmed
+bool short_entry_signal = bear_trap and barstate.isconfirmed
 
 // Layer 4 (Part C): Risk Management & Profit Take
 // Risk Mitigation Placement: Stop-losses are drawn extremely tight, tucked exactly one to two ticks behind the structural wick extreme
