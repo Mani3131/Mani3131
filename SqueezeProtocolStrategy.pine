@@ -15,21 +15,23 @@ sl_ticks = input.int(2, "Stop Loss Ticks (behind wick)", minval=1, group="Risk M
 tp_ratio = input.float(2.0, "Risk/Reward Ratio (Fallback)", minval=1.0, group="Risk Management")
 ext_target = input.float(1.618, "Imbalance Extension Target", minval=1.0, group="Risk Management")
 
-// --- Global Variables (Declared first to avoid CE10272) ---
-var float vah = na
-var float val = na
-var float poc = na
-var float lvn = na
-var float range_high = na
-var float range_low = na
-var bool is_imbalance = false
-var bool confirmed_imbalance = false
-
-// Locked levels for non-repainting signals
+// --- Global Variables (Grouped to avoid CE10272 and ensure consistency) ---
+// Persistent State
 var float locked_vah = na
 var float locked_val = na
 var float locked_poc = na
 var float locked_lvn = na
+var float range_high = na
+var float range_low = na
+var bool confirmed_imbalance = false
+var float persistent_cvd = 0.0
+
+// Current Bar (Non-persistent)
+float vah = na
+float val = na
+float poc = na
+float lvn = na
+bool is_imbalance = false
 
 // --- State Management ---
 bool is_ny = not na(time(timeframe.period, ny_session_input, "GMT+3"))
@@ -179,8 +181,6 @@ if touch_lvn
 
 // Layer 3: Order Flow Validation & Filter Settings
 // Cumulative Volume Delta (CVD)
-var float persistent_cvd = 0.0
-
 if is_new_day
     persistent_cvd := 0.0
 
