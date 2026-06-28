@@ -149,20 +149,20 @@ plotshape(disabledBear, "Disabled Bearish", shape.arrowdown, location.abovebar, 
 var table dash = table.new(position.top_right, 2, 5, bgcolor=color.new(color.black, 50), border_width=1, border_color=color.gray)
 
 if barstate.islast
-    table.cell(dash, 0, 0, "Metric", text_color=color.white, text_halign=text.halign_left)
-    table.cell(dash, 1, 0, "Value", text_color=color.white, text_halign=text.halign_left)
+    table.cell(dash, 0, 0, "Metric", text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 1, 0, "Value", text_color=color.white, text_halign=text.align_left)
 
-    table.cell(dash, 0, 1, "Daily Bias", text_color=color.white, text_halign=text.halign_left)
-    table.cell(dash, 1, 1, dailyBias, text_color=biasColor, text_halign=text.halign_left)
+    table.cell(dash, 0, 1, "Daily Bias", text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 1, 1, dailyBias, text_color=biasColor, text_halign=text.align_left)
 
-    table.cell(dash, 0, 2, "1H Structure", text_color=color.white, text_halign=text.halign_left)
-    table.cell(dash, 1, 2, mssBull ? "MSS Bullish" : mssBear ? "MSS Bearish" : "Neutral", text_color=mssBull ? color.green : mssBear ? color.red : color.gray, text_halign=text.halign_left)
+    table.cell(dash, 0, 2, "1H Structure", text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 1, 2, mssBull ? "MSS Bullish" : mssBear ? "MSS Bearish" : "Neutral", text_color=mssBull ? color.green : mssBear ? color.red : color.gray, text_halign=text.align_left)
 
-    table.cell(dash, 0, 3, "Compression", text_color=color.white, text_halign=text.halign_left)
-    table.cell(dash, 1, 3, isCompression ? "Yes" : "No", text_color=isCompression ? color.purple : color.gray, text_halign=text.halign_left)
+    table.cell(dash, 0, 3, "Compression", text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 1, 3, isCompression ? "Yes" : "No", text_color=isCompression ? color.purple : color.gray, text_halign=text.align_left)
 
-    table.cell(dash, 0, 4, "Signal", text_color=color.white, text_halign=text.halign_left)
-    table.cell(dash, 1, 4, continuationSignal ? "Continuation" : "None", text_color=continuationSignal ? color.yellow : color.gray, text_halign=text.halign_left)
+    table.cell(dash, 0, 4, "Signal", text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 1, 4, continuationSignal ? "Continuation" : "None", text_color=continuationSignal ? color.yellow : color.gray, text_halign=text.align_left)
 
 // Alerts
 alertcondition(bullSweep or bearSweep, "Liquidity Sweep", "Gold Liquidity Sweep Detected!")
