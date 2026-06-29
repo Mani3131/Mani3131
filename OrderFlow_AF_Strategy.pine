@@ -8,7 +8,7 @@ overnight_session_input = input.session("1800-0930", "Overnight Session", group=
 timezone_input = input.string("America/New_York", "Timezone", group=group_sessions)
 
 group_orderflow = "Order Flow (AF Setup)"
-vol_threshold = input.float(100.0, "Volume Bubble Threshold", minval=0.0, group=group_orderflow, help="Threshold for 'Large Bubbles'")
+vol_threshold = input.float(100.0, "Volume Bubble Threshold", minval=0.0, group=group_orderflow, tooltip="Threshold for 'Large Bubbles'")
 lookback_bias = input.int(3, "POC Shift Lookback (Days)", minval=2, group=group_orderflow)
 
 group_gamma = "Gamma Regime"
