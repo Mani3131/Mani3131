@@ -34,23 +34,23 @@ BIN_CENTER = 500
 
 type Profile
     float[] volumes
-    float base_price = na
-    float bin_size = na
-    float poc = na
-    float vah = na
-    float val = na
+    float base_price = float(na)
+    float bin_size = float(na)
+    float poc = float(na)
+    float vah = float(na)
+    float val = float(na)
     float total_vol = 0.0
 
 var Profile cash_profile = Profile.new(array.new_float(MAX_BINS, 0.0))
 var Profile overnight_profile = Profile.new(array.new_float(MAX_BINS, 0.0))
 
 // Persistent levels for bias and entry
-var float prev_cash_poc = na
-var float prev_cash_vah = na
-var float prev_cash_val = na
-var float prev_ovn_poc = na
-var float prev_ovn_vah = na
-var float prev_ovn_val = na
+var float prev_cash_poc = float(na)
+var float prev_cash_vah = float(na)
+var float prev_cash_val = float(na)
+var float prev_ovn_poc = float(na)
+var float prev_ovn_vah = float(na)
+var float prev_ovn_val = float(na)
 
 var float[] cash_poc_history = array.new_float(0)
 
@@ -60,7 +60,6 @@ update_profile(Profile p, bool is_new_session) =>
         p.total_vol := 0.0
         p.base_price := open
         p.bin_size := syminfo.mintick * vp_ticks_per_row
-
     if not na(p.base_price) and p.bin_size > 0
         int bin_idx = BIN_CENTER + math.floor((close - p.base_price) / p.bin_size)
         if bin_idx >= 0 and bin_idx < MAX_BINS
@@ -72,7 +71,6 @@ get_bin_price(Profile p, int idx) =>
 
 calculate_levels(Profile p) =>
     if p.total_vol > 0
-        // Robust POC detection
         int max_idx = 0
         float max_vol = -1.0
         for i = 0 to MAX_BINS - 1
@@ -80,18 +78,14 @@ calculate_levels(Profile p) =>
             if v > max_vol
                 max_vol := v
                 max_idx := i
-
         p.poc := get_bin_price(p, max_idx)
-
         float target_va_vol = p.total_vol * (vp_value_area / 100.0)
         float va_vol = array.get(p.volumes, max_idx)
         int up_idx = max_idx
         int down_idx = max_idx
-
         while va_vol < target_va_vol and (up_idx < MAX_BINS - 1 or down_idx > 0)
             float up_vol = up_idx < MAX_BINS - 1 ? array.get(p.volumes, up_idx + 1) : 0.0
             float down_vol = down_idx > 0 ? array.get(p.volumes, down_idx - 1) : 0.0
-
             if up_vol >= down_vol and up_idx < MAX_BINS - 1
                 up_idx += 1
                 va_vol += up_vol
@@ -100,7 +94,6 @@ calculate_levels(Profile p) =>
                 va_vol += down_vol
             else
                 break
-
         p.vah := get_bin_price(p, up_idx)
         p.val := get_bin_price(p, down_idx)
 
@@ -165,7 +158,6 @@ get_bias(float[] poc_history) =>
                 higher := false
             if array.get(poc_history, i) >= array.get(poc_history, i - 1)
                 lower := false
-
         if higher
             bias := "Bullish"
         else if lower
@@ -201,7 +193,6 @@ calc_af_setup() =>
     bool ft_bear = false
     float body_top = math.max(open, close)
     float body_bottom = math.min(open, close)
-
     if array.size(ltf_c) > 0
         for i = 0 to array.size(ltf_c) - 1
             float o = array.get(ltf_o, i)
@@ -209,23 +200,17 @@ calc_af_setup() =>
             float v = array.get(ltf_v, i)
             float h = array.get(ltf_h, i)
             float l = array.get(ltf_l, i)
-
             bool is_aggressive_buy = c > o
             bool is_aggressive_sell = c < o
-
             if v >= vol_threshold
-                // Absorption: Aggressive orders at wicks
                 if is_aggressive_buy and h > body_top
                     abs_bear := true
                 if is_aggressive_sell and l < body_bottom
                     abs_bull := true
-
-                // Follow-Through: Aggressive orders in body
                 if is_aggressive_buy and c <= body_top and c >= body_bottom
                     ft_bull := true
                 if is_aggressive_sell and c <= body_top and c >= body_bottom
                     ft_bear := true
-
     [abs_bull, abs_bear, ft_bull, ft_bear]
 
 [absorption_bull, absorption_bear, follow_through_bull, follow_through_bear] = calc_af_setup()
@@ -237,24 +222,12 @@ plotshape(absorption_bull, "Absorption Bull", shape.circle, location.belowbar, c
 // --- Strategy Execution ---
 
 // Key Level Proximity
-near_key_level = math.abs(close - prev_cash_vah) < syminfo.mintick * 50 or
-                 math.abs(close - prev_cash_val) < syminfo.mintick * 50 or
-                 math.abs(close - prev_cash_poc) < syminfo.mintick * 50 or
-                 math.abs(close - prev_ovn_vah) < syminfo.mintick * 50 or
-                 math.abs(close - prev_ovn_val) < syminfo.mintick * 50 or
-                 math.abs(close - prev_ovn_poc) < syminfo.mintick * 50
+near_key_level = math.abs(close - prev_cash_vah) < syminfo.mintick * 50 or math.abs(close - prev_cash_val) < syminfo.mintick * 50 or math.abs(close - prev_cash_poc) < syminfo.mintick * 50 or math.abs(close - prev_ovn_vah) < syminfo.mintick * 50 or math.abs(close - prev_ovn_val) < syminfo.mintick * 50 or math.abs(close - prev_ovn_poc) < syminfo.mintick * 50
 
 // 1. Reversal Entry (Mean-Reversion)
-// Requirements: Key level + Bias alignment + Absorption + Follow-Through + Positive Gamma
-can_long_reversal = (daily_bias == "Bullish" or daily_bias == "Neutral") and
-                    gamma_regime == "Positive" and
-                    near_key_level and
-                    absorption_bull and follow_through_bull
+can_long_reversal = (daily_bias == "Bullish" or daily_bias == "Neutral") and gamma_regime == "Positive" and near_key_level and absorption_bull and follow_through_bull
 
-can_short_reversal = (daily_bias == "Bearish" or daily_bias == "Neutral") and
-                     gamma_regime == "Positive" and
-                     near_key_level and
-                     absorption_bear and follow_through_bear
+can_short_reversal = (daily_bias == "Bearish" or daily_bias == "Neutral") and gamma_regime == "Positive" and near_key_level and absorption_bear and follow_through_bear
 
 // 2. Breakout Entry
 // Requirements: Clean breakout (near levels) + Follow-Through in body + Negative Gamma
@@ -267,12 +240,12 @@ can_short_breakout = gamma_regime == "Negative" and is_breaking_low and follow_t
 // Execution
 if can_long_reversal or can_long_breakout
     strategy.entry("Long", strategy.long)
-    float tp = not na(prev_ovn_poc) ? prev_ovn_poc : na
+    float tp = not na(prev_ovn_poc) ? prev_ovn_poc : float(na)
     strategy.exit("Exit Long", "Long", stop=low - syminfo.mintick * 20, limit=tp)
 
 if can_short_reversal or can_short_breakout
     strategy.entry("Short", strategy.short)
-    float tp = not na(prev_ovn_poc) ? prev_ovn_poc : na
+    float tp = not na(prev_ovn_poc) ? prev_ovn_poc : float(na)
     strategy.exit("Exit Short", "Short", stop=high + syminfo.mintick * 20, limit=tp)
 
 plot(close, color=color.new(color.gray, 50), title="Base Price")
