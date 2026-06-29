@@ -2,17 +2,14 @@
 strategy("Order Flow AF Strategy", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
 
 // --- Inputs ---
-group_sessions = "Sessions (NY Time)"
-cash_session_input = input.session("0930-1600", "Cash Session", group=group_sessions)
-overnight_session_input = input.session("1800-0930", "Overnight Session", group=group_sessions)
-timezone_input = input.string("America/New_York", "Timezone", group=group_sessions)
+cash_session_input = input.session("0930-1600", "Cash Session", group="Sessions (NY Time)")
+overnight_session_input = input.session("1800-0930", "Overnight Session", group="Sessions (NY Time)")
+timezone_input = input.string("America/New_York", "Timezone", group="Sessions (NY Time)")
 
-group_orderflow = "Order Flow (AF Setup)"
-vol_threshold = input.float(100.0, "Volume Bubble Threshold", minval=0.0, group=group_orderflow, tooltip="Threshold for 'Large Bubbles'")
-lookback_bias = input.int(3, "POC Shift Lookback (Days)", minval=2, group=group_orderflow)
+vol_threshold = input.float(100.0, "Volume Bubble Threshold", minval=0.0, group="Order Flow (AF Setup)", tooltip="Threshold for 'Large Bubbles'")
+lookback_bias = input.int(3, "POC Shift Lookback (Days)", minval=2, group="Order Flow (AF Setup)")
 
-group_gamma = "Gamma Regime"
-gamma_regime = input.string("Positive", "Current Gamma Regime", options=["Positive", "Negative"], group=group_gamma)
+gamma_regime = input.string("Positive", "Current Gamma Regime", options=["Positive", "Negative"], group="Gamma Regime")
 
 // --- Types & Variables ---
 
@@ -24,9 +21,8 @@ new_cash_session = is_cash_session and not is_cash_session[1]
 new_overnight_session = is_overnight_session and not is_overnight_session[1]
 
 // --- Volume Profile Logic ---
-group_vp = "Volume Profile Settings"
-vp_ticks_per_row = input.int(20, "Ticks per Row", minval=1, group=group_vp)
-vp_value_area = input.float(70.0, "Value Area %", minval=0.0, maxval=100.0, group=group_vp)
+vp_ticks_per_row = input.int(20, "Ticks per Row", minval=1, group="Volume Profile Settings")
+vp_value_area = input.float(70.0, "Value Area %", minval=0.0, maxval=100.0, group="Volume Profile Settings")
 
 // Constants for fixed binning
 MAX_BINS = 1000
@@ -45,12 +41,12 @@ var Profile cash_profile = Profile.new(array.new_float(MAX_BINS, 0.0))
 var Profile overnight_profile = Profile.new(array.new_float(MAX_BINS, 0.0))
 
 // Persistent levels for bias and entry
-var float prev_cash_poc = float(na)
-var float prev_cash_vah = float(na)
-var float prev_cash_val = float(na)
-var float prev_ovn_poc = float(na)
-var float prev_ovn_vah = float(na)
-var float prev_ovn_val = float(na)
+var float prev_cash_poc = na
+var float prev_cash_vah = na
+var float prev_cash_val = na
+var float prev_ovn_poc = na
+var float prev_ovn_vah = na
+var float prev_ovn_val = na
 
 var float[] cash_poc_history = array.new_float(0)
 
@@ -240,12 +236,12 @@ can_short_breakout = gamma_regime == "Negative" and is_breaking_low and follow_t
 // Execution
 if can_long_reversal or can_long_breakout
     strategy.entry("Long", strategy.long)
-    float tp = not na(prev_ovn_poc) ? prev_ovn_poc : float(na)
+    float tp = not na(prev_ovn_poc) ? prev_ovn_poc : na
     strategy.exit("Exit Long", "Long", stop=low - syminfo.mintick * 20, limit=tp)
 
 if can_short_reversal or can_short_breakout
     strategy.entry("Short", strategy.short)
-    float tp = not na(prev_ovn_poc) ? prev_ovn_poc : float(na)
+    float tp = not na(prev_ovn_poc) ? prev_ovn_poc : na
     strategy.exit("Exit Short", "Short", stop=high + syminfo.mintick * 20, limit=tp)
 
 plot(close, color=color.new(color.gray, 50), title="Base Price")
