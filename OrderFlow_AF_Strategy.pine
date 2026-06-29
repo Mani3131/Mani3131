@@ -34,11 +34,11 @@ BIN_CENTER = 500
 
 type Profile
     float[] volumes
-    float base_price = float(na)
-    float bin_size = float(na)
-    float poc = float(na)
-    float vah = float(na)
-    float val = float(na)
+    float base_price = na
+    float bin_size = na
+    float poc = na
+    float vah = na
+    float val = na
     float total_vol = 0.0
 
 var Profile cash_profile = Profile.new(array.new_float(MAX_BINS, 0.0))
