@@ -1,0 +1,247 @@
+//@version=6
+strategy("Order Flow AF Strategy", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// --- Inputs ---
+cash_session_input = input.session("0930-1600", "Cash Session", group="Sessions (NY Time)")
+overnight_session_input = input.session("1800-0930", "Overnight Session", group="Sessions (NY Time)")
+timezone_input = input.string("America/New_York", "Timezone", group="Sessions (NY Time)")
+
+vol_threshold = input.float(100.0, "Volume Bubble Threshold", minval=0.0, group="Order Flow (AF Setup)", tooltip="Threshold for 'Large Bubbles'")
+lookback_bias = input.int(3, "POC Shift Lookback (Days)", minval=2, group="Order Flow (AF Setup)")
+
+gamma_regime = input.string("Positive", "Current Gamma Regime", options=["Positive", "Negative"], group="Gamma Regime")
+
+// --- Types & Variables ---
+
+// --- Session Logic ---
+is_cash_session = not na(time(timeframe.period, cash_session_input, timezone_input))
+is_overnight_session = not na(time(timeframe.period, overnight_session_input, timezone_input))
+
+new_cash_session = is_cash_session and not is_cash_session[1]
+new_overnight_session = is_overnight_session and not is_overnight_session[1]
+
+// --- Volume Profile Logic ---
+vp_ticks_per_row = input.int(20, "Ticks per Row", minval=1, group="Volume Profile Settings")
+vp_value_area = input.float(70.0, "Value Area %", minval=0.0, maxval=100.0, group="Volume Profile Settings")
+
+// Constants for fixed binning
+MAX_BINS = 1000
+BIN_CENTER = 500
+
+type Profile
+    float[] volumes
+    float base_price = na
+    float bin_size = na
+    float poc = na
+    float vah = na
+    float val = na
+    float total_vol = 0.0
+
+var Profile cash_profile = Profile.new(array.new_float(MAX_BINS, 0.0))
+var Profile overnight_profile = Profile.new(array.new_float(MAX_BINS, 0.0))
+
+// Persistent levels for bias and entry
+var float prev_cash_poc = na
+var float prev_cash_vah = na
+var float prev_cash_val = na
+var float prev_ovn_poc = na
+var float prev_ovn_vah = na
+var float prev_ovn_val = na
+
+var float[] cash_poc_history = array.new_float(0)
+
+update_profile(Profile p, bool is_new_session) =>
+    if is_new_session
+        array.fill(p.volumes, 0.0)
+        p.total_vol := 0.0
+        p.base_price := open
+        p.bin_size := syminfo.mintick * vp_ticks_per_row
+    if not na(p.base_price) and p.bin_size > 0
+        int bin_idx = BIN_CENTER + math.floor((close - p.base_price) / p.bin_size)
+        if bin_idx >= 0 and bin_idx < MAX_BINS
+            array.set(p.volumes, bin_idx, array.get(p.volumes, bin_idx) + volume)
+            p.total_vol += volume
+
+get_bin_price(Profile p, int idx) =>
+    p.base_price + ((idx - BIN_CENTER) * p.bin_size) + (p.bin_size / 2)
+
+calculate_levels(Profile p) =>
+    if p.total_vol > 0
+        int max_idx = 0
+        float max_vol = -1.0
+        for i = 0 to MAX_BINS - 1
+            float v = array.get(p.volumes, i)
+            if v > max_vol
+                max_vol := v
+                max_idx := i
+        p.poc := get_bin_price(p, max_idx)
+        float target_va_vol = p.total_vol * (vp_value_area / 100.0)
+        float va_vol = array.get(p.volumes, max_idx)
+        int up_idx = max_idx
+        int down_idx = max_idx
+        while va_vol < target_va_vol and (up_idx < MAX_BINS - 1 or down_idx > 0)
+            float up_vol = up_idx < MAX_BINS - 1 ? array.get(p.volumes, up_idx + 1) : 0.0
+            float down_vol = down_idx > 0 ? array.get(p.volumes, down_idx - 1) : 0.0
+            if up_vol >= down_vol and up_idx < MAX_BINS - 1
+                up_idx += 1
+                va_vol += up_vol
+            else if down_idx > 0
+                down_idx -= 1
+                va_vol += down_vol
+            else
+                break
+        p.vah := get_bin_price(p, up_idx)
+        p.val := get_bin_price(p, down_idx)
+
+// Tracking Session Extremes
+var float cash_high = 0.0
+var float cash_low = 10e10
+var float ovn_high = 0.0
+var float ovn_low = 10e10
+
+if new_cash_session
+    cash_high := high
+    cash_low := low
+else if is_cash_session
+    cash_high := math.max(cash_high, high)
+    cash_low := math.min(cash_low, low)
+
+if new_overnight_session
+    ovn_high := high
+    ovn_low := low
+else if is_overnight_session
+    ovn_high := math.max(ovn_high, high)
+    ovn_low := math.min(ovn_low, low)
+
+// Update Profiles
+if is_cash_session
+    update_profile(cash_profile, new_cash_session)
+if is_overnight_session
+    update_profile(overnight_profile, new_overnight_session)
+
+// Finalize Levels at Session End
+if ta.change(is_cash_session) and not is_cash_session // Cash session just ended
+    calculate_levels(cash_profile)
+    prev_cash_poc := cash_profile.poc
+    prev_cash_vah := cash_profile.vah
+    prev_cash_val := cash_profile.val
+    array.push(cash_poc_history, prev_cash_poc)
+    if array.size(cash_poc_history) > lookback_bias
+        array.remove(cash_poc_history, 0)
+
+if ta.change(is_overnight_session) and not is_overnight_session // OVN session just ended
+    calculate_levels(overnight_profile)
+    prev_ovn_poc := overnight_profile.poc
+    prev_ovn_vah := overnight_profile.vah
+    prev_ovn_val := overnight_profile.val
+
+// Plotting Key Levels
+plot(prev_cash_poc, "Prev Cash POC", color=color.orange, style=plot.style_linebr)
+plot(prev_cash_vah, "Prev Cash VAH", color=color.gray, style=plot.style_linebr)
+plot(prev_cash_val, "Prev Cash VAL", color=color.gray, style=plot.style_linebr)
+plot(prev_ovn_poc, "Prev OVN POC", color=color.blue, style=plot.style_linebr)
+
+// --- Bias Logic ---
+var string daily_bias = "Neutral"
+
+get_bias(float[] poc_history) =>
+    string bias = "Neutral"
+    if array.size(poc_history) >= lookback_bias
+        bool higher = true
+        bool lower = true
+        for i = 1 to lookback_bias - 1
+            if array.get(poc_history, i) <= array.get(poc_history, i - 1)
+                higher := false
+            if array.get(poc_history, i) >= array.get(poc_history, i - 1)
+                lower := false
+        if higher
+            bias := "Bullish"
+        else if lower
+            bias := "Bearish"
+    bias
+
+if ta.change(is_cash_session) and not is_cash_session
+    daily_bias := get_bias(cash_poc_history)
+
+// Bias Table for Visibility
+var table bias_table = table.new(position.top_right, 2, 2, border_width=1)
+if barstate.islast
+    table.cell(bias_table, 0, 0, "Daily Bias", bgcolor=color.gray, text_color=color.white)
+    table.cell(bias_table, 1, 0, daily_bias, bgcolor=daily_bias == "Bullish" ? color.green : daily_bias == "Bearish" ? color.red : color.gray, text_color=color.white)
+
+// --- Order Flow AF Logic ---
+type LTFData
+    float close
+    float volume
+    float high
+    float low
+
+ltf_o = request.security_lower_tf(syminfo.tickerid, "1", open)
+ltf_c = request.security_lower_tf(syminfo.tickerid, "1", close)
+ltf_v = request.security_lower_tf(syminfo.tickerid, "1", volume)
+ltf_h = request.security_lower_tf(syminfo.tickerid, "1", high)
+ltf_l = request.security_lower_tf(syminfo.tickerid, "1", low)
+
+calc_af_setup() =>
+    bool abs_bull = false
+    bool abs_bear = false
+    bool ft_bull = false
+    bool ft_bear = false
+    float body_top = math.max(open, close)
+    float body_bottom = math.min(open, close)
+    if array.size(ltf_c) > 0
+        for i = 0 to array.size(ltf_c) - 1
+            float o = array.get(ltf_o, i)
+            float c = array.get(ltf_c, i)
+            float v = array.get(ltf_v, i)
+            float h = array.get(ltf_h, i)
+            float l = array.get(ltf_l, i)
+            bool is_aggressive_buy = c > o
+            bool is_aggressive_sell = c < o
+            if v >= vol_threshold
+                if is_aggressive_buy and h > body_top
+                    abs_bear := true
+                if is_aggressive_sell and l < body_bottom
+                    abs_bull := true
+                if is_aggressive_buy and c <= body_top and c >= body_bottom
+                    ft_bull := true
+                if is_aggressive_sell and c <= body_top and c >= body_bottom
+                    ft_bear := true
+    [abs_bull, abs_bear, ft_bull, ft_bear]
+
+[absorption_bull, absorption_bear, follow_through_bull, follow_through_bear] = calc_af_setup()
+
+// Visualizing Order Flow Bubbles (Proxy)
+plotshape(absorption_bear, "Absorption Bear", shape.circle, location.abovebar, color.red, size=size.tiny)
+plotshape(absorption_bull, "Absorption Bull", shape.circle, location.belowbar, color.green, size=size.tiny)
+
+// --- Strategy Execution ---
+
+// Key Level Proximity
+near_key_level = math.abs(close - prev_cash_vah) < syminfo.mintick * 50 or math.abs(close - prev_cash_val) < syminfo.mintick * 50 or math.abs(close - prev_cash_poc) < syminfo.mintick * 50 or math.abs(close - prev_ovn_vah) < syminfo.mintick * 50 or math.abs(close - prev_ovn_val) < syminfo.mintick * 50 or math.abs(close - prev_ovn_poc) < syminfo.mintick * 50
+
+// 1. Reversal Entry (Mean-Reversion)
+can_long_reversal = (daily_bias == "Bullish" or daily_bias == "Neutral") and gamma_regime == "Positive" and near_key_level and absorption_bull and follow_through_bull
+
+can_short_reversal = (daily_bias == "Bearish" or daily_bias == "Neutral") and gamma_regime == "Positive" and near_key_level and absorption_bear and follow_through_bear
+
+// 2. Breakout Entry
+// Requirements: Clean breakout (near levels) + Follow-Through in body + Negative Gamma
+is_breaking_high = close > prev_cash_vah or close > prev_ovn_vah
+is_breaking_low = close < prev_cash_val or close < prev_ovn_val
+
+can_long_breakout = gamma_regime == "Negative" and is_breaking_high and follow_through_bull
+can_short_breakout = gamma_regime == "Negative" and is_breaking_low and follow_through_bear
+
+// Execution
+if can_long_reversal or can_long_breakout
+    strategy.entry("Long", strategy.long)
+    float tp = not na(prev_ovn_poc) ? prev_ovn_poc : na
+    strategy.exit("Exit Long", "Long", stop=low - syminfo.mintick * 20, limit=tp)
+
+if can_short_reversal or can_short_breakout
+    strategy.entry("Short", strategy.short)
+    float tp = not na(prev_ovn_poc) ? prev_ovn_poc : na
+    strategy.exit("Exit Short", "Short", stop=high + syminfo.mintick * 20, limit=tp)
+
+plot(close, color=color.new(color.gray, 50), title="Base Price")
