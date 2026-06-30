@@ -245,7 +245,7 @@ confluence_score := confluence_score + (cvd_bull_div or cvd_bear_div ? 1 : 0)
 confluence_score := confluence_score + (has_buy_imb or has_sell_imb ? 1 : 0)
 
 // Dashboard UI
-var table dash = table.new(position.top_right, 2, 7, bgcolor=color.new(color.black, 70), border_width=1, border_color=color.gray)
+var table dash = table.new(position.top_right, 2, 9, bgcolor=color.new(color.black, 70), border_width=1, border_color=color.gray)
 
 if barstate.islast and show_dashboard
     table.cell(dash, 0, 0, "Market Metric", text_color=color.white, text_halign=text.align_left)
@@ -269,9 +269,8 @@ if barstate.islast and show_dashboard
     table.cell(dash, 0, 6, "Rec. Pos Size", text_color=color.white, text_halign=text.align_left)
     table.cell(dash, 1, 6, str.tostring(pos_size, "#.###"), text_color=color.green)
 
-    // Optional: Add TP targets to dashboard or as lines
+    // Optional: Add TP targets to dashboard
     if not na(strong_level)
-        table.set_rows(dash, 9)
         table.cell(dash, 0, 7, "TP1 (1:2 RR)", text_color=color.white, text_halign=text.align_left)
         table.cell(dash, 1, 7, str.tostring(tp1_price, "#.#####"), text_color=color.aqua)
         table.cell(dash, 0, 8, "TP2 (Weak H/L)", text_color=color.white, text_halign=text.align_left)
