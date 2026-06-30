@@ -64,22 +64,24 @@ bool is_htf_display = not timeframe.isintraday or timeframe.multiplier >= 60 or 
 // Phase 1 & 2: Structural Implementation
 // ==========================================
 
-// HTF Context (Macro Bias)
-[htf_ph, htf_pl] = request.security(syminfo.tickerid, htf_tf, [ta.pivothigh(high, swing_lookback, swing_lookback), ta.pivotlow(low, swing_lookback, swing_lookback)])
+// HTF Context (Macro Bias & Zones)
+[htf_ph, htf_pl, htf_high, htf_low] = request.security(syminfo.tickerid, htf_tf, [ta.pivothigh(high, swing_lookback, swing_lookback), ta.pivotlow(low, swing_lookback, swing_lookback), high, low])
 
 var int htf_bias = 0 // 1: Bullish, -1: Bearish
-var float htf_last_ph = f_na
-var float htf_last_pl = f_na
+var float htf_zone_high = f_na
+var float htf_zone_low = f_na
 
 if not na(htf_ph)
-    if htf_ph > htf_last_ph
-        htf_bias := 1
-    htf_last_ph := htf_ph
+    htf_bias := htf_ph > nz(htf_zone_high) ? 1 : htf_bias
+    htf_zone_high := htf_ph
+    if show_sd_zones
+        box.new(bar_index[swing_lookback * 2], htf_ph * 1.001, bar_index, htf_ph * 0.999, bgcolor=color.new(color.red, 80), border_color=color.new(color.red, 30), extend=extend.right, text="HTF SUPPLY", text_size=size.tiny, text_color=color.white)
 
 if not na(htf_pl)
-    if htf_pl < htf_last_pl
-        htf_bias := -1
-    htf_last_pl := htf_pl
+    htf_bias := htf_pl < nz(htf_zone_low) ? -1 : htf_bias
+    htf_zone_low := htf_pl
+    if show_sd_zones
+        box.new(bar_index[swing_lookback * 2], htf_pl * 1.001, bar_index, htf_pl * 0.999, bgcolor=color.new(color.aqua, 80), border_color=color.new(color.aqua, 30), extend=extend.right, text="HTF DEMAND", text_size=size.tiny, text_color=color.white)
 
 // Local Structure (MTF/Execution)
 float ph = ta.pivothigh(high, swing_lookback, swing_lookback)
@@ -90,6 +92,10 @@ var float last_pl = f_na
 var bool is_bullish = true
 var float strong_level = f_na
 var float weak_level = f_na
+
+// Alignment Check: Local level aligns with HTF Zone (0.05% tolerance)
+bool ph_aligns = not na(last_ph) and not na(htf_zone_high) and math.abs(last_ph - htf_zone_high) / htf_zone_high < 0.0005
+bool pl_aligns = not na(last_pl) and not na(htf_zone_low) and math.abs(last_pl - htf_zone_low) / htf_zone_low < 0.0005
 
 // Detection Logic
 if barstate.isconfirmed
@@ -105,7 +111,8 @@ if barstate.isconfirmed
         strong_level := last_pl
         weak_level := high // Target
 
-        if show_sd_zones
+        // Render local zone only if on HTF or if it aligns with HTF level on LTF
+        if show_sd_zones and (is_htf_display or pl_aligns)
             box.new(bar_index[swing_lookback * 2], last_ph, bar_index, last_pl, bgcolor=color.new(color_bull, 90), border_color=color.new(color_bull, 50), extend=extend.right)
 
         last_ph := f_na // Reset broken level
@@ -122,7 +129,8 @@ if barstate.isconfirmed
         strong_level := last_ph
         weak_level := low // Target
 
-        if show_sd_zones
+        // Render local zone only if on HTF or if it aligns with HTF level on LTF
+        if show_sd_zones and (is_htf_display or ph_aligns)
             box.new(bar_index[swing_lookback * 2], last_ph, bar_index, last_pl, bgcolor=color.new(color_bear, 90), border_color=color.new(color_bear, 50), extend=extend.right)
 
         last_pl := f_na // Reset broken level
@@ -136,6 +144,7 @@ if barstate.isconfirmed
 // Visualizing Strong/Weak Levels
 plot(show_structure and is_htf_display ? strong_level : f_na, "Strong Level", color=color.gray, style=plot.style_linebr, linewidth=2)
 plotshape(show_structure and is_htf_display and ta.change(strong_level) != 0, "Strong Marker", shape.circle, location.absolute, color.gray, size=size.tiny)
+
 
 // ==========================================
 // Phase 3: Price Action Implementation
