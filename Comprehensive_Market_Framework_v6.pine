@@ -46,8 +46,8 @@ show_dashboard = input.bool(true, "Show Strategy Dashboard", group=grp_risk)
 // --- Color Palette ---
 color_bull = color.new(color.aqua, 0)
 color_bear = color.new(color.red, 0)
-color_zone_bull = color.new(color.aqua, 85)
-color_zone_bear = color.new(color.red, 85)
+color_zone_bull = color.new(color.aqua, 95)
+color_zone_bear = color.new(color.red, 95)
 color_poc = color.new(color.yellow, 0)
 
 // Helper: explicit na typing
@@ -100,7 +100,7 @@ if barstate.isconfirmed
         weak_level := high // Target
 
         if show_sd_zones
-            box.new(bar_index[swing_lookback * 2], last_ph, bar_index, last_pl, bgcolor=color_zone_bull, border_color=color.new(color_bull, 50), extend=extend.right)
+            box.new(bar_index[swing_lookback * 2], last_ph, bar_index, last_pl, bgcolor=color(na), border_color=color.new(color_bull, 20), extend=extend.right)
 
         last_ph := f_na // Reset broken level
 
@@ -117,7 +117,7 @@ if barstate.isconfirmed
         weak_level := low // Target
 
         if show_sd_zones
-            box.new(bar_index[swing_lookback * 2], last_ph, bar_index, last_pl, bgcolor=color_zone_bear, border_color=color.new(color_bear, 50), extend=extend.right)
+            box.new(bar_index[swing_lookback * 2], last_ph, bar_index, last_pl, bgcolor=color(na), border_color=color.new(color_bear, 20), extend=extend.right)
 
         last_pl := f_na // Reset broken level
 
@@ -245,7 +245,7 @@ confluence_score := confluence_score + (cvd_bull_div or cvd_bear_div ? 1 : 0)
 confluence_score := confluence_score + (has_buy_imb or has_sell_imb ? 1 : 0)
 
 // Dashboard UI
-var table dash = table.new(position.top_right, 2, 9, bgcolor=color.new(color.black, 70), border_width=1, border_color=color.gray)
+var table dash = table.new(position.top_right, 2, 9, bgcolor=color.new(color.black, 85), border_width=1, border_color=color.gray)
 
 if barstate.islast and show_dashboard
     table.cell(dash, 0, 0, "Market Metric", text_color=color.white, text_halign=text.align_left)
