@@ -105,8 +105,8 @@ if barstate.isconfirmed
         strong_level := last_pl
         weak_level := high // Target
 
-        if show_sd_zones and is_htf_display
-            box.new(bar_index[swing_lookback * 2], last_ph, bar_index, last_pl, bgcolor=color(na), border_color=color.new(color_bull, 20), extend=extend.right)
+        if show_sd_zones
+            box.new(bar_index[swing_lookback * 2], last_ph, bar_index, last_pl, bgcolor=color.new(color_bull, 90), border_color=color.new(color_bull, 50), extend=extend.right)
 
         last_ph := f_na // Reset broken level
 
@@ -122,8 +122,8 @@ if barstate.isconfirmed
         strong_level := last_ph
         weak_level := low // Target
 
-        if show_sd_zones and is_htf_display
-            box.new(bar_index[swing_lookback * 2], last_ph, bar_index, last_pl, bgcolor=color(na), border_color=color.new(color_bear, 20), extend=extend.right)
+        if show_sd_zones
+            box.new(bar_index[swing_lookback * 2], last_ph, bar_index, last_pl, bgcolor=color.new(color_bear, 90), border_color=color.new(color_bear, 50), extend=extend.right)
 
         last_pl := f_na // Reset broken level
 
