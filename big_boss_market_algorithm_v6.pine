@@ -29,11 +29,45 @@ int daily_code = dc_month + dc_day + dc_year
 
 // 2. 4H Range
 // Fetching COMPLETED 4H data to project level for the current/next candle
-[ph4, pl4, pc4] = request.security(syminfo.tickerid, "240", [high[1], low[1], close[1]], lookahead = barmerge.lookahead_off)
+[ph4, pl4, pc4, po4] = request.security(syminfo.tickerid, "240", [high[1], low[1], close[1], open[1]], lookahead = barmerge.lookahead_off)
 
 // Ensure data is available
 float range4h = not na(ph4) and not na(pl4) ? ph4 - pl4 : na
 float anchor_close = pc4
+
+// 2.5 Time-Based Structure (First 10 Minutes Rule)
+// H4 candles open every 4 hours.
+// Track the first 10 minutes of the current H4 candle.
+var float h4_first10_high = na
+var float h4_first10_low = na
+var int h4_start_bar = na
+
+t_h4 = time("240", "0000-2359", timezone)
+is_new_h4 = not na(t_h4) and (na(t_h4[1]) or t_h4 != t_h4[1])
+
+if is_new_h4
+    h4_first10_high := high
+    h4_first10_low  := low
+    h4_start_bar    := bar_index
+else if not na(h4_start_bar) and (bar_index - h4_start_bar) < 10
+    h4_first10_high := math.max(h4_first10_high, high)
+    h4_first10_low  := math.min(h4_first10_low, low)
+
+// Visualizing the 10-minute window
+var box h4_10min_box = box(na)
+if is_new_h4
+    h4_10min_box := box.new(bar_index, high, bar_index + 10, low, border_color = color.gray, bgcolor = color.new(color.gray, 90))
+else if not na(h4_start_bar) and (bar_index - h4_start_bar) < 10
+    box.set_top(h4_10min_box, h4_first10_high)
+    box.set_bottom(h4_10min_box, h4_first10_low)
+
+// Detection of sweep/invalidation after 10 minutes
+bool is_hunt_over = not na(h4_start_bar) and (bar_index - h4_start_bar) >= 10
+bool low_broken = is_hunt_over and low < h4_first10_low
+bool high_broken = is_hunt_over and high > h4_first10_high
+
+plotshape(low_broken and not low_broken[1], "Invalidation Low", shape.labelup, location.belowbar, color.red, size = size.tiny, text = "INV LOW")
+plotshape(high_broken and not high_broken[1], "Invalidation High", shape.labeldown, location.abovebar, color.red, size = size.tiny, text = "INV HIGH")
 
 // 3. Estimated Range (ER)
 // Example: 6 / 18 * 25.5 = 8.5166 (Month / Day * Range)
@@ -58,7 +92,7 @@ if barstate.islast
     label.set_text(target_label, "Bounce Point: " + str.tostring(target_price, format.mintick))
 
 // --- DASHBOARD ---
-var table dash = table.new(position.top_right, 2, 6, bgcolor = color.new(color.black, 70), border_width = 1, border_color = color.gray)
+var table dash = table.new(position.top_right, 2, 7, bgcolor = color.new(color.black, 70), border_width = 1, border_color = color.gray)
 if barstate.islast
     table.cell(dash, 0, 0, "Big Boss Algo", text_color = color.white, bgcolor = color.new(color.gray, 50))
     table.cell(dash, 1, 0, "Value", text_color = color.white, bgcolor = color.new(color.gray, 50))
@@ -77,3 +111,8 @@ if barstate.islast
 
     table.cell(dash, 0, 5, "Bounce Point", text_color = color.white)
     table.cell(dash, 1, 5, str.tostring(target_price, format.mintick), text_color = color.green)
+
+    // New H4 Monitoring
+    table.cell(dash, 0, 6, "H4 Session Time", text_color = color.white)
+    int elapsed = not na(h4_start_bar) ? (bar_index - h4_start_bar) : 0
+    table.cell(dash, 1, 6, str.tostring(elapsed) + "/240 mins", text_color = color.white)
