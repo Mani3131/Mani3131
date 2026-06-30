@@ -43,6 +43,9 @@ risk_percent = input.float(1.0, "Risk Per Trade (%)", minval=0.1, maxval=5.0, st
 account_size = input.float(10000.0, "Account Balance", minval=100.0, group=grp_risk)
 show_dashboard = input.bool(true, "Show Strategy Dashboard", group=grp_risk)
 
+grp_visuals = "Visual Optimization"
+show_ltf_lines = input.bool(false, "Show Local Lines on LTF (< 1H)", group=grp_visuals, tooltip="Disable to keep execution charts clean")
+
 // --- Color Palette ---
 color_bull = color.new(color.aqua, 0)
 color_bear = color.new(color.red, 0)
@@ -53,6 +56,9 @@ color_poc = color.new(color.yellow, 0)
 // Helper: explicit na typing
 float f_na = float(na)
 int i_na = int(na)
+
+// Timeframe Filter: Check if chart is LTF (Intraday < 60)
+bool is_htf_display = not timeframe.isintraday or timeframe.multiplier >= 60 or show_ltf_lines
 
 // ==========================================
 // Phase 1 & 2: Structural Implementation
@@ -99,7 +105,7 @@ if barstate.isconfirmed
         strong_level := last_pl
         weak_level := high // Target
 
-        if show_sd_zones
+        if show_sd_zones and is_htf_display
             box.new(bar_index[swing_lookback * 2], last_ph, bar_index, last_pl, bgcolor=color(na), border_color=color.new(color_bull, 20), extend=extend.right)
 
         last_ph := f_na // Reset broken level
@@ -116,7 +122,7 @@ if barstate.isconfirmed
         strong_level := last_ph
         weak_level := low // Target
 
-        if show_sd_zones
+        if show_sd_zones and is_htf_display
             box.new(bar_index[swing_lookback * 2], last_ph, bar_index, last_pl, bgcolor=color(na), border_color=color.new(color_bear, 20), extend=extend.right)
 
         last_pl := f_na // Reset broken level
@@ -128,8 +134,8 @@ if barstate.isconfirmed
         last_pl := pl
 
 // Visualizing Strong/Weak Levels
-plot(show_structure ? strong_level : f_na, "Strong Level", color=color.gray, style=plot.style_linebr, linewidth=2)
-plotshape(show_structure and ta.change(strong_level) != 0, "Strong Marker", shape.circle, location.absolute, color.gray, size=size.tiny)
+plot(show_structure and is_htf_display ? strong_level : f_na, "Strong Level", color=color.gray, style=plot.style_linebr, linewidth=2)
+plotshape(show_structure and is_htf_display and ta.change(strong_level) != 0, "Strong Marker", shape.circle, location.absolute, color.gray, size=size.tiny)
 
 // ==========================================
 // Phase 3: Price Action Implementation
@@ -219,7 +225,7 @@ f_get_of_data() =>
 
 [bar_poc, has_buy_imb, has_sell_imb] = f_get_of_data()
 
-plot(show_of_tools ? bar_poc : f_na, "Bar POC", color=color_poc, style=plot.style_circles, linewidth=1)
+plot(show_of_tools and is_htf_display ? bar_poc : f_na, "Bar POC", color=color_poc, style=plot.style_circles, linewidth=1)
 plotshape(show_of_tools and has_buy_imb, "Buy Imbalance", shape.square, location.belowbar, color.new(color.aqua, 50), size=size.tiny)
 plotshape(show_of_tools and has_sell_imb, "Sell Imbalance", shape.square, location.abovebar, color.new(color.red, 50), size=size.tiny)
 
@@ -270,7 +276,7 @@ if barstate.islast and show_dashboard
     table.cell(dash, 1, 6, str.tostring(pos_size, "#.###"), text_color=color.green)
 
     // Optional: Add TP targets to dashboard
-    if not na(strong_level)
+    if not na(strong_level) and is_htf_display
         table.cell(dash, 0, 7, "TP1 (1:2 RR)", text_color=color.white, text_halign=text.align_left)
         table.cell(dash, 1, 7, str.tostring(tp1_price, "#.#####"), text_color=color.aqua)
         table.cell(dash, 0, 8, "TP2 (Weak H/L)", text_color=color.white, text_halign=text.align_left)
