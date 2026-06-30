@@ -9,7 +9,6 @@ indicator("Comprehensive Market Framework [Phase 1-5]", overlay=true, max_boxes_
 // ==========================================
 grp_mtf = "Phase 1: MTF Framework"
 htf_tf = input.timeframe("240", "Macro Timeframe (HTF)", group=grp_mtf)
-mtf_tf = input.timeframe("60", "Execution Context (MTF)", group=grp_mtf)
 
 // ==========================================
 // Phase 2: Market State & Key Zones
@@ -71,17 +70,17 @@ var int htf_bias = 0 // 1: Bullish, -1: Bearish
 var float htf_zone_high = f_na
 var float htf_zone_low = f_na
 
-if not na(htf_ph)
+if not na(htf_ph) and ta.change(htf_ph) != 0
     htf_bias := htf_ph > nz(htf_zone_high) ? 1 : htf_bias
     htf_zone_high := htf_ph
     if show_sd_zones
-        box.new(bar_index[swing_lookback * 2], htf_ph * 1.001, bar_index, htf_ph * 0.999, bgcolor=color.new(color.red, 80), border_color=color.new(color.red, 30), extend=extend.right, text="HTF SUPPLY", text_size=size.tiny, text_color=color.white)
+        box.new(time, htf_ph * 1.0005, time + (60 * 60 * 1000 * 4), htf_ph * 0.9995, xloc=xloc.bar_time, bgcolor=color.new(color.red, 90), border_color=color.new(color.red, 50), extend=extend.right, text="HTF SUPPLY", text_size=size.tiny, text_color=color.white)
 
-if not na(htf_pl)
+if not na(htf_pl) and ta.change(htf_pl) != 0
     htf_bias := htf_pl < nz(htf_zone_low) ? -1 : htf_bias
     htf_zone_low := htf_pl
     if show_sd_zones
-        box.new(bar_index[swing_lookback * 2], htf_pl * 1.001, bar_index, htf_pl * 0.999, bgcolor=color.new(color.aqua, 80), border_color=color.new(color.aqua, 30), extend=extend.right, text="HTF DEMAND", text_size=size.tiny, text_color=color.white)
+        box.new(time, htf_pl * 1.0005, time + (60 * 60 * 1000 * 4), htf_pl * 0.9995, xloc=xloc.bar_time, bgcolor=color.new(color.aqua, 90), border_color=color.new(color.aqua, 50), extend=extend.right, text="HTF DEMAND", text_size=size.tiny, text_color=color.white)
 
 // Local Structure (MTF/Execution)
 float ph = ta.pivothigh(high, swing_lookback, swing_lookback)
@@ -206,9 +205,12 @@ f_get_of_data() =>
         float step = (b_hi - b_lo) / 10
         array<float> bins = array.new_float(11, 0.0)
 
-        for i = 0 to array.size(ltf_c) - 1
-            int idx = math.min(10, int((array.get(ltf_c, i) - b_lo) / (step + 1e-10)))
-            array.set(bins, idx, array.get(bins, idx) + array.get(ltf_v, i))
+        if step > 0
+            for i = 0 to array.size(ltf_c) - 1
+                float raw_idx = (array.get(ltf_c, i) - b_lo) / step
+                if not na(raw_idx)
+                    int idx = math.max(0, math.min(10, int(raw_idx)))
+                    array.set(bins, idx, array.get(bins, idx) + array.get(ltf_v, i))
 
         int max_idx = 0
         float max_vol = 0.0
