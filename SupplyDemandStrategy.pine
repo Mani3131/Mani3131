@@ -1,0 +1,372 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+strategy("Supply and Demand Institutional Strategy", overlay=true, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=1)
+
+// --- Constants and Inputs ---
+i_htf = input.timeframe("D", "Higher Timeframe (HTF)")
+i_risk_pct = input.float(1.0, "Risk Per Trade (%)", minval=0.1, maxval=10.0) / 100
+i_lookback = input.int(10, "Explosive Candle Lookback", minval=5)
+
+// --- Candle Classification ---
+// Classification based on body-to-range ratio
+// Indecisive (Base): Body <= 50% of range
+// Decisive: Body > 50% of range
+// Explosive: Body > 50% of range and abnormally larger than previous candles
+f_classify_candle() =>
+    float body = math.abs(close - open)
+    float candle_range = high - low
+    bool is_indecisive = candle_range > 0 and body <= 0.5 * candle_range
+    bool is_decisive = candle_range > 0 and body > 0.5 * candle_range
+
+    // Explosive check: body > 50% range AND larger than avg of surrounding candles
+    // Using previous candles to avoid self-bias in the average
+    float avg_range = ta.sma(candle_range[1], i_lookback)
+    bool is_explosive = is_decisive and candle_range > 1.5 * avg_range
+
+    [is_indecisive, is_decisive, is_explosive]
+
+[is_base, is_decisive_candle, is_explosive] = f_classify_candle()
+
+// Visual aids for classification (optional for debugging)
+plotshape(is_base, "Base Candle", shape.circle, location.belowbar, color.gray, size=size.tiny)
+plotshape(is_explosive, "Explosive Candle", shape.diamond, location.abovebar, color.yellow, size=size.tiny)
+
+// --- Formation and Zone Detection ---
+// We'll use a simple approach: look for an explosive leg-out and then look back for basing candles.
+
+var float demand_proximal = na
+var float demand_distal = na
+var float supply_proximal = na
+var float supply_distal = na
+
+// Arrays to store zone information
+type Zone
+    float proximal
+    float distal
+    int type // 1: Demand, -1: Supply
+    int creation_time
+    bool is_fresh = true
+
+var Zone[] all_zones = array.new<Zone>()
+
+// Performance: Prune old zones if array gets too large
+if array.size(all_zones) > 100
+    array.shift(all_zones)
+
+// Helper to get max/min bodies in a range
+f_get_body_range(start_idx, end_idx, is_demand) =>
+    float price = is_demand ? 0.0 : 1000000.0
+    for i = start_idx to end_idx
+        float body_high = math.max(open[i], close[i])
+        float body_low = math.min(open[i], close[i])
+        if is_demand
+            price := math.max(price, body_high)
+        else
+            price := math.min(price, body_low)
+    price
+
+f_get_wick_extreme(start_idx, end_idx, is_low) =>
+    float extreme = is_low ? low[start_idx] : high[start_idx]
+    for i = start_idx to end_idx
+        if is_low
+            extreme := math.min(extreme, low[i])
+        else
+            extreme := math.max(extreme, high[i])
+    extreme
+
+// Check for formations when an explosive candle closes
+if is_explosive
+    bool is_bullish_legout = close > open
+
+    // Look back for basing candles (max 6 for this example)
+    int base_count = 0
+    for i = 1 to 6
+        if is_base[i]
+            base_count += 1
+        else
+            break
+
+    if base_count > 0
+        // Valid formation candidate
+        int legin_idx = base_count + 1
+        bool is_bullish_legin = close[legin_idx] > open[legin_idx]
+        bool is_bearish_legin = close[legin_idx] < open[legin_idx]
+
+        if is_bullish_legout
+            // Potential Demand: DBR or RBR
+            bool is_dbr = is_bearish_legin
+            bool is_rbr = is_bullish_legin
+
+            if is_dbr or is_rbr
+                float prox = f_get_body_range(1, base_count, true)
+                // Distal: Lowest wick of Base + Leg-out (and Leg-in if DBR)
+                float dist = f_get_wick_extreme(0, is_dbr ? legin_idx : base_count, true)
+                array.push(all_zones, Zone.new(prox, dist, 1, time, true))
+                // For visualization of last detected
+                demand_proximal := prox
+                demand_distal := dist
+
+        else // is_bearish_legout
+            // Potential Supply: RBD or DBD
+            bool is_rbd = is_bullish_legin
+            bool is_dbd = is_bearish_legin
+
+            if is_rbd or is_dbd
+                float prox = f_get_body_range(1, base_count, false)
+                // Distal: Highest wick of Base + Leg-out (and Leg-in if RBD)
+                float dist = f_get_wick_extreme(0, is_rbd ? legin_idx : base_count, false)
+                array.push(all_zones, Zone.new(prox, dist, -1, time, true))
+                // For visualization of last detected
+                supply_proximal := prox
+                supply_distal := dist
+
+// --- HTF Logic to be used in request.security ---
+f_get_htf_context() =>
+    float body = math.abs(close - open)
+    float candle_range = high - low
+    bool base = candle_range > 0 and body <= 0.5 * candle_range
+    float avg_range = ta.sma(candle_range[1], 10)
+    bool explosive = candle_range > 0 and body > 0.5 * candle_range and candle_range > 1.5 * avg_range
+
+    var float d_prox = na
+    var float d_dist = na
+    var float s_prox = na
+    var float s_dist = na
+
+    if explosive
+        int b_count = 0
+        for i = 1 to 6
+            if base[i]
+                b_count += 1
+            else
+                break
+
+        if b_count > 0
+            int li_idx = b_count + 1
+            bool bull_lo = close > open
+            bool bull_li = close[li_idx] > open[li_idx]
+            bool bear_li = close[li_idx] < open[li_idx]
+
+            if bull_lo and (bull_li or bear_li)
+                // Demand
+                float p = 0.0
+                for j = 1 to b_count
+                    p := math.max(p, math.max(open[j], close[j]))
+                float d = low[0]
+                for j = 0 to (bear_li ? li_idx : b_count)
+                    d := math.min(d, low[j])
+                d_prox := p
+                d_dist := d
+            else if not bull_lo and (bull_li or bear_li)
+                // Supply
+                float p = 1000000.0
+                for j = 1 to b_count
+                    p := math.min(p, math.min(open[j], close[j]))
+                float d = high[0]
+                for j = 0 to (bull_li ? li_idx : b_count)
+                    d := math.max(d, high[j])
+                s_prox := p
+                s_dist := d
+
+    // Freshness on HTF (simple version)
+    var float fresh_d_prox = na
+    var float fresh_d_dist = na
+    var float fresh_s_prox = na
+    var float fresh_s_dist = na
+
+    if not na(d_prox)
+        fresh_d_prox := d_prox
+        fresh_d_dist := d_dist
+    if not na(s_prox)
+        fresh_s_prox := s_prox
+        fresh_s_dist := s_dist
+
+    // Invalidate if pierced 50%
+    if not na(fresh_d_prox) and low < fresh_d_prox
+        if (fresh_d_prox - low) >= 0.5 * (fresh_d_prox - fresh_d_dist)
+            fresh_d_prox := na
+            fresh_d_dist := na
+
+    if not na(fresh_s_prox) and high > fresh_s_prox
+        if (high - fresh_s_prox) >= 0.5 * (fresh_s_dist - fresh_s_prox)
+            fresh_s_prox := na
+            fresh_s_dist := na
+
+    // --- HTF Trend Identification (Inside HTF Context) ---
+    float ph = ta.pivothigh(high, 5, 5)
+    float pl = ta.pivotlow(low, 5, 5)
+    var float[] phs = array.new_float(0)
+    var float[] pls = array.new_float(0)
+    if not na(ph)
+        array.unshift(phs, ph)
+        if array.size(phs) > 3
+            array.pop(phs)
+    if not na(pl)
+        array.unshift(pls, pl)
+        if array.size(pls) > 3
+            array.pop(pls)
+    int trend_val = 0 // 0: Sideways, 1: Uptrend, -1: Downtrend
+    if array.size(pls) >= 2
+        if array.get(pls, 0) > array.get(pls, 1)
+            trend_val := 1
+    if array.size(phs) >= 2
+        if array.get(phs, 0) < array.get(phs, 1)
+            if trend_val == 1
+                trend_val := 0
+            else
+                trend_val := -1
+
+    [fresh_d_prox, fresh_d_dist, fresh_s_prox, fresh_s_dist, float(trend_val)]
+
+// --- Higher Timeframe (HTF) Data ---
+// In Pine Script v6, we need to handle the tuple return correctly
+f_call_htf() =>
+    [v0, v1, v2, v3, v4] = f_get_htf_context()
+    [v0, v1, v2, v3, v4, high, low]
+
+[htf_d_prox, htf_d_dist, htf_s_prox, htf_s_dist, htf_trend_val, htf_high, htf_low] = request.security(syminfo.tickerid, i_htf, f_call_htf(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+// --- Higher Timeframe (HTF) Macro Analysis ---
+// Grid Split (33% / 66%) using the identified HTF supply and demand
+float macro_high = na(htf_s_dist) ? high[50] : htf_s_dist
+float macro_low = na(htf_d_dist) ? low[50] : htf_d_dist
+
+float macro_range = macro_high - macro_low
+float grid_33 = macro_low + macro_range * 0.333
+float grid_66 = macro_low + macro_range * 0.666
+
+string htf_location = close > grid_66 ? "High (Expensive)" : close < grid_33 ? "Low (Cheap)" : "Equilibrium"
+
+// Freshness logic for zones (to be applied in the Action Matrix)
+// Updates the persistent state of the zone object
+f_update_freshness(Zone z) =>
+    if z.is_fresh
+        // Check if price has entered the zone
+        if z.type == 1 // Demand
+            if low < z.proximal
+                float pierce_depth = z.proximal - low
+                float zone_height = z.proximal - z.distal
+                // Invalid if pierce >= 50%
+                if pierce_depth >= 0.5 * zone_height
+                    z.is_fresh := false
+        else // Supply
+            if high > z.proximal
+                float pierce_depth = high - z.proximal
+                float zone_height = z.distal - z.proximal
+                if pierce_depth >= 0.5 * zone_height
+                    z.is_fresh := false
+    z.is_fresh
+
+// --- MTF Confluence (Big Brother / Small Brother) ---
+// For the LTF zones to be valid for entry, they must be housed within HTF zones.
+// Since fetching all HTF zones is complex, we'll use the macro boundaries
+// (htf_highest/htf_lowest) as our macro "Big Brother" zones for now,
+// or ideally, detected HTF zones.
+
+f_is_housed(Zone ltf_zone, float htf_prox, float htf_dist) =>
+    bool housed = false
+    if ltf_zone.type == 1 // Demand
+        // LTF Demand must be inside HTF Demand
+        // HTF Demand distal is bottom, proximal is top
+        housed := ltf_zone.proximal <= htf_prox and ltf_zone.distal >= htf_dist
+    else // Supply
+        // LTF Supply must be inside HTF Supply
+        // HTF Supply distal is top, proximal is bottom
+        housed := ltf_zone.proximal >= htf_prox and ltf_zone.distal <= htf_dist
+    housed
+
+// --- HTF Trend Identification ---
+string htf_trend = htf_trend_val == 1.0 ? "Uptrend" : htf_trend_val == -1.0 ? "Downtrend" : "Sideways"
+
+// --- Strategic Action Matrix ---
+f_is_buy_authorized(string loc, string trend) =>
+    bool auth = false
+    if loc == "Low (Cheap)"
+        if trend == "Uptrend" or trend == "Sideways"
+            auth := true
+    else if loc == "Equilibrium"
+        if trend == "Uptrend"
+            auth := true
+    auth
+
+f_is_sell_authorized(string loc, string trend) =>
+    bool auth = false
+    if loc == "High (Expensive)"
+        if trend == "Downtrend" or trend == "Sideways"
+            auth := true
+    else if loc == "Equilibrium"
+        if trend == "Downtrend"
+            auth := true
+    auth
+
+buy_authorized = f_is_buy_authorized(htf_location, htf_trend)
+sell_authorized = f_is_sell_authorized(htf_location, htf_trend)
+
+// --- Risk Management and Execution ---
+// We iterate through zones and place orders for fresh, authorized ones.
+if array.size(all_zones) > 0
+    for i = 0 to array.size(all_zones) - 1
+        Zone z = array.get(all_zones, i)
+        if f_update_freshness(z)
+            if z.type == 1 and buy_authorized
+                // Big Brother / Small Brother Confluence
+                if not na(htf_d_prox) and f_is_housed(z, htf_d_prox, htf_d_dist)
+                    // Position Sizing: Risk Amount / (Entry - Stop)
+                    float risk_per_share = math.abs(z.proximal - z.distal)
+                    if risk_per_share > 0
+                        float pos_size = (strategy.equity * i_risk_pct) / (risk_per_share * syminfo.pointvalue)
+                        string order_id = "Long " + str.tostring(z.creation_time)
+                        strategy.entry(order_id, strategy.long, qty=pos_size, limit=z.proximal, comment="Demand Entry")
+                        strategy.exit("Exit " + order_id, order_id, stop=z.distal, limit=na(htf_s_prox) ? macro_high : htf_s_prox, comment="TP at HTF Supply")
+
+            else if z.type == -1 and sell_authorized
+                // Big Brother / Small Brother Confluence
+                if not na(htf_s_prox) and f_is_housed(z, htf_s_prox, htf_s_dist)
+                    float risk_per_share = math.abs(z.proximal - z.distal)
+                    if risk_per_share > 0
+                        float pos_size = (strategy.equity * i_risk_pct) / (risk_per_share * syminfo.pointvalue)
+                        string order_id = "Short " + str.tostring(z.creation_time)
+                        strategy.entry(order_id, strategy.short, qty=pos_size, limit=z.proximal, comment="Supply Entry")
+                        strategy.exit("Exit " + order_id, order_id, stop=z.distal, limit=na(htf_d_prox) ? macro_low : htf_d_prox, comment="TP at HTF Demand")
+
+// --- Visualizations ---
+
+// Draw boxes for all fresh zones
+var box[] zone_boxes = array.new_box(0)
+
+if barstate.islast
+    // Clear old boxes
+    for b in zone_boxes
+        box.delete(b)
+    array.clear(zone_boxes)
+
+    if array.size(all_zones) > 0
+        int count = 0
+        for i = array.size(all_zones) - 1 to 0
+            Zone z = array.get(all_zones, i)
+            if z.is_fresh and count < 10 // Limit to last 10 fresh zones for performance
+                color c = z.type == 1 ? color.green : color.red
+                box b = box.new(bar_index - 50, z.proximal, bar_index + 10, z.distal, bgcolor=color.new(c, 90), border_color=c, extend=extend.right)
+                array.push(zone_boxes, b)
+                count += 1
+
+// HTF Status Table
+var table status_table = table.new(position.top_right, 2, 3, border_width=1)
+if barstate.islast
+    table.cell(status_table, 0, 0, "HTF Location", bgcolor=color.gray, text_color=color.white)
+    table.cell(status_table, 1, 0, htf_location, bgcolor=htf_location == "Low (Cheap)" ? color.green : htf_location == "High (Expensive)" ? color.red : color.blue, text_color=color.white)
+
+    table.cell(status_table, 0, 1, "HTF Trend", bgcolor=color.gray, text_color=color.white)
+    table.cell(status_table, 1, 1, htf_trend, bgcolor=htf_trend == "Uptrend" ? color.green : htf_trend == "Downtrend" ? color.red : color.orange, text_color=color.white)
+
+    table.cell(status_table, 0, 2, "Action Authorized", bgcolor=color.gray, text_color=color.white)
+    string action = buy_authorized ? "BUY" : sell_authorized ? "SELL" : "STAND ASIDE"
+    table.cell(status_table, 1, 2, action, bgcolor=action == "BUY" ? color.green : action == "SELL" ? color.red : color.gray, text_color=color.white)
+
+// Plot the most recent zones for visual check
+plot(demand_proximal, "Latest Demand Proximal", color.green, style=plot.style_linebr)
+plot(demand_distal, "Latest Demand Distal", color.red, style=plot.style_linebr)
+plot(supply_proximal, "Latest Supply Proximal", color.green, style=plot.style_linebr)
+plot(supply_distal, "Latest Supply Distal", color.red, style=plot.style_linebr)
