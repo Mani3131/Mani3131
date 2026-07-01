@@ -33,6 +33,11 @@ f_classify_candle() =>
 plotshape(is_base, "Base Candle", shape.circle, location.belowbar, color.gray, size=size.tiny)
 plotshape(is_explosive, "Explosive Candle", shape.diamond, location.abovebar, color.yellow, size=size.tiny)
 
+// Debug: Plot when a formation is detected
+var bool formation_detected = false
+formation_detected := false
+plotshape(formation_detected, "Formation Detected", shape.triangleup, location.belowbar, color.blue, size=size.small)
+
 // --- Formation and Zone Detection ---
 // We'll use a simple approach: look for an explosive leg-out and then look back for basing candles.
 
@@ -107,6 +112,7 @@ if is_explosive
                 // For visualization of last detected
                 demand_proximal := prox
                 demand_distal := dist
+                formation_detected := true
 
         else // is_bearish_legout
             // Potential Supply: RBD or DBD
@@ -121,6 +127,7 @@ if is_explosive
                 // For visualization of last detected
                 supply_proximal := prox
                 supply_distal := dist
+                formation_detected := true
 
 // --- HTF Logic to be used in request.security ---
 f_get_htf_context() =>
@@ -182,6 +189,14 @@ f_get_htf_context() =>
     if not na(s_prox)
         fresh_s_prox := s_prox
         fresh_s_dist := s_dist
+
+    // Persistence: If current candle doesn't have a zone, keep the previous one
+    if na(d_prox)
+        fresh_d_prox := fresh_d_prox[1]
+        fresh_d_dist := fresh_d_dist[1]
+    if na(s_prox)
+        fresh_s_prox := fresh_s_prox[1]
+        fresh_s_dist := fresh_s_dist[1]
 
     // Invalidate if pierced 50%
     if not na(fresh_d_prox) and low < fresh_d_prox
@@ -320,6 +335,9 @@ if array.size(all_zones) > 0
                         string order_id = "Long " + str.tostring(z.creation_time)
                         strategy.entry(order_id, strategy.long, qty=pos_size, limit=z.proximal, comment="Demand Entry")
                         strategy.exit("Exit " + order_id, order_id, stop=z.distal, limit=na(htf_s_prox) ? macro_high : htf_s_prox, comment="TP at HTF Supply")
+                        // Visual marker for entry placement
+                        if z.creation_time == time
+                            label.new(bar_index, high, "BUY LIMIT SET", color=color.green, textcolor=color.white, style=label.style_label_down)
 
             else if z.type == -1 and sell_authorized
                 // Big Brother / Small Brother Confluence
@@ -330,6 +348,9 @@ if array.size(all_zones) > 0
                         string order_id = "Short " + str.tostring(z.creation_time)
                         strategy.entry(order_id, strategy.short, qty=pos_size, limit=z.proximal, comment="Supply Entry")
                         strategy.exit("Exit " + order_id, order_id, stop=z.distal, limit=na(htf_d_prox) ? macro_low : htf_d_prox, comment="TP at HTF Demand")
+                        // Visual marker for entry placement
+                        if z.creation_time == time
+                            label.new(bar_index, low, "SELL LIMIT SET", color=color.red, textcolor=color.white, style=label.style_label_up)
 
 // --- Visualizations ---
 
