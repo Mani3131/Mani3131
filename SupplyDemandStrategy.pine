@@ -52,7 +52,6 @@ type Zone
     float distal
     int type // 1: Demand, -1: Supply
     int creation_time
-    int start_bar
     bool is_fresh = true
 
 var Zone[] all_zones = array.new<Zone>()
@@ -109,7 +108,7 @@ if is_explosive
                 float prox = f_get_body_range(1, base_count, true)
                 // Distal: Lowest wick of Base + Leg-out (and Leg-in if DBR)
                 float dist = f_get_wick_extreme(0, is_dbr ? legin_idx : base_count, true)
-                array.push(all_zones, Zone.new(prox, dist, 1, time, bar_index - base_count, true))
+                array.push(all_zones, Zone.new(prox, dist, 1, time, true))
                 // For visualization of last detected
                 demand_proximal := prox
                 demand_distal := dist
@@ -124,7 +123,7 @@ if is_explosive
                 float prox = f_get_body_range(1, base_count, false)
                 // Distal: Highest wick of Base + Leg-out (and Leg-in if RBD)
                 float dist = f_get_wick_extreme(0, is_rbd ? legin_idx : base_count, false)
-                array.push(all_zones, Zone.new(prox, dist, -1, time, bar_index - base_count, true))
+                array.push(all_zones, Zone.new(prox, dist, -1, time, true))
                 // For visualization of last detected
                 supply_proximal := prox
                 supply_distal := dist
@@ -355,24 +354,26 @@ if array.size(all_zones) > 0
 
 // --- Visualizations ---
 
-// Draw boxes for all fresh zones
-var box[] zone_boxes = array.new_box(0)
+// Draw boxes for zones (using persistent variables to avoid spam)
+var box demand_box = na
+var box supply_box = na
 
 if barstate.islast
-    // Clear old boxes
-    for b in zone_boxes
-        box.delete(b)
-    array.clear(zone_boxes)
+    if not na(demand_proximal)
+        if na(demand_box)
+            demand_box := box.new(bar_index[20], demand_proximal, bar_index + 10, demand_distal, bgcolor=color.new(color.green, 85), border_color=color.green, extend=extend.right)
+            box.set_bgcolor(demand_box, color.new(color.green, 85)) // Ensure branch returns void
+        else
+            box.set_lefttop(demand_box, bar_index[20], demand_proximal)
+            box.set_rightbottom(demand_box, bar_index + 10, demand_distal)
 
-    if array.size(all_zones) > 0
-        int count = 0
-        for i = array.size(all_zones) - 1 to 0
-            Zone z = array.get(all_zones, i)
-            if z.is_fresh and count < 10 // Limit to last 10 fresh zones for performance
-                color c = z.type == 1 ? color.green : color.red
-                box b = box.new(z.start_bar, z.proximal, bar_index + 5, z.distal, bgcolor=color.new(c, 90), border_color=c, extend=extend.right)
-                array.push(zone_boxes, b)
-                count += 1
+    if not na(supply_proximal)
+        if na(supply_box)
+            supply_box := box.new(bar_index[20], supply_proximal, bar_index + 10, supply_distal, bgcolor=color.new(color.red, 85), border_color=color.red, extend=extend.right)
+            box.set_bgcolor(supply_box, color.new(color.red, 85)) // Ensure branch returns void
+        else
+            box.set_lefttop(supply_box, bar_index[20], supply_proximal)
+            box.set_rightbottom(supply_box, bar_index + 10, supply_distal)
 
 // HTF Status Table
 var table status_table = table.new(position.top_right, 2, 3, border_width=1)
@@ -387,4 +388,8 @@ if barstate.islast
     string action = buy_authorized ? "BUY" : sell_authorized ? "SELL" : "STAND ASIDE"
     table.cell(status_table, 1, 2, action, bgcolor=action == "BUY" ? color.green : action == "SELL" ? color.red : color.gray, text_color=color.white)
 
-// Plots removed as per user request (replacing with boxes)
+// Plot the most recent zones for visual check
+plot(demand_proximal, "Latest Demand Proximal", color.green, style=plot.style_linebr)
+plot(demand_distal, "Latest Demand Distal", color.red, style=plot.style_linebr)
+plot(supply_proximal, "Latest Supply Proximal", color.green, style=plot.style_linebr)
+plot(supply_distal, "Latest Supply Distal", color.red, style=plot.style_linebr)
