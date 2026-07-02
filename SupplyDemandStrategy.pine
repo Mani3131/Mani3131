@@ -30,6 +30,7 @@ bool isAtrShrinking = atr < avgAtr
 bool isBase = candleRange > 0 and (bodySize / candleRange) <= 0.5 and isAtrShrinking
 bool isDecisive = candleRange > 0 and (bodySize / candleRange) > 0.5
 bool isExplosive = isDecisive and bodySize > (avgBody * 2.5)
+bool isStrong = isDecisive and bodySize > (avgBody * 3.5)
 
 // --- Formation Detection ---
 // We need to look back to find sequences: Leg-In -> 1 to i_maxBases Base Candles -> Explosive Leg-Out
@@ -79,16 +80,16 @@ color demandColor = color.new(color.green, 80)
 color supplyColor = color.new(color.red, 80)
 
 if isDemand
-    string demandType = isRBR ? "RBR (Demand)" : "DBR (Demand)"
+    string demandType = (isStrong ? "STRONG " : "") + (isRBR ? "RBR" : "DBR") + " (" + str.tostring(zoneProximal, "#.#####") + ")"
     box newBox = box.new(left=bar_index[1], top=zoneProximal, right=bar_index, bottom=zoneDistal,
-      bgcolor=demandColor, border_color=color.green, extend=extend.right,
+      bgcolor=demandColor, border_color=color.green, border_width=isStrong ? 2 : 1, extend=extend.right,
       text=demandType, text_color=color.green, text_size=size.small, text_halign=text.align_right)
     array.push(demandBoxes, newBox)
 
 if isSupply
-    string supplyType = isRBD ? "RBD (Supply)" : "DBD (Supply)"
+    string supplyType = (isStrong ? "STRONG " : "") + (isRBD ? "RBD" : "DBD") + " (" + str.tostring(zoneProximal, "#.#####") + ")"
     box newBox = box.new(left=bar_index[1], top=zoneDistal, right=bar_index, bottom=zoneProximal,
-      bgcolor=supplyColor, border_color=color.red, extend=extend.right,
+      bgcolor=supplyColor, border_color=color.red, border_width=isStrong ? 2 : 1, extend=extend.right,
       text=supplyType, text_color=color.red, text_size=size.small, text_halign=text.align_right)
     array.push(supplyBoxes, newBox)
 
