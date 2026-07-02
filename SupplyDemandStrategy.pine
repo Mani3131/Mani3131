@@ -13,6 +13,7 @@ max_boxes = input.int(50, "Max Historical Boxes", minval=1, group=group_viz)
 group_trend = "Trend Filtering"
 use_trend_filter = input.bool(true, "Enable Trend Filter", group=group_trend)
 trend_ema_length = input.int(200, "Trend EMA Length", minval=1, group=group_trend)
+htf_tf = input.timeframe("240", "Higher Timeframe", group=group_trend)
 
 group_risk = "Risk Management"
 rr_ratio = input.float(3.0, "Reward-to-Risk Ratio", minval=0.1, step=0.1, group=group_risk)
@@ -46,12 +47,62 @@ var float active_supply_low = na
 var float active_demand_high = na
 var float active_demand_low = na
 
+// --- HTF Data Extraction ---
+get_htf_zones() =>
+    body_size = math.abs(close - open)
+    candle_range = high - low
+    _is_base = candle_range > 0 and body_size <= 0.5 * candle_range
+    _is_decisive = candle_range > 0 and body_size > 0.5 * candle_range
+    _is_rally = _is_decisive and close > open
+    _is_drop = _is_decisive and close < open
+    _is_explosive = _is_decisive and body_size > 1.5 * ta.sma(body_size, 10)
+
+    _is_rbd = _is_rally[2] and _is_base[1] and _is_drop and _is_explosive
+    _is_dbd = _is_drop[2] and _is_base[1] and _is_drop and _is_explosive
+    _is_rbr = _is_rally[2] and _is_base[1] and _is_rally and _is_explosive
+    _is_dbr = _is_drop[2] and _is_base[1] and _is_rally and _is_explosive
+
+    [ _is_rbd or _is_dbd, _is_rbr or _is_dbr, high[1], low[1] ]
+
+[htf_supply_found, htf_demand_found, htf_z_high, htf_z_low] = request.security(syminfo.tickerid, htf_tf, get_htf_zones())
+
+var float current_htf_supply_high = na
+var float current_htf_supply_low = na
+var float current_htf_demand_high = na
+var float current_htf_demand_low = na
+
+if htf_supply_found
+    current_htf_supply_high := htf_z_high
+    current_htf_supply_low := htf_z_low
+
+if htf_demand_found
+    current_htf_demand_high := htf_z_high
+    current_htf_demand_low := htf_z_low
+
+// HTF Zone Invalidation (50% rule)
+if not na(current_htf_supply_high)
+    htf_zone_mid = current_htf_supply_low + (current_htf_supply_high - current_htf_supply_low) * 0.5
+    if high > htf_zone_mid
+        current_htf_supply_high := na
+
+if not na(current_htf_demand_high)
+    htf_zone_mid = current_htf_demand_low + (current_htf_demand_high - current_htf_demand_low) * 0.5
+    if low < htf_zone_mid
+        current_htf_demand_high := na
+
 // --- Main Logic ---
 trend_ema = ta.ema(close, trend_ema_length)
 is_uptrend = not use_trend_filter or close > trend_ema
 is_downtrend = not use_trend_filter or close < trend_ema
 
 plot(trend_ema, "Trend EMA", color.gray)
+
+// Alignment Logic: Check if LTF zone is nested within HTF zone
+is_supply_aligned(ltf_high, ltf_low) =>
+    not na(current_htf_supply_high) and ltf_high <= current_htf_supply_high and ltf_low >= current_htf_supply_low
+
+is_demand_aligned(ltf_high, ltf_low) =>
+    not na(current_htf_demand_high) and ltf_high <= current_htf_demand_high and ltf_low >= current_htf_demand_low
 
 // --- Formation Detection ---
 // RBD: Rally -> Base -> Drop (Explosive)
@@ -67,7 +118,7 @@ is_rbr = is_rally()[2] and is_base()[1] and is_rally() and is_explosive()
 is_dbr = is_drop()[2] and is_base()[1] and is_rally() and is_explosive()
 
 // --- Zone Refinement ---
-if (is_rbd or is_dbd) and is_downtrend
+if (is_rbd or is_dbd) and is_downtrend and is_supply_aligned(high[1], low[1])
     active_supply_high := high[1]
     active_supply_low := low[1]
     new_box = box.new(bar_index[1], active_supply_high, bar_index + 5, active_supply_low,
@@ -75,7 +126,7 @@ if (is_rbd or is_dbd) and is_downtrend
              extend=extend.right)
     array.push(all_boxes, new_box)
 
-if (is_rbr or is_dbr) and is_uptrend
+if (is_rbr or is_dbr) and is_uptrend and is_demand_aligned(high[1], low[1])
     active_demand_high := high[1]
     active_demand_low := low[1]
     new_box = box.new(bar_index[1], active_demand_high, bar_index + 5, active_demand_low,
@@ -95,8 +146,8 @@ retest_demand = not na(active_demand_high) and low <= active_demand_high
 // Prevent immediate entry on formation bar
 can_enter = not (is_rbd or is_dbd or is_rbr or is_dbr)
 
-long_condition = retest_demand and can_enter and is_uptrend
-short_condition = retest_supply and can_enter and is_downtrend
+long_condition = retest_demand and can_enter and is_uptrend and is_demand_aligned(active_demand_high, active_demand_low)
+short_condition = retest_supply and can_enter and is_downtrend and is_supply_aligned(active_supply_high, active_supply_low)
 
 // --- Execution and Risk Management ---
 if long_condition and strategy.position_size == 0
@@ -124,6 +175,6 @@ if not na(active_demand_high)
     if low < zone_mid
         active_demand_high := na
 
-// Debug formation signals
-plotshape(is_rbd or is_dbd, "Supply Formation", shape.triangledown, location.abovebar, color.red, size=size.small)
-plotshape(is_rbr or is_dbr, "Demand Formation", shape.triangleup, location.belowbar, color.blue, size=size.small)
+// Debug formation signals - Only if aligned
+plotshape((is_rbd or is_dbd) and is_supply_aligned(high[1], low[1]), "Supply Formation", shape.triangledown, location.abovebar, color.red, size=size.small)
+plotshape((is_rbr or is_dbr) and is_demand_aligned(high[1], low[1]), "Demand Formation", shape.triangleup, location.belowbar, color.blue, size=size.small)
