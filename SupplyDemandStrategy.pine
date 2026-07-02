@@ -1,0 +1,129 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+strategy("Supply and Demand Four Core Formations", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=1)
+
+// --- Inputs ---
+group_viz = "Visualization Settings"
+supply_color_input = input.color(color.new(color.red, 90), "Supply Zone Color", group=group_viz)
+demand_color_input = input.color(color.new(color.blue, 90), "Demand Zone Color", group=group_viz)
+max_boxes = input.int(50, "Max Historical Boxes", minval=1, group=group_viz)
+
+group_trend = "Trend Filtering"
+use_trend_filter = input.bool(true, "Enable Trend Filter", group=group_trend)
+trend_ema_length = input.int(200, "Trend EMA Length", minval=1, group=group_trend)
+
+group_risk = "Risk Management"
+rr_ratio = input.float(3.0, "Reward-to-Risk Ratio", minval=0.1, step=0.1, group=group_risk)
+
+// --- Candle Classification Functions ---
+is_base() =>
+    body_size = math.abs(close - open)
+    candle_range = high - low
+    candle_range > 0 and body_size <= 0.5 * candle_range
+
+is_decisive() =>
+    body_size = math.abs(close - open)
+    candle_range = high - low
+    candle_range > 0 and body_size > 0.5 * candle_range
+
+is_rally() =>
+    is_decisive() and close > open
+
+is_drop() =>
+    is_decisive() and close < open
+
+is_explosive() =>
+    body_size = math.abs(close - open)
+    avg_body = ta.sma(body_size, 10)
+    is_decisive() and body_size > 1.5 * avg_body
+
+// --- Global Variables ---
+var box[] all_boxes = array.new_box()
+var float active_supply_high = na
+var float active_supply_low = na
+var float active_demand_high = na
+var float active_demand_low = na
+
+// --- Main Logic ---
+trend_ema = ta.ema(close, trend_ema_length)
+is_uptrend = not use_trend_filter or close > trend_ema
+is_downtrend = not use_trend_filter or close < trend_ema
+
+plot(trend_ema, "Trend EMA", color.gray)
+
+// --- Formation Detection ---
+// RBD: Rally -> Base -> Drop (Explosive)
+is_rbd = is_rally()[2] and is_base()[1] and is_drop() and is_explosive()
+
+// DBD: Drop -> Base -> Drop (Explosive)
+is_dbd = is_drop()[2] and is_base()[1] and is_drop() and is_explosive()
+
+// RBR: Rally -> Base -> Rally (Explosive)
+is_rbr = is_rally()[2] and is_base()[1] and is_rally() and is_explosive()
+
+// DBR: Drop -> Base -> Rally (Explosive)
+is_dbr = is_drop()[2] and is_base()[1] and is_rally() and is_explosive()
+
+// --- Zone Refinement ---
+if (is_rbd or is_dbd) and is_downtrend
+    active_supply_high := high[1]
+    active_supply_low := low[1]
+    new_box = box.new(bar_index[1], active_supply_high, bar_index + 5, active_supply_low,
+             bgcolor=supply_color_input, border_color=color.new(supply_color_input, 40),
+             extend=extend.right)
+    array.push(all_boxes, new_box)
+
+if (is_rbr or is_dbr) and is_uptrend
+    active_demand_high := high[1]
+    active_demand_low := low[1]
+    new_box = box.new(bar_index[1], active_demand_high, bar_index + 5, active_demand_low,
+             bgcolor=demand_color_input, border_color=color.new(demand_color_input, 40),
+             extend=extend.right)
+    array.push(all_boxes, new_box)
+
+// Prune old boxes
+if array.size(all_boxes) > max_boxes
+    old_box = array.shift(all_boxes)
+    box.delete(old_box)
+
+// --- Entry Logic (Re-test) ---
+retest_supply = not na(active_supply_high) and high >= active_supply_low
+retest_demand = not na(active_demand_high) and low <= active_demand_high
+
+// Prevent immediate entry on formation bar
+can_enter = not (is_rbd or is_dbd or is_rbr or is_dbr)
+
+long_condition = retest_demand and can_enter and is_uptrend
+short_condition = retest_supply and can_enter and is_downtrend
+
+// --- Execution and Risk Management ---
+if long_condition and strategy.position_size == 0
+    sl = active_demand_low
+    tp = close + (close - sl) * rr_ratio
+    strategy.entry("Long", strategy.long, comment="Demand Re-test")
+    strategy.exit("Exit Long", "Long", stop=sl, limit=tp)
+    active_demand_high := na // Deactivate zone after entry
+
+if short_condition and strategy.position_size == 0
+    sl = active_supply_high
+    tp = close - (sl - close) * rr_ratio
+    strategy.entry("Short", strategy.short, comment="Supply Re-test")
+    strategy.exit("Exit Short", "Short", stop=sl, limit=tp)
+    active_supply_high := na // Deactivate zone after entry
+
+// Invalidate zones if price pierces them too deep (50% of zone height as per memory)
+if not na(active_supply_high)
+    zone_mid = active_supply_low + (active_supply_high - active_supply_low) * 0.5
+    if high > zone_mid
+        active_supply_high := na
+
+if not na(active_demand_high)
+    zone_mid = active_demand_low + (active_demand_high - active_demand_low) * 0.5
+    if low < zone_mid
+        active_demand_high := na
+
+// Debug formation signals
+plotshape(is_rbd or is_dbd, "Supply Formation", shape.triangledown, location.abovebar, color.red, size=size.small)
+plotshape(is_rbr or is_dbr, "Demand Formation", shape.triangleup, location.belowbar, color.blue, size=size.small)
