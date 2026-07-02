@@ -9,6 +9,18 @@ i_htf = input.timeframe("D", "Higher Timeframe (HTF)")
 i_risk_pct = input.float(1.0, "Risk Per Trade (%)", minval=0.1, maxval=10.0) / 100
 i_lookback = input.int(10, "Explosive Candle Lookback", minval=5)
 
+group_viz = "Visualization Settings"
+supply_color_input = input.color(color.new(color.red, 90), "Supply Zone Color", group=group_viz)
+demand_color_input = input.color(color.new(color.blue, 90), "Demand Zone Color", group=group_viz)
+max_boxes_input = input.int(50, "Max Historical Boxes", minval=1, group=group_viz)
+
+group_trend = "Trend Filtering"
+use_ema_filter = input.bool(true, "Enable EMA Trend Filter", group=group_trend)
+trend_ema_length = input.int(200, "Trend EMA Length", minval=1, group=group_trend)
+
+group_risk = "Risk Management"
+i_rr_ratio = input.float(3.0, "Reward-to-Risk Ratio", minval=0.1, step=0.1, group=group_risk)
+
 // --- Candle Classification ---
 // Classification based on body-to-range ratio
 // Indecisive (Base): Body <= 50% of range
@@ -55,6 +67,7 @@ type Zone
     bool is_fresh = true
 
 var Zone[] all_zones = array.new<Zone>()
+var box[] all_boxes = array.new_box()
 
 // Performance: Prune old zones if array gets too large
 if array.size(all_zones) > 100
@@ -114,6 +127,12 @@ if is_explosive
                 demand_distal := dist
                 formation_detected := true
 
+                // --- Snippet Box Visualization ---
+                new_box = box.new(bar_index[base_count], prox, bar_index + 5, dist,
+                         bgcolor=demand_color_input, border_color=color.new(demand_color_input, 40),
+                         extend=extend.right)
+                array.push(all_boxes, new_box)
+
         else // is_bearish_legout
             // Potential Supply: RBD or DBD
             bool is_rbd = is_bullish_legin
@@ -128,6 +147,17 @@ if is_explosive
                 supply_proximal := prox
                 supply_distal := dist
                 formation_detected := true
+
+                // --- Snippet Box Visualization ---
+                new_box = box.new(bar_index[base_count], prox, bar_index + 5, dist,
+                         bgcolor=supply_color_input, border_color=color.new(supply_color_input, 40),
+                         extend=extend.right)
+                array.push(all_boxes, new_box)
+
+// Prune old boxes from snippet logic
+if array.size(all_boxes) > max_boxes_input
+    old_box = array.shift(all_boxes)
+    box.delete(old_box)
 
 // --- HTF Logic to be used in request.security ---
 f_get_htf_context() =>
@@ -319,13 +349,19 @@ f_is_sell_authorized(string loc, string trend) =>
 buy_authorized = f_is_buy_authorized(htf_location, htf_trend)
 sell_authorized = f_is_sell_authorized(htf_location, htf_trend)
 
+// --- Snippet EMA Trend Filter ---
+trend_ema = ta.ema(close, trend_ema_length)
+ema_uptrend = not use_ema_filter or close > trend_ema
+ema_downtrend = not use_ema_filter or close < trend_ema
+plot(trend_ema, "Trend EMA", color.gray)
+
 // --- Risk Management and Execution ---
 // We iterate through zones and place orders for fresh, authorized ones.
 if array.size(all_zones) > 0
     for i = 0 to array.size(all_zones) - 1
         Zone z = array.get(all_zones, i)
         if f_update_freshness(z)
-            if z.type == 1 and buy_authorized
+            if z.type == 1 and buy_authorized and ema_uptrend
                 // Big Brother / Small Brother Confluence
                 if not na(htf_d_prox) and f_is_housed(z, htf_d_prox, htf_d_dist)
                     // Position Sizing: Risk Amount / (Entry - Stop)
@@ -333,21 +369,31 @@ if array.size(all_zones) > 0
                     if risk_per_share > 0
                         float pos_size = (strategy.equity * i_risk_pct) / (risk_per_share * syminfo.pointvalue)
                         string order_id = "Long " + str.tostring(z.creation_time)
+                        // Reward-to-Risk Calculation from snippet
+                        float tp_price = z.proximal + (z.proximal - z.distal) * i_rr_ratio
+                        // TP is max of HTF zone or RR target
+                        float final_tp = math.max(tp_price, na(htf_s_prox) ? macro_high : htf_s_prox)
+
                         strategy.entry(order_id, strategy.long, qty=pos_size, limit=z.proximal, comment="Demand Entry")
-                        strategy.exit("Exit " + order_id, order_id, stop=z.distal, limit=na(htf_s_prox) ? macro_high : htf_s_prox, comment="TP at HTF Supply")
+                        strategy.exit("Exit " + order_id, order_id, stop=z.distal, limit=final_tp, comment="TP: " + str.tostring(final_tp))
                         // Visual marker for entry placement
                         if z.creation_time == time
                             label.new(bar_index, high, "BUY LIMIT SET", color=color.green, textcolor=color.white, style=label.style_label_down)
 
-            else if z.type == -1 and sell_authorized
+            else if z.type == -1 and sell_authorized and ema_downtrend
                 // Big Brother / Small Brother Confluence
                 if not na(htf_s_prox) and f_is_housed(z, htf_s_prox, htf_s_dist)
                     float risk_per_share = math.abs(z.proximal - z.distal)
                     if risk_per_share > 0
                         float pos_size = (strategy.equity * i_risk_pct) / (risk_per_share * syminfo.pointvalue)
                         string order_id = "Short " + str.tostring(z.creation_time)
+                        // Reward-to-Risk Calculation from snippet
+                        float tp_price = z.proximal - (z.distal - z.proximal) * i_rr_ratio
+                        // TP is min of HTF zone or RR target
+                        float final_tp = math.min(tp_price, na(htf_d_prox) ? macro_low : htf_d_prox)
+
                         strategy.entry(order_id, strategy.short, qty=pos_size, limit=z.proximal, comment="Supply Entry")
-                        strategy.exit("Exit " + order_id, order_id, stop=z.distal, limit=na(htf_d_prox) ? macro_low : htf_d_prox, comment="TP at HTF Demand")
+                        strategy.exit("Exit " + order_id, order_id, stop=z.distal, limit=final_tp, comment="TP: " + str.tostring(final_tp))
                         // Visual marker for entry placement
                         if z.creation_time == time
                             label.new(bar_index, low, "SELL LIMIT SET", color=color.red, textcolor=color.white, style=label.style_label_up)
