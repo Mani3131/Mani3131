@@ -52,6 +52,7 @@ type Zone
     float distal
     int type // 1: Demand, -1: Supply
     int creation_time
+    int start_bar
     bool is_fresh = true
 
 var Zone[] all_zones = array.new<Zone>()
@@ -108,7 +109,7 @@ if is_explosive
                 float prox = f_get_body_range(1, base_count, true)
                 // Distal: Lowest wick of Base + Leg-out (and Leg-in if DBR)
                 float dist = f_get_wick_extreme(0, is_dbr ? legin_idx : base_count, true)
-                array.push(all_zones, Zone.new(prox, dist, 1, time, true))
+                array.push(all_zones, Zone.new(prox, dist, 1, time, bar_index - base_count, true))
                 // For visualization of last detected
                 demand_proximal := prox
                 demand_distal := dist
@@ -123,7 +124,7 @@ if is_explosive
                 float prox = f_get_body_range(1, base_count, false)
                 // Distal: Highest wick of Base + Leg-out (and Leg-in if RBD)
                 float dist = f_get_wick_extreme(0, is_rbd ? legin_idx : base_count, false)
-                array.push(all_zones, Zone.new(prox, dist, -1, time, true))
+                array.push(all_zones, Zone.new(prox, dist, -1, time, bar_index - base_count, true))
                 // For visualization of last detected
                 supply_proximal := prox
                 supply_distal := dist
@@ -369,7 +370,7 @@ if barstate.islast
             Zone z = array.get(all_zones, i)
             if z.is_fresh and count < 10 // Limit to last 10 fresh zones for performance
                 color c = z.type == 1 ? color.green : color.red
-                box b = box.new(bar_index - 50, z.proximal, bar_index + 10, z.distal, bgcolor=color.new(c, 90), border_color=c, extend=extend.right)
+                box b = box.new(z.start_bar, z.proximal, bar_index + 5, z.distal, bgcolor=color.new(c, 90), border_color=c, extend=extend.right)
                 array.push(zone_boxes, b)
                 count += 1
 
@@ -386,8 +387,4 @@ if barstate.islast
     string action = buy_authorized ? "BUY" : sell_authorized ? "SELL" : "STAND ASIDE"
     table.cell(status_table, 1, 2, action, bgcolor=action == "BUY" ? color.green : action == "SELL" ? color.red : color.gray, text_color=color.white)
 
-// Plot the most recent zones for visual check
-plot(demand_proximal, "Latest Demand Proximal", color.green, style=plot.style_linebr)
-plot(demand_distal, "Latest Demand Distal", color.red, style=plot.style_linebr)
-plot(supply_proximal, "Latest Supply Proximal", color.green, style=plot.style_linebr)
-plot(supply_distal, "Latest Supply Distal", color.red, style=plot.style_linebr)
+// Plots removed as per user request (replacing with boxes)
