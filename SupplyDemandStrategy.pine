@@ -79,13 +79,17 @@ color demandColor = color.new(color.green, 80)
 color supplyColor = color.new(color.red, 80)
 
 if isDemand
+    string demandType = isRBR ? "RBR (Demand)" : "DBR (Demand)"
     box newBox = box.new(left=bar_index[1], top=zoneProximal, right=bar_index, bottom=zoneDistal,
-      bgcolor=demandColor, border_color=color.green, extend=extend.right)
+      bgcolor=demandColor, border_color=color.green, extend=extend.right,
+      text=demandType, text_color=color.green, text_size=size.small, text_halign=text.align_right)
     array.push(demandBoxes, newBox)
 
 if isSupply
+    string supplyType = isRBD ? "RBD (Supply)" : "DBD (Supply)"
     box newBox = box.new(left=bar_index[1], top=zoneDistal, right=bar_index, bottom=zoneProximal,
-      bgcolor=supplyColor, border_color=color.red, extend=extend.right)
+      bgcolor=supplyColor, border_color=color.red, extend=extend.right,
+      text=supplyType, text_color=color.red, text_size=size.small, text_halign=text.align_right)
     array.push(supplyBoxes, newBox)
 
 // "Auto-Delete Mitigated Zones: Code your script to automatically delete or gray out a zone the moment price tracks backward and touches it."
@@ -159,3 +163,7 @@ if isSupply and isDowntrend
 // --- Logic ---
 
 plot(ema, color=color.gray, title="Trend EMA")
+
+// Formation Shapes
+plotshape(isDemand, title="Demand Formation", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+plotshape(isSupply, title="Supply Formation", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
