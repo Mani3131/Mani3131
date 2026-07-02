@@ -41,14 +41,7 @@ f_classify_candle() =>
 
 [is_base, is_decisive_candle, is_explosive] = f_classify_candle()
 
-// Visual aids for classification (optional for debugging)
-plotshape(is_base, "Base Candle", shape.circle, location.belowbar, color.gray, size=size.tiny)
-plotshape(is_explosive, "Explosive Candle", shape.diamond, location.abovebar, color.yellow, size=size.tiny)
-
-// Debug: Plot when a formation is detected
-var bool formation_detected = false
-formation_detected := false
-plotshape(formation_detected, "Formation Detected", shape.triangleup, location.belowbar, color.blue, size=size.small)
+// Visual aids removed to reduce clutter
 
 // --- Formation and Zone Detection ---
 // We'll use a simple approach: look for an explosive leg-out and then look back for basing candles.
@@ -122,16 +115,7 @@ if is_explosive
                 // Distal: Lowest wick of Base + Leg-out (and Leg-in if DBR)
                 float dist = f_get_wick_extreme(0, is_dbr ? legin_idx : base_count, true)
                 array.push(all_zones, Zone.new(prox, dist, 1, time, true))
-                // For visualization of last detected
-                demand_proximal := prox
-                demand_distal := dist
-                formation_detected := true
-
-                // --- Snippet Box Visualization ---
-                new_box = box.new(bar_index[base_count], prox, bar_index + 5, dist,
-                         bgcolor=demand_color_input, border_color=color.new(demand_color_input, 40),
-                         extend=extend.right)
-                array.push(all_boxes, new_box)
+                // We'll update viz variables only if aligned in the execution loop
 
         else // is_bearish_legout
             // Potential Supply: RBD or DBD
@@ -143,16 +127,6 @@ if is_explosive
                 // Distal: Highest wick of Base + Leg-out (and Leg-in if RBD)
                 float dist = f_get_wick_extreme(0, is_rbd ? legin_idx : base_count, false)
                 array.push(all_zones, Zone.new(prox, dist, -1, time, true))
-                // For visualization of last detected
-                supply_proximal := prox
-                supply_distal := dist
-                formation_detected := true
-
-                // --- Snippet Box Visualization ---
-                new_box = box.new(bar_index[base_count], prox, bar_index + 5, dist,
-                         bgcolor=supply_color_input, border_color=color.new(supply_color_input, 40),
-                         extend=extend.right)
-                array.push(all_boxes, new_box)
 
 // Prune old boxes from snippet logic
 if array.size(all_boxes) > max_boxes_input
@@ -400,26 +374,44 @@ if array.size(all_zones) > 0
 
 // --- Visualizations ---
 
-// Draw boxes for zones (using persistent variables to avoid spam)
-var box demand_box = na
-var box supply_box = na
+// Reset viz variables
+demand_proximal := na
+demand_distal := na
+supply_proximal := na
+supply_distal := na
 
+// Draw boxes for ALL active zones from snippet (pruned by alignment)
 if barstate.islast
-    if not na(demand_proximal)
-        if na(demand_box)
-            demand_box := box.new(bar_index[20], demand_proximal, bar_index + 10, demand_distal, bgcolor=color.new(color.green, 85), border_color=color.green, extend=extend.right)
-            box.set_bgcolor(demand_box, color.new(color.green, 85)) // Ensure branch returns void
-        else
-            box.set_lefttop(demand_box, bar_index[20], demand_proximal)
-            box.set_rightbottom(demand_box, bar_index + 10, demand_distal)
+    // Clear boxes
+    for b in all_boxes
+        box.delete(b)
+    array.clear(all_boxes)
 
-    if not na(supply_proximal)
-        if na(supply_box)
-            supply_box := box.new(bar_index[20], supply_proximal, bar_index + 10, supply_distal, bgcolor=color.new(color.red, 85), border_color=color.red, extend=extend.right)
-            box.set_bgcolor(supply_box, color.new(color.red, 85)) // Ensure branch returns void
-        else
-            box.set_lefttop(supply_box, bar_index[20], supply_proximal)
-            box.set_rightbottom(supply_box, bar_index + 10, supply_distal)
+    if array.size(all_zones) > 0
+        for i = 0 to array.size(all_zones) - 1
+            Zone z = array.get(all_zones, i)
+            if f_update_freshness(z)
+                // Filter for HTF alignment
+                bool aligned = false
+                if z.type == 1 and not na(htf_d_prox) and f_is_housed(z, htf_d_prox, htf_d_dist)
+                    aligned := true
+                else if z.type == -1 and not na(htf_s_prox) and f_is_housed(z, htf_s_prox, htf_s_dist)
+                    aligned := true
+
+                if aligned
+                    color c = z.type == 1 ? demand_color_input : supply_color_input
+                    new_box = box.new(bar_index - 50, z.proximal, bar_index + 10, z.distal,
+                             bgcolor=c, border_color=color.new(c, 40),
+                             extend=extend.right)
+                    array.push(all_boxes, new_box)
+
+                    // Update variables for continuous lines (only for aligned zones)
+                    if z.type == 1
+                        demand_proximal := z.proximal
+                        demand_distal := z.distal
+                    else
+                        supply_proximal := z.proximal
+                        supply_distal := z.distal
 
 // HTF Status Table
 var table status_table = table.new(position.top_right, 2, 3, border_width=1)
