@@ -107,9 +107,31 @@ if sell_trigger or buy_trigger
     trade_taken_this_cycle := true
 
 // --- Visuals ---
-plot(bank_point, "Bank Point", color.yellow, 2, plot.style_linebr)
-plot(prev_4h_high, "Prev 4H High", color.green, 1, plot.style_linebr)
-plot(prev_4h_low, "Prev 4H Low", color.red, 1, plot.style_linebr)
+var line bp_line = na
+var line p4h_h_line = na
+var line p4h_l_line = na
+var line manip_h_line = na
+var line manip_l_line = na
+
+if is_cycle_start
+    bp_line := line.new(bar_index, bank_point, bar_index, bank_point, color=color.yellow, width=2)
+    p4h_h_line := line.new(bar_index, prev_4h_high, bar_index, prev_4h_high, color=color.green, width=1)
+    p4h_l_line := line.new(bar_index, prev_4h_low, bar_index, prev_4h_low, color=color.red, width=1)
+    manip_h_line := na
+    manip_l_line := na
+
+if not na(bp_line)
+    line.set_right(bp_line, bar_index)
+    line.set_right(p4h_h_line, bar_index)
+    line.set_right(p4h_l_line, bar_index)
+
+if is_after_manipulation
+    if na(manip_h_line)
+        manip_h_line := line.new(bar_index - 1, manipulation_high, bar_index, manipulation_high, color=color.gray, width=1)
+        manip_l_line := line.new(bar_index - 1, manipulation_low, bar_index, manipulation_low, color=color.gray, width=1)
+    else
+        line.set_right(manip_h_line, bar_index)
+        line.set_right(manip_l_line, bar_index)
 
 // Arrows for Triggers
 plotshape(buy_trigger, "Buy Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
@@ -124,9 +146,6 @@ if not na(manip_box) and is_manipulation_window
     box.set_top(manip_box, manipulation_high)
     box.set_bottom(manip_box, manipulation_low)
     box.set_right(manip_box, bar_index)
-
-plot(is_after_manipulation ? manipulation_high : na, "Manipulation High", color.gray, 1, plot.style_linebr)
-plot(is_after_manipulation ? manipulation_low : na, "Manipulation Low", color.gray, 1, plot.style_linebr)
 
 // Labels for clarity
 if is_cycle_start
