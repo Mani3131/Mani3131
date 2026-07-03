@@ -50,8 +50,8 @@ f_get_anchor_midpoint() =>
     // We want the 16 candles of the PREVIOUS 4H block.
     // When request.security is called at the first bar of a 4H cycle,
     // security(..., "15", ...) on bar 1 of the 4H cycle will see the 15M bars.
-    // To be safe and avoid lookahead, we scan bars 1 to 16.
-    for i = 1 to 16
+    // Scan the 16 bars of the completed higher timeframe block
+    for i = 0 to 15
         float r = high[i] - low[i]
         if r < min_range
             min_range := r
@@ -60,7 +60,8 @@ f_get_anchor_midpoint() =>
     (a_h + a_l) / 2.0
 
 // Get Bank Point from 15M timeframe
-bp_from_15m = request.security(syminfo.tickerid, "15", f_get_anchor_midpoint())
+// Using [1] on the function call ensures we look at completed bars
+bp_from_15m = request.security(syminfo.tickerid, "15", f_get_anchor_midpoint()[1])
 
 // Get actual Prev 4H High/Low accurately
 [p4h_h, p4h_l] = request.security(syminfo.tickerid, "240", [high[1], low[1]])
@@ -92,12 +93,14 @@ var bool has_broken_above = false
 if is_cycle_start
     has_broken_above := false
 
-if is_after_manipulation and close > bank_point
+if is_after_manipulation and close[1] > bank_point
     has_broken_above := true
 
 // Rejection Triggers
-is_bearish_rejection = close < open and high >= bank_point and close < bank_point
-is_bullish_rejection = close > open and low <= bank_point and close > bank_point
+// Using barState.isConfirmed or [1] is not needed for strategy entry as it enters on bar close by default
+// but [1] helps in manual visual check and avoids flickering.
+is_bearish_rejection = close[1] < open[1] and high[1] >= bank_point and close[1] < bank_point
+is_bullish_rejection = close[1] > open[1] and low[1] <= bank_point and close[1] > bank_point
 
 // Entry Conditions
 can_trade = is_after_manipulation and session_eligible and strategy.position_size == 0 and not na(bank_point)
