@@ -1,0 +1,145 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+strategy("Institutional Bank Point Strategy", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// --- Inputs ---
+pip_size = input.float(0.1, "Pip Size (Gold=0.1, Forex=0.0001)", step=0.0001)
+sl_buffer_pips = input.int(20, "SL Buffer (Pips)", minval=0)
+tp1_percent = input.float(50.0, "TP1 Partial Close %", minval=0.1, maxval=100.0)
+rr_target = input.float(2.0, "Risk:Reward Target (TP2)", minval=0.1)
+
+// Session Filters
+use_london = input.bool(true, "Focus on London Open (08:00 GMT)")
+use_ny = input.bool(true, "Focus on NY Open (12:00 GMT)")
+only_focus_sessions = input.bool(false, "Only Trade Focused Sessions")
+
+// --- Constants & Variables ---
+var float bank_point = na
+var float prev_4h_high = na
+var float prev_4h_low = na
+var float manipulation_high = na
+var float manipulation_low = na
+
+// Time logic
+// Identify the start of a new 4-hour GMT cycle
+is_new_4h = ta.change(time("240"), "UTC") != 0
+hour_gmt = hour(time, "UTC")
+minute_gmt = minute(time, "UTC")
+
+// Explicit check for the specified GMT cycles
+is_cycle_start = is_new_4h and (hour_gmt % 4 == 0)
+
+// Valid sessions for trading (based on the start of the 4H cycle)
+var bool session_eligible = false
+if is_cycle_start
+    session_eligible := not only_focus_sessions or (use_london and hour_gmt == 8) or (use_ny and hour_gmt == 12)
+
+// --- Phase 1: Pre-Trade Setup (The Calculation) ---
+
+// Function to find the anchor candle (lowest range) in the last 16 15M candles
+f_get_anchor_midpoint() =>
+    float min_range = 1e10
+    float a_h = na
+    float a_l = na
+    for i = 1 to 16
+        float r = high[i] - low[i]
+        if r < min_range
+            min_range := r
+            a_h := high[i]
+            a_l := low[i]
+    (a_h + a_l) / 2.0
+
+// Get Bank Point from 15M timeframe
+bp_from_15m = request.security(syminfo.tickerid, "15", f_get_anchor_midpoint())
+
+// Get actual Prev 4H High/Low accurately
+[p4h_h, p4h_l] = request.security(syminfo.tickerid, "240", [high[1], low[1]])
+
+if is_cycle_start
+    bank_point := bp_from_15m
+    prev_4h_high := p4h_h
+    prev_4h_low := p4h_l
+    manipulation_high := na
+    manipulation_low := na
+
+// --- Phase 2: Execution Rules (The 1-Minute Chart) ---
+// We need to track the first 10 minutes of the new 4H cycle.
+var int bars_since_cycle_start = 0
+if is_cycle_start
+    bars_since_cycle_start := 0
+else
+    bars_since_cycle_start := bars_since_cycle_start + 1
+
+is_manipulation_window = bars_since_cycle_start < 10
+is_after_manipulation = bars_since_cycle_start >= 10
+
+if is_manipulation_window
+    manipulation_high := na(manipulation_high) ? high : math.max(manipulation_high, high)
+    manipulation_low := na(manipulation_low) ? low : math.min(manipulation_low, low)
+
+// Track if price has broken above Bank Point in the current 4H cycle after manipulation
+var bool has_broken_above = false
+if is_cycle_start
+    has_broken_above := false
+
+if is_after_manipulation and close > bank_point
+    has_broken_above := true
+
+// Rejection Triggers
+is_bearish_rejection = close < open and high >= bank_point and close < bank_point
+is_bullish_rejection = close > open and low <= bank_point and close > bank_point
+
+// Entry Conditions
+can_trade = is_after_manipulation and session_eligible and strategy.position_size == 0 and not na(bank_point)
+
+sell_trigger = can_trade and not has_broken_above and is_bearish_rejection
+buy_trigger = can_trade and has_broken_above and is_bullish_rejection
+
+// --- Phase 3: Risk & Trade Management ---
+var float entry_price = na
+var float sl_price = na
+var float tp1_price = na
+var float tp2_price = na
+var bool tp1_hit = false
+var bool trade_taken_this_cycle = false
+
+if is_cycle_start
+    trade_taken_this_cycle := false
+
+if (sell_trigger or buy_trigger) and strategy.position_size == 0 and not trade_taken_this_cycle
+    entry_price := close
+    tp1_hit := false
+    trade_taken_this_cycle := true
+    if sell_trigger
+        sl_price := manipulation_high + (sl_buffer_pips * pip_size)
+        tp1_price := prev_4h_low
+        float risk = sl_price - entry_price
+        tp2_price := entry_price - (risk * rr_target)
+        strategy.entry("Sell", strategy.short)
+    else
+        sl_price := manipulation_low - (sl_buffer_pips * pip_size)
+        tp1_price := prev_4h_high
+        float risk = entry_price - sl_price
+        tp2_price := entry_price + (risk * rr_target)
+        strategy.entry("Buy", strategy.long)
+
+// Manage Position
+if strategy.position_size != 0
+    // Check if TP1 was hit (position size reduced)
+    if not tp1_hit and strategy.position_size[1] != 0 and math.abs(strategy.position_size) < math.abs(strategy.position_size[1])
+        tp1_hit := true
+        sl_price := entry_price // Move SL to BE
+
+    // Strategy Exits
+    // TP1 will close a percentage of the position at the 4H boundary
+    strategy.exit("TP1", qty_percent=tp1_percent, limit=tp1_price, stop=sl_price, comment_loss="SL", comment_profit="TP1")
+    // TP2 will close the remainder at the RR target
+    strategy.exit("TP2", limit=tp2_price, stop=sl_price, comment_loss="SL", comment_profit="TP2")
+
+// Debug/Visuals
+plot(bank_point, "Bank Point", color.yellow, 2, plot.style_linebr)
+plot(prev_4h_high, "Prev 4H High", color.green, 1, plot.style_linebr)
+plot(prev_4h_low, "Prev 4H Low", color.red, 1, plot.style_linebr)
+plotshape(is_cycle_start, "New 4H Cycle", shape.triangleup, location.top, color.blue, size=size.tiny)
