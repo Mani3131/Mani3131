@@ -24,7 +24,7 @@ var float manipulation_low = na
 
 // Time logic
 // Identify the start of a new 4-hour GMT cycle
-is_new_4h = ta.change(time("240"), "UTC") != 0
+is_new_4h = ta.change(time("240", "UTC")) != 0
 hour_gmt = hour(time, "UTC")
 minute_gmt = minute(time, "UTC")
 
