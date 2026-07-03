@@ -1,0 +1,156 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Institutional Bank Point Indicator", overlay=true)
+
+// --- Inputs ---
+// Session Filters
+use_london = input.bool(true, "Focus on London Open (08:00 GMT)")
+use_ny = input.bool(true, "Focus on NY Open (12:00 GMT)")
+only_focus_sessions = input.bool(false, "Only Trade Focused Sessions")
+
+// --- Constants & Variables ---
+var float bank_point = na
+var float prev_4h_high = na
+var float prev_4h_low = na
+var float manipulation_high = na
+var float manipulation_low = na
+
+// Time logic
+// Identify the start of a new 4-hour cycle in UTC+3
+// Requested GMT Cycles: 04, 08, 12, 16, 20, 00
+// UTC+3 Alignment: 07, 11, 15, 19, 23, 03
+hour_tz = hour(time, "GMT+3")
+minute_tz = minute(time, "GMT+3")
+
+// Check if current hour (in GMT+3) is one of the requested cycle starts
+is_cycle_hour = hour_tz == 7 or hour_tz == 11 or hour_tz == 15 or hour_tz == 19 or hour_tz == 23 or hour_tz == 3
+is_cycle_start = is_cycle_hour and minute_tz == 0 and ta.change(time) != 0
+
+// Valid sessions for trading (based on the start of the 4H cycle)
+var bool session_eligible = false
+if is_cycle_start
+    session_eligible := not only_focus_sessions or (use_london and hour_tz == 11) or (use_ny and hour_tz == 15)
+
+// --- Phase 1: Pre-Trade Setup (The Calculation) ---
+
+// Function to find the anchor candle (lowest range) in the last 16 15M candles
+f_get_anchor_midpoint() =>
+    float min_range = 1e10
+    float a_h = na
+    float a_l = na
+    // i=0 is the current forming candle on the target timeframe in request.security
+    // i=1 is the first completed 15M candle of the current 4H cycle (if called at cycle start)
+    // We want the 16 candles of the PREVIOUS 4H block.
+    // Scan the 16 bars of the completed higher timeframe block
+    for i = 0 to 15
+        float r = high[i] - low[i]
+        if r < min_range
+            min_range := r
+            a_h := high[i]
+            a_l := low[i]
+    (a_h + a_l) / 2.0
+
+// Get Bank Point from 15M timeframe
+// Using [1] on the function call ensures we look at completed bars
+bp_from_15m = request.security(syminfo.tickerid, "15", f_get_anchor_midpoint()[1])
+
+// Get actual Prev 4H High/Low accurately
+[p4h_h, p4h_l] = request.security(syminfo.tickerid, "240", [high[1], low[1]])
+
+if is_cycle_start
+    bank_point := bp_from_15m
+    prev_4h_high := p4h_h
+    prev_4h_low := p4h_l
+    manipulation_high := na
+    manipulation_low := na
+
+// --- Phase 2: Execution Rules (The 1-Minute Chart) ---
+// We need to track the first 10 minutes of the new 4H cycle.
+var int bars_since_cycle_start = 0
+if is_cycle_start
+    bars_since_cycle_start := 0
+else
+    bars_since_cycle_start := bars_since_cycle_start + 1
+
+is_manipulation_window = bars_since_cycle_start < 10
+is_after_manipulation = bars_since_cycle_start >= 10
+
+if is_manipulation_window
+    manipulation_high := na(manipulation_high) ? high : math.max(manipulation_high, high)
+    manipulation_low := na(manipulation_low) ? low : math.min(manipulation_low, low)
+
+// Track if price has broken above Bank Point in the current 4H cycle after manipulation
+var bool has_broken_above = false
+if is_cycle_start
+    has_broken_above := false
+
+if is_after_manipulation and close[1] > bank_point
+    has_broken_above := true
+
+// Rejection Triggers
+is_bearish_rejection = close[1] < open[1] and high[1] >= bank_point and close[1] < bank_point
+is_bullish_rejection = close[1] > open[1] and low[1] <= bank_point and close[1] > bank_point
+
+// Entry Conditions
+var bool trade_taken_this_cycle = false
+if is_cycle_start
+    trade_taken_this_cycle := false
+
+can_trigger = is_after_manipulation and session_eligible and not trade_taken_this_cycle and not na(bank_point)
+
+sell_trigger = can_trigger and not has_broken_above and is_bearish_rejection
+buy_trigger = can_trigger and has_broken_above and is_bullish_rejection
+
+if sell_trigger or buy_trigger
+    trade_taken_this_cycle := true
+
+// --- Visuals ---
+var line bp_line = na
+var line p4h_h_line = na
+var line p4h_l_line = na
+var line manip_h_line = na
+var line manip_l_line = na
+
+if is_cycle_start
+    bp_line := line.new(bar_index, bank_point, bar_index, bank_point, color=color.yellow, width=2)
+    p4h_h_line := line.new(bar_index, prev_4h_high, bar_index, prev_4h_high, color=color.green, width=1)
+    p4h_l_line := line.new(bar_index, prev_4h_low, bar_index, prev_4h_low, color=color.red, width=1)
+    manip_h_line := na
+    manip_l_line := na
+
+if not na(bp_line)
+    line.set_x2(bp_line, bar_index)
+    line.set_x2(p4h_h_line, bar_index)
+    line.set_x2(p4h_l_line, bar_index)
+
+if is_after_manipulation
+    if na(manip_h_line)
+        manip_h_line := line.new(bar_index - 1, manipulation_high, bar_index, manipulation_high, color=color.gray, width=1)
+        manip_l_line := line.new(bar_index - 1, manipulation_low, bar_index, manipulation_low, color=color.gray, width=1)
+    else
+        line.set_x2(manip_h_line, bar_index)
+        line.set_x2(manip_l_line, bar_index)
+
+// Arrows for Triggers
+plotshape(buy_trigger, "Buy Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(sell_trigger, "Sell Signal", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// Visualization of Manipulation Window
+var box manip_box = na
+if is_cycle_start
+    manip_box := box.new(bar_index, high, bar_index + 9, low, bgcolor=color.new(color.gray, 80), border_color=color.gray, text="Manipulation Window", text_color=color.white, text_size=size.tiny)
+
+if not na(manip_box) and is_manipulation_window
+    box.set_top(manip_box, manipulation_high)
+    box.set_bottom(manip_box, manipulation_low)
+    box.set_right(manip_box, bar_index)
+
+// Labels for clarity
+if is_cycle_start
+    label.new(bar_index, bank_point, "Bank Point", color=color.yellow, textcolor=color.black, style=label.style_label_down, size=size.small)
+    label.new(bar_index, prev_4h_high, "4H High", color=color.green, textcolor=color.white, style=label.style_label_down, size=size.small)
+    label.new(bar_index, prev_4h_low, "4H Low", color=color.red, textcolor=color.white, style=label.style_label_up, size=size.small)
+
+plotshape(is_cycle_start, "New 4H Cycle", shape.triangleup, location.top, color.blue, size=size.tiny)
