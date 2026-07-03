@@ -121,17 +121,17 @@ if is_cycle_start
     manip_l_line := na
 
 if not na(bp_line)
-    line.set_right(bp_line, bar_index)
-    line.set_right(p4h_h_line, bar_index)
-    line.set_right(p4h_l_line, bar_index)
+    line.set_x2(bp_line, bar_index)
+    line.set_x2(p4h_h_line, bar_index)
+    line.set_x2(p4h_l_line, bar_index)
 
 if is_after_manipulation
     if na(manip_h_line)
         manip_h_line := line.new(bar_index - 1, manipulation_high, bar_index, manipulation_high, color=color.gray, width=1)
         manip_l_line := line.new(bar_index - 1, manipulation_low, bar_index, manipulation_low, color=color.gray, width=1)
     else
-        line.set_right(manip_h_line, bar_index)
-        line.set_right(manip_l_line, bar_index)
+        line.set_x2(manip_h_line, bar_index)
+        line.set_x2(manip_l_line, bar_index)
 
 // Arrows for Triggers
 plotshape(buy_trigger, "Buy Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
