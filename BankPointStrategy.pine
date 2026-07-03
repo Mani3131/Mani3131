@@ -23,18 +23,20 @@ var float manipulation_high = na
 var float manipulation_low = na
 
 // Time logic
-// Identify the start of a new 4-hour GMT cycle
-is_new_4h = ta.change(time("240")) != 0
-hour_gmt = hour(time, "UTC")
-minute_gmt = minute(time, "UTC")
+// Identify the start of a new 4-hour cycle in UTC+3
+// Requested GMT Cycles: 04, 08, 12, 16, 20, 00
+// UTC+3 Alignment: 07, 11, 15, 19, 23, 03
+hour_tz = hour(time, "GMT+3")
+minute_tz = minute(time, "GMT+3")
 
-// Explicit check for the specified GMT cycles
-is_cycle_start = is_new_4h and (hour_gmt % 4 == 0)
+// Check if current hour (in GMT+3) is one of the requested cycle starts
+is_cycle_hour = hour_tz == 7 or hour_tz == 11 or hour_tz == 15 or hour_tz == 19 or hour_tz == 23 or hour_tz == 3
+is_cycle_start = is_cycle_hour and minute_tz == 0 and ta.change(time) != 0
 
 // Valid sessions for trading (based on the start of the 4H cycle)
 var bool session_eligible = false
 if is_cycle_start
-    session_eligible := not only_focus_sessions or (use_london and hour_gmt == 8) or (use_ny and hour_gmt == 12)
+    session_eligible := not only_focus_sessions or (use_london and hour_tz == 11) or (use_ny and hour_tz == 15)
 
 // --- Phase 1: Pre-Trade Setup (The Calculation) ---
 
@@ -43,6 +45,12 @@ f_get_anchor_midpoint() =>
     float min_range = 1e10
     float a_h = na
     float a_l = na
+    // i=0 is the current forming candle on the target timeframe in request.security
+    // i=1 is the first completed 15M candle of the current 4H cycle (if called at cycle start)
+    // We want the 16 candles of the PREVIOUS 4H block.
+    // When request.security is called at the first bar of a 4H cycle,
+    // security(..., "15", ...) on bar 1 of the 4H cycle will see the 15M bars.
+    // To be safe and avoid lookahead, we scan bars 1 to 16.
     for i = 1 to 16
         float r = high[i] - low[i]
         if r < min_range
@@ -142,4 +150,24 @@ if strategy.position_size != 0
 plot(bank_point, "Bank Point", color.yellow, 2, plot.style_linebr)
 plot(prev_4h_high, "Prev 4H High", color.green, 1, plot.style_linebr)
 plot(prev_4h_low, "Prev 4H Low", color.red, 1, plot.style_linebr)
+
+// Visualization of Manipulation Window
+var box manip_box = na
+if is_cycle_start
+    manip_box := box.new(bar_index, high, bar_index + 9, low, bgcolor=color.new(color.gray, 80), border_color=color.gray, text="Manipulation Window", text_color=color.white, text_size=size.tiny)
+
+if not na(manip_box) and is_manipulation_window
+    box.set_top(manip_box, manipulation_high)
+    box.set_bottom(manip_box, manipulation_low)
+    box.set_right(manip_box, bar_index)
+
+plot(is_after_manipulation ? manipulation_high : na, "Manipulation High", color.gray, 1, plot.style_linebr)
+plot(is_after_manipulation ? manipulation_low : na, "Manipulation Low", color.gray, 1, plot.style_linebr)
+
+// Labels for clarity
+if is_cycle_start
+    label.new(bar_index, bank_point, "Bank Point", color=color.yellow, textcolor=color.black, style=label.style_label_down, size=size.small)
+    label.new(bar_index, prev_4h_high, "4H High (TP Target)", color=color.green, textcolor=color.white, style=label.style_label_down, size=size.small)
+    label.new(bar_index, prev_4h_low, "4H Low (TP Target)", color=color.red, textcolor=color.white, style=label.style_label_up, size=size.small)
+
 plotshape(is_cycle_start, "New 4H Cycle", shape.triangleup, location.top, color.blue, size=size.tiny)
