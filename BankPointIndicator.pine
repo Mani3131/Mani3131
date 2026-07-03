@@ -2,14 +2,9 @@
 // © Mani3131
 
 //@version=6
-strategy("Institutional Bank Point Strategy", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+indicator("Institutional Bank Point Indicator", overlay=true)
 
 // --- Inputs ---
-pip_size = input.float(0.1, "Pip Size (Gold=0.1, Forex=0.0001)", step=0.0001)
-sl_buffer_pips = input.int(20, "SL Buffer (Pips)", minval=0)
-tp1_percent = input.float(50.0, "TP1 Partial Close %", minval=0.1, maxval=100.0)
-rr_target = input.float(2.0, "Risk:Reward Target (TP2)", minval=0.1)
-
 // Session Filters
 use_london = input.bool(true, "Focus on London Open (08:00 GMT)")
 use_ny = input.bool(true, "Focus on NY Open (12:00 GMT)")
@@ -48,8 +43,6 @@ f_get_anchor_midpoint() =>
     // i=0 is the current forming candle on the target timeframe in request.security
     // i=1 is the first completed 15M candle of the current 4H cycle (if called at cycle start)
     // We want the 16 candles of the PREVIOUS 4H block.
-    // When request.security is called at the first bar of a 4H cycle,
-    // security(..., "15", ...) on bar 1 of the 4H cycle will see the 15M bars.
     // Scan the 16 bars of the completed higher timeframe block
     for i = 0 to 15
         float r = high[i] - low[i]
@@ -97,62 +90,30 @@ if is_after_manipulation and close[1] > bank_point
     has_broken_above := true
 
 // Rejection Triggers
-// Using barState.isConfirmed or [1] is not needed for strategy entry as it enters on bar close by default
-// but [1] helps in manual visual check and avoids flickering.
 is_bearish_rejection = close[1] < open[1] and high[1] >= bank_point and close[1] < bank_point
 is_bullish_rejection = close[1] > open[1] and low[1] <= bank_point and close[1] > bank_point
 
 // Entry Conditions
-can_trade = is_after_manipulation and session_eligible and strategy.position_size == 0 and not na(bank_point)
-
-sell_trigger = can_trade and not has_broken_above and is_bearish_rejection
-buy_trigger = can_trade and has_broken_above and is_bullish_rejection
-
-// --- Phase 3: Risk & Trade Management ---
-var float entry_price = na
-var float sl_price = na
-var float tp1_price = na
-var float tp2_price = na
-var bool tp1_hit = false
 var bool trade_taken_this_cycle = false
-
 if is_cycle_start
     trade_taken_this_cycle := false
 
-if (sell_trigger or buy_trigger) and strategy.position_size == 0 and not trade_taken_this_cycle
-    entry_price := close
-    tp1_hit := false
+can_trigger = is_after_manipulation and session_eligible and not trade_taken_this_cycle and not na(bank_point)
+
+sell_trigger = can_trigger and not has_broken_above and is_bearish_rejection
+buy_trigger = can_trigger and has_broken_above and is_bullish_rejection
+
+if sell_trigger or buy_trigger
     trade_taken_this_cycle := true
-    if sell_trigger
-        sl_price := manipulation_high + (sl_buffer_pips * pip_size)
-        tp1_price := prev_4h_low
-        float risk = sl_price - entry_price
-        tp2_price := entry_price - (risk * rr_target)
-        strategy.entry("Sell", strategy.short)
-    else
-        sl_price := manipulation_low - (sl_buffer_pips * pip_size)
-        tp1_price := prev_4h_high
-        float risk = entry_price - sl_price
-        tp2_price := entry_price + (risk * rr_target)
-        strategy.entry("Buy", strategy.long)
 
-// Manage Position
-if strategy.position_size != 0
-    // Check if TP1 was hit (position size reduced)
-    if not tp1_hit and strategy.position_size[1] != 0 and math.abs(strategy.position_size) < math.abs(strategy.position_size[1])
-        tp1_hit := true
-        sl_price := entry_price // Move SL to BE
-
-    // Strategy Exits
-    // TP1 will close a percentage of the position at the 4H boundary
-    strategy.exit("TP1", qty_percent=tp1_percent, limit=tp1_price, stop=sl_price, comment_loss="SL", comment_profit="TP1")
-    // TP2 will close the remainder at the RR target
-    strategy.exit("TP2", limit=tp2_price, stop=sl_price, comment_loss="SL", comment_profit="TP2")
-
-// Debug/Visuals
+// --- Visuals ---
 plot(bank_point, "Bank Point", color.yellow, 2, plot.style_linebr)
 plot(prev_4h_high, "Prev 4H High", color.green, 1, plot.style_linebr)
 plot(prev_4h_low, "Prev 4H Low", color.red, 1, plot.style_linebr)
+
+// Arrows for Triggers
+plotshape(buy_trigger, "Buy Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(sell_trigger, "Sell Signal", shape.triangledown, location.abovebar, color.red, size=size.small)
 
 // Visualization of Manipulation Window
 var box manip_box = na
@@ -170,7 +131,7 @@ plot(is_after_manipulation ? manipulation_low : na, "Manipulation Low", color.gr
 // Labels for clarity
 if is_cycle_start
     label.new(bar_index, bank_point, "Bank Point", color=color.yellow, textcolor=color.black, style=label.style_label_down, size=size.small)
-    label.new(bar_index, prev_4h_high, "4H High (TP Target)", color=color.green, textcolor=color.white, style=label.style_label_down, size=size.small)
-    label.new(bar_index, prev_4h_low, "4H Low (TP Target)", color=color.red, textcolor=color.white, style=label.style_label_up, size=size.small)
+    label.new(bar_index, prev_4h_high, "4H High", color=color.green, textcolor=color.white, style=label.style_label_down, size=size.small)
+    label.new(bar_index, prev_4h_low, "4H Low", color=color.red, textcolor=color.white, style=label.style_label_up, size=size.small)
 
 plotshape(is_cycle_start, "New 4H Cycle", shape.triangleup, location.top, color.blue, size=size.tiny)
