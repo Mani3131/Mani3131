@@ -1,0 +1,102 @@
+//@version=6
+strategy("Williams Alligator Strategy", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// --- Inputs ---
+scalpingMode = input.bool(false, "Scalping Mode", tooltip="Filters noise on lower timeframes like 1m Gold. Sets periods to 130, 80, 50.")
+maTypeInput = input.string("Smoothed", "Moving Average Type", options=["Smoothed", "Linear Weighted"], tooltip="Smoothed is default, Linear Weighted tracks more tightly.")
+
+// Periods
+jawPeriodInput = input.int(13, "Jaw Period", minval=1)
+teethPeriodInput = input.int(8, "Teeth Period", minval=1)
+lipsPeriodInput = input.int(5, "Lips Period", minval=1)
+
+// Offsets
+jawOffsetInput = input.int(8, "Jaw Offset", minval=0)
+teethOffsetInput = input.int(5, "Teeth Offset", minval=0)
+lipsOffsetInput = input.int(3, "Lips Offset", minval=0)
+
+// Scalping override logic
+// According to the request: Scale up the parameters to 130, 80, and 50
+jawPeriod = scalpingMode ? 130 : jawPeriodInput
+teethPeriod = scalpingMode ? 80 : teethPeriodInput
+lipsPeriod = scalpingMode ? 50 : lipsPeriodInput
+
+// We keep offsets as per user input or default, as scaling them to 80/50/30 would introduce too much lag for scalping logic.
+jawOffset = jawOffsetInput
+teethOffset = teethOffsetInput
+lipsOffset = lipsOffsetInput
+
+// Colors
+jawColor = input.color(color.blue, "Jaw Color")
+teethColor = input.color(color.red, "Teeth Color")
+lipsColor = input.color(color.green, "Lips Color")
+
+// --- Calculations ---
+f_ma(src, length, type) =>
+    switch type
+        "Smoothed" => ta.rma(src, length)
+        "Linear Weighted" => ta.wma(src, length)
+        => ta.sma(src, length)
+
+// Williams Alligator lines are Median Price (H+L)/2
+src = hl2
+
+jawValue = f_ma(src, jawPeriod, maTypeInput)
+teethValue = f_ma(src, teethPeriod, maTypeInput)
+lipsValue = f_ma(src, lipsPeriod, maTypeInput)
+
+// --- Plotting ---
+// Plot with offset for visualization (Alligator lines are shifted into the future)
+plot(jawValue, "Jaw", color=jawColor, offset=jawOffset)
+plot(teethValue, "Teeth", color=teethColor, offset=teethOffset)
+plot(lipsValue, "Lips", color=lipsColor, offset=lipsOffset)
+
+// --- Strategy Logic ---
+// Align values with current price bar for logic execution.
+// The value we see on the CURRENT bar is the one calculated N bars ago if shifted by N.
+currentJaw = jawValue[jawOffset]
+currentTeeth = teethValue[teethOffset]
+currentLips = lipsValue[lipsOffset]
+
+// Eating Phase (Trending): Lines fanned out and separated
+// Long bias: Lips > Teeth > Jaw
+isEatingLong = currentLips > currentTeeth and currentTeeth > currentJaw
+// Short bias: Lips < Teeth < Jaw
+isEatingShort = currentLips < currentTeeth and currentTeeth < currentJaw
+
+// Sleeping Phase: Lines are intertwined or crossing (Alligator is asleep)
+// The Alligator is asleep when the lines are NOT in a clear fanned-out (Eating) order.
+isSleeping = not (isEatingLong or isEatingShort)
+
+// Fanning out check (distance increasing between Lips and Jaw)
+spread = math.abs(currentLips - currentJaw)
+isFanning = ta.rising(spread, 1)
+
+// Entry Signals
+// Buy: Lines split and widen apart, pointing upwards, Price > Indicator lines
+longCondition = isEatingLong and isFanning and close > currentLips
+// Sell: Lines split and widen apart, pointing downwards, Price < Indicator lines
+shortCondition = isEatingShort and isFanning and close < currentLips
+
+// Exit Signals: Lines begin to tightly cross and squeeze back together (Alligator is full)
+// Trigger exit when Lips cross Teeth, or when they start to converge significantly
+exitLong = ta.crossunder(currentLips, currentTeeth)
+exitShort = ta.crossover(currentLips, currentTeeth)
+
+// --- Execution ---
+if longCondition
+    strategy.entry("Long", strategy.long)
+
+if shortCondition
+    strategy.entry("Short", strategy.short)
+
+if strategy.position_size > 0 and exitLong
+    strategy.close("Long", comment="Exit Long")
+
+if strategy.position_size < 0 and exitShort
+    strategy.close("Short", comment="Exit Short")
+
+// --- Visual Signals ---
+bgcolor(isSleeping ? color.new(color.gray, 90) : na, title="Sleeping Phase")
+plotshape(longCondition, "Buy Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(shortCondition, "Sell Signal", shape.triangledown, location.abovebar, color.red, size=size.small)
