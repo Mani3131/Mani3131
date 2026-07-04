@@ -1,0 +1,383 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+strategy("Institutional Volume Profile Strategy", overlay=true, margin_long=100, margin_short=100, initial_capital=10000)
+
+// ==========================================
+// INPUTS
+// ==========================================
+
+// --- Volume Profile Settings ---
+grp_vp = "Volume Profile Settings"
+va_percent = input.float(40.0, "Core Value Area (%)", minval=0, maxval=100, step=1, group=grp_vp, tooltip="The tight horizontal band highlighting institutional accumulation (Default: 40%)")
+
+// --- Context Settings ---
+grp_context = "Market Context"
+use_daily_profiles = input.bool(true, "Use Daily Value Areas", group=grp_context)
+use_weekly_profiles = input.bool(true, "Use Weekly Value Areas", group=grp_context)
+
+// --- Execution Settings (Footprint) ---
+grp_footprint = "Footprint Confirmation (Order Flow)"
+imbalance_ratio = input.float(3.0, "Imbalance Ratio (e.g. 300%)", minval=1.0, step=0.1, group=grp_footprint, tooltip="Diagonal imbalance ratio for Phase 2 Confirmation")
+lower_tf = input.timeframe("1", "Intra-bar Timeframe for Footprint", group=grp_footprint, tooltip="Lower timeframe used to simulate footprint charts")
+
+// --- Risk Management ---
+grp_risk = "Risk Management"
+risk_per_trade = input.float(1.0, "Risk Per Trade (%)", minval=0.1, step=0.1, group=grp_risk)
+
+// ==========================================
+// UTILS & FUNCTIONS
+// ==========================================
+
+// Function to calculate VA from volume-at-price arrays
+f_calculate_va_metrics(prices, volumes, target_pct) =>
+    if array.size(prices) == 0
+        [float(na), float(na), float(na)]
+    else
+        float total_vol = array.sum(volumes)
+        float target_vol = total_vol * (target_pct / 100.0)
+
+        // Find POC
+        int poc_idx = array.indexof(volumes, array.max(volumes))
+        float poc = array.get(prices, poc_idx)
+
+        float current_vol = array.get(volumes, poc_idx)
+        int upper_idx = poc_idx
+        int lower_idx = poc_idx
+
+        // Expand to find VA
+        while current_vol < target_vol and (upper_idx < array.size(prices) - 1 or lower_idx > 0)
+            float upper_v = upper_idx < array.size(prices) - 1 ? array.get(volumes, upper_idx + 1) : 0.0
+            float lower_v = lower_idx > 0 ? array.get(volumes, lower_idx - 1) : 0.0
+
+            if upper_v >= lower_v and upper_idx < array.size(prices) - 1
+                upper_idx += 1
+                current_vol += upper_v
+            else if lower_idx > 0
+                lower_idx -= 1
+                current_vol += lower_v
+            else
+                break
+
+        float vah = array.get(prices, upper_idx)
+        float val = array.get(prices, lower_idx)
+        [poc, vah, val]
+
+// ==========================================
+// MARKET CONTEXT (Step 1)
+// ==========================================
+
+var float d_poc = float(na), var float d_vah = float(na), var float d_val = float(na)
+var float pd_poc = float(na), var float pd_vah = float(na), var float pd_val = float(na)
+var float pw_poc = float(na), var float pw_vah = float(na), var float pw_val = float(na)
+
+// We use arrays to track volume at price levels
+var float[] d_prices_arr = array.new_float(0)
+var float[] d_vols_arr = array.new_float(0)
+var float[] w_prices_arr = array.new_float(0)
+var float[] w_vols_arr = array.new_float(0)
+
+is_new_day = ta.change(time("D")) != 0
+is_new_week = ta.change(time("W")) != 0
+
+// Simplified binning: Round price to nearest 0.1 (good for Gold)
+float tick_size = syminfo.mintick * 10
+float current_price_bin = math.round(close / tick_size) * tick_size
+
+// Function to update profile arrays
+f_update_profile(prices_arr, vols_arr, price, vol) =>
+    int bin_idx = array.indexof(prices_arr, price)
+    if bin_idx == -1
+        int insert_at = 0
+        if array.size(prices_arr) > 0
+            for i = 0 to array.size(prices_arr) - 1
+                if array.get(prices_arr, i) > price
+                    break
+                insert_at += 1
+        array.insert(prices_arr, insert_at, price)
+        array.insert(vols_arr, insert_at, vol)
+    else
+        array.set(vols_arr, bin_idx, array.get(vols_arr, bin_idx) + vol)
+
+if is_new_day
+    if array.size(d_prices_arr) > 0
+        [poc, vah, val] = f_calculate_va_metrics(d_prices_arr, d_vols_arr, 40.0)
+        pd_poc := poc
+        pd_vah := vah
+        pd_val := val
+    array.clear(d_prices_arr)
+    array.clear(d_vols_arr)
+
+if is_new_week
+    if array.size(w_prices_arr) > 0
+        [poc, vah, val] = f_calculate_va_metrics(w_prices_arr, w_vols_arr, 40.0)
+        pw_poc := poc
+        pw_vah := vah
+        pw_val := val
+    array.clear(w_prices_arr)
+    array.clear(w_vols_arr)
+
+// Update arrays
+f_update_profile(d_prices_arr, d_vols_arr, current_price_bin, volume)
+f_update_profile(w_prices_arr, w_vols_arr, current_price_bin, volume)
+
+// Context Determination
+// Trending: Daily value migration in same direction, supported by weekly context if possible
+d_migration_up = not na(pd_poc) and not na(pd_poc[1]) and pd_poc > pd_poc[1] and pd_val > pd_val[1]
+d_migration_down = not na(pd_poc) and not na(pd_poc[1]) and pd_poc < pd_poc[1] and pd_vah < pd_vah[1]
+
+market_bias = d_migration_up ? 1 : (d_migration_down ? -1 : 0)
+
+// Detect Breakout (Move away from established trading zone)
+// A breakout is defined as price closing outside the previous day's Value Area
+breakout_up = close > pd_vah and pd_vah > 0
+breakout_down = close < pd_val and pd_val > 0
+structural_breakout = breakout_up or breakout_down
+
+// Establish context: Trending if migration + breakout
+is_trending = market_bias != 0 and structural_breakout
+is_sideways = not is_trending
+
+// ==========================================
+// INSTITUTIONAL ZONES (Step 2)
+// ==========================================
+
+// --- Pivot Detection ---
+pivot_len = 10
+ph = ta.pivothigh(high, pivot_len, pivot_len)
+pl = ta.pivotlow(low, pivot_len, pivot_len)
+
+var float last_ph_val = float(na)
+var int last_ph_bar = int(na)
+var float last_pl_val = float(na)
+var int last_pl_bar = int(na)
+
+if not na(ph)
+    last_ph_val := ph
+    last_ph_bar := bar_index - pivot_len
+if not na(pl)
+    last_pl_val := pl
+    last_pl_bar := bar_index - pivot_len
+
+// --- Impulse Profiling ---
+var float[] imp_prices = array.new_float(0)
+var float[] imp_vols = array.new_float(0)
+var int imp_start_bar = int(na)
+var int imp_active_type = 0 // 1 for Long, -1 for Short
+
+// Logic: When we exceed the last pivot in trending direction, start/continue impulse
+new_hh = high > last_ph_val and market_bias == 1
+new_ll = low < last_pl_val and market_bias == -1
+
+if new_hh and imp_active_type <= 0
+    imp_active_type := 1
+    imp_start_bar := last_pl_bar
+    array.clear(imp_prices)
+    array.clear(imp_vols)
+else if new_ll and imp_active_type >= 0
+    imp_active_type := -1
+    imp_start_bar := last_ph_bar
+    array.clear(imp_prices)
+    array.clear(imp_vols)
+
+// Aggregate volume for impulse leg
+if not na(imp_start_bar) and bar_index >= imp_start_bar
+    f_update_profile(imp_prices, imp_vols, current_price_bin, volume)
+
+// Calculate Impulse VA (Demand/Supply Zones)
+var float zone_vah = float(na)
+var float zone_val = float(na)
+var float zone_poc = float(na)
+var int zone_type = 0 // 1 for Demand, -1 for Supply
+
+if array.size(imp_prices) > 0
+    [poc, vah, val] = f_calculate_va_metrics(imp_prices, imp_vols, va_percent)
+    zone_poc := poc
+    zone_vah := vah
+    zone_val := val
+    zone_type := imp_active_type
+
+// Plotting the zone
+var box zone_box = box.new(na, na, na, na, xloc=xloc.bar_index, bgcolor=color.new(color.blue, 80), border_color=color.new(color.blue, 50))
+
+if not na(zone_vah) and not na(zone_val)
+    box.set_lefttop(zone_box, imp_start_bar, zone_vah)
+    box.set_rightbottom(zone_box, bar_index, zone_val)
+    box.set_bgcolor(zone_box, zone_type == 1 ? color.new(color.green, 85) : color.new(color.red, 85))
+    box.set_border_color(zone_box, zone_type == 1 ? color.new(color.green, 60) : color.new(color.red, 60))
+
+// Retest Detection
+in_demand_zone = zone_type == 1 and low <= zone_vah and high >= zone_val
+in_supply_zone = zone_type == -1 and high >= zone_val and low <= zone_vah
+
+// --- Footprint Data Extraction ---
+f_get_ltf_data() =>
+    [close, volume, open, high, low]
+
+[ltf_closes, ltf_vols, ltf_opens, ltf_highs, ltf_lows] = request.security_lower_tf(syminfo.tickerid, lower_tf, f_get_ltf_data())
+
+// Function to calculate delta and identify imbalances
+f_analyze_footprint(closes, vols, opens, highs, lows) =>
+    float delta = 0.0
+    float total_v = 0.0
+
+    // Arrays for price bins within the bar
+    var float[] b_prices = array.new_float(0)
+    var float[] b_buy_vols = array.new_float(0)
+    var float[] b_sell_vols = array.new_float(0)
+    array.clear(b_prices)
+    array.clear(b_buy_vols)
+    array.clear(b_sell_vols)
+
+    if not na(closes) and array.size(closes) > 0
+        for i = 0 to array.size(closes) - 1
+            float c = array.get(closes, i)
+            float o = array.get(opens, i)
+            float v = array.get(vols, i)
+
+            // Simplified Buy/Sell volume attribution
+            float buy_v = c > o ? v : (c < o ? 0 : v * 0.5)
+            float sell_v = v - buy_v
+
+            delta += (buy_v - sell_v)
+            total_v += v
+
+            // Bin by price
+            float p = math.round(c / syminfo.mintick) * syminfo.mintick
+            int idx = array.indexof(b_prices, p)
+            if idx == -1
+                array.push(b_prices, p)
+                array.push(b_buy_vols, buy_v)
+                array.push(b_sell_vols, sell_v)
+            else
+                array.set(b_buy_vols, idx, array.get(b_buy_vols, idx) + buy_v)
+                array.set(b_sell_vols, idx, array.get(b_sell_vols, idx) + sell_v)
+
+    // Diagonal Imbalances
+    int ask_imb_count = 0
+    int bid_imb_count = 0
+    float hvn = float(na)
+    float max_vol = 0.0
+
+    if array.size(b_prices) > 1
+        // Sort by price
+        // (Simple bubble sort or use a better way if needed, but intra-bar bins are usually few)
+        // For now, let's assume we need them sorted to check diagonals
+        // Actually, we can just iterate and find prices
+
+        // Find HVN
+        for i = 0 to array.size(b_prices) - 1
+            float v_at_p = array.get(b_buy_vols, i) + array.get(b_sell_vols, i)
+            if v_at_p > max_vol
+                max_vol := v_at_p
+                hvn := array.get(b_prices, i)
+
+        // Diagonal Check
+        // Sort prices to identify neighbors
+        if array.size(b_prices) > 1
+            for i = 0 to array.size(b_prices) - 2
+                for j = i + 1 to array.size(b_prices) - 1
+                    if array.get(b_prices, i) > array.get(b_prices, j)
+                        float temp_p = array.get(b_prices, i)
+                        float temp_bv = array.get(b_buy_vols, i)
+                        float temp_sv = array.get(b_sell_vols, i)
+
+                        array.set(b_prices, i, array.get(b_prices, j))
+                        array.set(b_buy_vols, i, array.get(b_buy_vols, j))
+                        array.set(b_sell_vols, i, array.get(b_sell_vols, j))
+
+                        array.set(b_prices, j, temp_p)
+                        array.set(b_buy_vols, j, temp_bv)
+                        array.set(b_sell_vols, j, temp_sv)
+
+            // Check diagonal imbalances: Buy[P] vs Sell[P-1]
+            for i = 1 to array.size(b_prices) - 1
+                if array.get(b_buy_vols, i) >= array.get(b_sell_vols, i-1) * imbalance_ratio
+                    ask_imb_count += 1
+                if array.get(b_sell_vols, i-1) >= array.get(b_buy_vols, i) * imbalance_ratio
+                    bid_imb_count += 1
+
+    [delta, total_v, hvn, ask_imb_count, bid_imb_count]
+
+[bar_delta, bar_total_vol, bar_hvn, ask_imbs, bid_imbs] = f_analyze_footprint(ltf_closes, ltf_vols, ltf_opens, ltf_highs, ltf_lows)
+
+// --- Phase 1: Absorption ---
+absorption_long = in_demand_zone and close < open and bar_delta > 0
+absorption_short = in_supply_zone and close > open and bar_delta < 0
+
+var bool phase1_active_long = false
+var bool phase1_active_short = false
+
+if absorption_long
+    phase1_active_long := true
+    phase1_active_short := false
+else if absorption_short
+    phase1_active_short := true
+    phase1_active_long := false
+
+// Reset phase 1 if price leaves zone significantly or too much time passes?
+if not in_demand_zone and not in_supply_zone
+    phase1_active_long := false
+    phase1_active_short := false
+
+// --- Phase 2 & 3: Initiation & HVN ---
+// Initiation: Bullish candle, diagonal imbalances (Phase 2)
+initiation_long = phase1_active_long and close > open and ask_imbs >= 3
+initiation_short = phase1_active_short and close < open and bid_imbs >= 3
+
+// Phase 3: HVN Support
+hvn_support_long = initiation_long and bar_hvn <= close and bar_hvn >= (low + (high-low)*0.2) // HVN in lower/mid part of trigger candle
+hvn_support_short = initiation_short and bar_hvn >= close and bar_hvn <= (high - (high-low)*0.2)
+
+long_signal = hvn_support_long
+short_signal = hvn_support_short
+
+if long_signal or short_signal
+    phase1_active_long := false
+    phase1_active_short := false
+
+// ==========================================
+// TRADE MANAGEMENT (Step 4)
+// ==========================================
+
+var float long_sl = na
+var float long_tp = na
+var float short_sl = na
+var float short_tp = na
+
+// Stop Loss: Below physical invalidation (lowest cluster or absolute zone boundary)
+// Take Profit: Target the opposite extreme of the daily range (if trending within it)
+// or a multiple of risk if breakout is in progress.
+if long_signal
+    long_sl := math.min(low, zone_val)
+    risk = close - long_sl
+    // If we've broken out of PD_VAH, use a 1:3 RR target or previous weekly VA if available
+    long_tp := close > pd_vah ? close + (risk * 3.0) : pd_vah
+    strategy.entry("Institutional Long", strategy.long, stop=high)
+    strategy.exit("Exit Long", "Institutional Long", stop=long_sl, limit=long_tp)
+
+if short_signal
+    short_sl := math.max(high, zone_vah)
+    risk = short_sl - close
+    // If we've broken out of PD_VAL, use a 1:3 RR target or previous weekly VA if available
+    short_tp := close < pd_val ? close - (risk * 3.0) : pd_val
+    strategy.entry("Institutional Short", strategy.short, stop=low)
+    strategy.exit("Exit Short", "Institutional Short", stop=short_sl, limit=short_tp)
+
+// ==========================================
+// VISUALIZATION
+// ==========================================
+
+// Signals
+plotshape(long_signal, "Long Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(short_signal, "Short Signal", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// Absorption highlights
+plotshape(absorption_long, "Absorption Long", shape.circle, location.belowbar, color.new(color.green, 50), size=size.tiny)
+plotshape(absorption_short, "Absorption Short", shape.circle, location.abovebar, color.new(color.red, 50), size=size.tiny)
+
+// Current Daily VA
+plot(pd_poc, "Prev Day POC", color.new(color.gray, 50), style=plot.style_stepline)
+plot(pd_vah, "Prev Day VAH", color.new(color.gray, 80), style=plot.style_stepline)
+plot(pd_val, "Prev Day VAL", color.new(color.gray, 80), style=plot.style_stepline)
