@@ -99,7 +99,7 @@ else if bull_move_phase == 3
         bull_move_phase := 2 // Back to retracement
         bull_retracement_extreme := low
     else if close > bull_expansion_extreme
-        label.new(bar_index, low, "Bullish Tested Move", color=c_bull, textcolor=#ffffff, style=label.style_label_up, tooltip="Expansion -> Retracement -> Failure -> Resumption")
+        label.new(bar_index, low, "Bull", color=#ffffff00, textcolor=c_bull, style=label.style_label_up, tooltip="Bullish Tested Move")
         bull_move_phase := 0 // Reset
 
 // Bearish Tested Move
@@ -122,7 +122,7 @@ else if bear_move_phase == 3
         bear_move_phase := 2
         bear_retracement_extreme := high
     else if close < bear_expansion_extreme
-        label.new(bar_index, high, "Bearish Tested Move", color=c_bear, textcolor=#ffffff, style=label.style_label_down, tooltip="Expansion -> Retracement -> Failure -> Resumption")
+        label.new(bar_index, high, "Bear", color=#ffffff00, textcolor=c_bear, style=label.style_label_down, tooltip="Bearish Tested Move")
         bear_move_phase := 0 // Reset
 
 // Reset if move fails completely (e.g. bullish expansion followed by break below retracement start)
