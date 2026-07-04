@@ -2,8 +2,8 @@
 strategy("Rumers Magic Lines Strategy", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
 
 // --- 1. Inputs ---
-pivot_lookback = input.int(20, "Swing Peak/Valley Lookback", minval=1, help="Used to identify major historical peaks and valleys outside the daily range.")
-strong_candle_mult = input.float(1.1, "Strong Candle Body Multiplier", minval=0.1, help="Body must be > this * average body to be 'strong'.")
+pivot_lookback = input.int(20, "Swing Peak/Valley Lookback", minval=1, tooltip="Used to identify major historical peaks and valleys outside the daily range.")
+strong_candle_mult = input.float(1.1, "Strong Candle Body Multiplier", minval=0.1, tooltip="Body must be > this * average body to be 'strong'.")
 sl_buffer = input.int(0, "Stop Loss Buffer (Ticks)", minval=0)
 tp_target = input.string("Opposite Range", "Take Profit Target", options=["Opposite Range", "Opposite Swing"])
 show_levels = input.bool(true, "Show Key Levels")
