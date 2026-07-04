@@ -56,8 +56,8 @@ if htf_trend == 1.0
 else if htf_trend == -1.0
     ext_low := math.min(nz(ext_low, htf_low), htf_low)
 
-plot(ext_high, "External High", color.red, 2, plot.style_linebr, offset=-1)
-plot(ext_low, "External Low", color.green, 2, plot.style_linebr, offset=-1)
+plot(ext_high, "External High", #ff5252, 2, plot.style_linebr, offset=-1)
+plot(ext_low, "External Low", #22ab94, 2, plot.style_linebr, offset=-1)
 
 // --- Step 2: Mid-Term Pullback Signature (MTF) ---
 [m_high, m_low, m_close] = request.security(syminfo.tickerid, mtf_tf, [high[1], low[1], close[1]], lookahead=barmerge.lookahead_on)
@@ -110,8 +110,8 @@ else if htf_trend == -1.0
     if pullback_state == 3 and m_close > int_high
         pullback_state := 4 // Officially bullish mid-term
 
-plot(int_high, "Internal High", color.orange, 1, plot.style_linebr)
-plot(int_low, "Internal Low", color.blue, 1, plot.style_linebr)
+plot(int_high, "Internal High", #ff9800, 1, plot.style_linebr)
+plot(int_low, "Internal Low", #2196f3, 1, plot.style_linebr)
 
 // --- Step 3: Premium/Discount and POI Filtering ---
 float equilibrium = (int_high + int_low) / 2
@@ -133,8 +133,8 @@ if pullback_state == 4 and ta.change(pullback_state) != 0
         extreme_poi := int_low
         decisional_poi := equilibrium
 
-plot(equilibrium, "Equilibrium (50%)", color.gray, 1, plot.style_stepline)
-plot(is_premium ? equilibrium : na, "Premium Zone Marker", color.new(color.red, 80), 4, plot.style_circles)
+plot(equilibrium, "Equilibrium (50%)", #b2b5be, 1, plot.style_stepline)
+plot(is_premium ? equilibrium : na, "Premium Zone Marker", #ff525233, 4, plot.style_circles)
 
 // --- Step 4: Trade Objectives (HTF POI / Liquidity Sweeps) ---
 // HTF Supply/Demand Zone (Simplified: HTF Order Block)
@@ -153,7 +153,7 @@ else if htf_trend == -1.0
 // Objective: Price must achieve premium objective (sweep or POI tap)
 bool objective_met = (pullback_state == 4) and (swept_htf_liq or (htf_trend == 1.0 ? high >= extreme_poi : low <= extreme_poi))
 
-plotshape(objective_met, "Objective Met", shape.triangledown, location.abovebar, color.purple, size=size.small)
+plotshape(objective_met, "Objective Met", shape.triangledown, location.abovebar, #9c27b0, size=size.small)
 
 // --- Step 5: LTF Execution and Management ---
 // LTF Confirmation: 1M or 3M chart.
@@ -237,7 +237,7 @@ var box ext_box = na
 bool ext_changed = (na(ext_high[1]) and not na(ext_high)) or (na(ext_low[1]) and not na(ext_low)) or ta.change(ext_high) != 0 or ta.change(ext_low) != 0
 if ext_changed
     box.delete(ext_box)
-    ext_box := box.new(bar_index, ext_high, bar_index + 1, ext_low, border_color=color.new(color.gray, 50), bgcolor=color.new(color.gray, 90))
+    ext_box := box.new(bar_index, ext_high, bar_index + 1, ext_low, border_color=#b2b5be80, bgcolor=#b2b5be1a)
 else if not na(ext_box)
     box.set_right(ext_box, bar_index)
 
@@ -246,7 +246,7 @@ var box int_box = na
 bool int_changed = (na(int_high[1]) and not na(int_high)) or (na(int_low[1]) and not na(int_low)) or ta.change(int_high) != 0 or ta.change(int_low) != 0
 if int_changed
     box.delete(int_box)
-    int_box := box.new(bar_index, int_high, bar_index + 1, int_low, border_color=color.new(color.blue, 50), bgcolor=color.new(color.blue, 95))
+    int_box := box.new(bar_index, int_high, bar_index + 1, int_low, border_color=#2196f380, bgcolor=#2196f30d)
 else if not na(int_box)
     box.set_right(int_box, bar_index)
 
@@ -255,9 +255,9 @@ var box premium_box = na
 if pullback_state >= 3 and not na(equilibrium)
     box.delete(premium_box)
     if htf_trend == 1.0
-        premium_box := box.new(bar_index, int_high, bar_index + 1, equilibrium, border_color=na, bgcolor=color.new(color.red, 90))
+        premium_box := box.new(bar_index, int_high, bar_index + 1, equilibrium, border_color=na, bgcolor=#ff52521a)
     else
-        premium_box := box.new(bar_index, equilibrium, bar_index + 1, int_low, border_color=na, bgcolor=color.new(color.green, 90))
+        premium_box := box.new(bar_index, equilibrium, bar_index + 1, int_low, border_color=na, bgcolor=#22ab941a)
 else
     box.delete(premium_box)
     premium_box := na
@@ -268,15 +268,15 @@ if not na(premium_box)
 // Labels for POIs
 bool poi_changed = (na(extreme_poi[1]) and not na(extreme_poi)) or ta.change(extreme_poi) != 0
 if poi_changed
-    label.new(bar_index, extreme_poi, "Extreme POI", color=color.maroon, textcolor=color.white, style=label.style_label_down)
+    label.new(bar_index, extreme_poi, "Extreme POI", color=#880e4f, textcolor=#ffffff, style=label.style_label_down)
 
 // Liquidity Labels
 var label pdh_label = na
 var label pdl_label = na
 label.delete(pdh_label)
 label.delete(pdl_label)
-pdh_label := label.new(bar_index, pdh, "PDH", color=color.gray, style=label.style_label_down, textcolor=color.white)
-pdl_label := label.new(bar_index, pdl, "PDL", color=color.gray, style=label.style_label_up, textcolor=color.white)
+pdh_label := label.new(bar_index, pdh, "PDH", color=#b2b5be, style=label.style_label_down, textcolor=#ffffff)
+pdl_label := label.new(bar_index, pdl, "PDL", color=#b2b5be, style=label.style_label_up, textcolor=#ffffff)
 
 // Entry/Exit Shapes
-plotshape(entry_signal, "Entry Signal", shape.labeldown, location.abovebar, htf_trend == 1.0 ? color.red : color.green, text="ENTRY", textcolor=color.white)
+plotshape(entry_signal, "Entry Signal", shape.labeldown, location.abovebar, htf_trend == 1.0 ? #ff5252 : #22ab94, text="ENTRY", textcolor=#ffffff)
