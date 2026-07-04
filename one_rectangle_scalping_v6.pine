@@ -65,9 +65,13 @@ f_get_m15_data() =>
     pl_time = time[pivot_lookback]
     [ph, ph_time, pl, pl_time, high, low, close, time]
 
-// Using lookahead_on with [1] to ensure consistent behavior between historical and real-time data.
-// This fetches the data for the M15 candle that has just CLOSED.
-[m15_ph, m15_ph_time, m15_pl, m15_pl_time, m15_h, m15_l, m15_c, m15_t] = request.security(syminfo.tickerid, "15", f_get_m15_data()[1], lookahead = barmerge.lookahead_on)
+// Helper function to return M15 data with 1-bar offset for lookahead_on
+f_get_m15_data_offset() =>
+    [ph, ph_time, pl, pl_time, h, l, c, t] = f_get_m15_data()
+    [ph[1], ph_time[1], pl[1], pl_time[1], h[1], l[1], c[1], t[1]]
+
+// Using lookahead_on with the offset helper to ensure consistent behavior.
+[m15_ph, m15_ph_time, m15_pl, m15_pl_time, m15_h, m15_l, m15_c, m15_t] = request.security(syminfo.tickerid, "15", f_get_m15_data_offset(), lookahead = barmerge.lookahead_on)
 
 // Detection of confirmed M15 pivots
 if not na(m15_ph)
@@ -122,8 +126,7 @@ if m15_new_bar and in_trade_window
 
 // --- Step 4: M1 Breakout Entry ---
 if not na(active_rect) and active_rect.active
-    // Extend the rectangle as long as it is active, but not indefinitely
-    box.set_right(active_rect.rect, time + 60000 * 5) // Always extend 5 mins ahead
+    box.set_right(active_rect.rect, time + 60000 * 5)
 
     bool entry_triggered = false
     float entry_price = na
