@@ -146,8 +146,8 @@ if strategy.position_size == 0
         strategy.cancel("Long")
 
 // Visualization of state
-plotshape(is_c1_sell or is_c1_buy, "Candle 1 (Setup)", shape.circle, location.abovebar, color.blue, size=size.tiny, title="C1 Setup")
-plotshape(trade_state == 2, "Candle 2 (Sneaky)", shape.diamond, location.belowbar, color.orange, size=size.tiny, title="C2 Sneaky")
+plotshape(is_c1_sell or is_c1_buy, title="Candle 1 (Setup)", style=shape.circle, location=location.abovebar, color=color.blue, size=size.tiny)
+plotshape(trade_state == 2, title="Candle 2 (Sneaky)", style=shape.diamond, location=location.belowbar, color=color.orange, size=size.tiny)
 
 // Timeframe Warning
 if barstate.islast and (not timeframe.isintraday or timeframe.multiplier != 15)
