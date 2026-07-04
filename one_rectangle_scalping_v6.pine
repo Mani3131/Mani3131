@@ -80,23 +80,22 @@ if not na(m15_pl)
     last_m15_pl := Pivot.new(m15_pl, m15_pl_time, false)
 
 // --- Visualizing M15 Structure ---
-var line ph_line = line.new(na, na, na, na, color = color.new(color.red, 50), style = line.style_dashed)
-var line pl_line = line.new(na, na, na, na, color = color.new(color.green, 50), style = line.style_dashed)
+// Initialize lines with xloc.bar_time since we'll be using millisecond timestamps
+var line ph_line = line.new(na, na, na, na, xloc = xloc.bar_time, color = color.new(color.red, 50), style = line.style_dashed)
+var line pl_line = line.new(na, na, na, na, xloc = xloc.bar_time, color = color.new(color.green, 50), style = line.style_dashed)
 
 if show_pivots and not na(last_m15_ph)
     line.set_xy1(ph_line, last_m15_ph.time, last_m15_ph.price)
     line.set_xy2(ph_line, time, last_m15_ph.price)
-    line.set_xloc(ph_line, last_m15_ph.time, time, xloc.bar_time)
 
 if show_pivots and not na(last_m15_pl)
     line.set_xy1(pl_line, last_m15_pl.time, last_m15_pl.price)
     line.set_xy2(pl_line, time, last_m15_pl.price)
-    line.set_xloc(pl_line, last_m15_pl.time, time, xloc.bar_time)
 
 // --- Step 2: M15 Weakness Detection ---
 m15_new_bar = ta.change(m15_t) != 0
 
-if m15_new_bar and in_trade_window
+if m15_new_bar and not na(m15_t) and in_trade_window
     bool bearish_weakness = false
     bool bullish_weakness = false
 
@@ -115,18 +114,19 @@ if m15_new_bar and in_trade_window
         if not na(active_rect)
             box.set_bgcolor(active_rect.rect, color.new(color.gray, 90))
             box.set_border_color(active_rect.rect, color.new(color.gray, 50))
-        active_rect := Rectangle.new(box_top, box_bottom, m15_t, box.new(m15_t, box_top, time + 60000 * 60, box_bottom, xloc = xloc.bar_time, border_color = color.red, bgcolor = color.new(color.red, 80)), true, true)
+        active_rect := Rectangle.new(box_top, box_bottom, m15_t, box.new(m15_t, box_top, time, box_bottom, xloc = xloc.bar_time, border_color = color.red, bgcolor = color.new(color.red, 80)), true, true)
     else if bullish_weakness
         box_top = m15_c
         box_bottom = m15_l
         if not na(active_rect)
             box.set_bgcolor(active_rect.rect, color.new(color.gray, 90))
             box.set_border_color(active_rect.rect, color.new(color.gray, 50))
-        active_rect := Rectangle.new(box_top, box_bottom, m15_t, box.new(m15_t, box_top, time + 60000 * 60, box_bottom, xloc = xloc.bar_time, border_color = color.green, bgcolor = color.new(color.green, 80)), false, true)
+        active_rect := Rectangle.new(box_top, box_bottom, m15_t, box.new(m15_t, box_top, time, box_bottom, xloc = xloc.bar_time, border_color = color.green, bgcolor = color.new(color.green, 80)), false, true)
 
 // --- Step 4: M1 Breakout Entry ---
 if not na(active_rect) and active_rect.active
-    box.set_right(active_rect.rect, time + 60000 * 5)
+    // Extend the rectangle as long as it is active
+    box.set_right(active_rect.rect, time + 60000 * 5) // Extend 5 mins ahead using time
 
     bool entry_triggered = false
     float entry_price = na
