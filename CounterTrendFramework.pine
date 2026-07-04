@@ -255,9 +255,9 @@ var box premium_box = na
 if pullback_state >= 3 and not na(equilibrium)
     box.delete(premium_box)
     if htf_trend == 1.0
-        premium_box := box.new(bar_index, int_high, bar_index + 1, equilibrium, border_color=color.na, bgcolor=color.new(color.red, 90))
+        premium_box := box.new(bar_index, int_high, bar_index + 1, equilibrium, border_color=na, bgcolor=color.new(color.red, 90))
     else
-        premium_box := box.new(bar_index, equilibrium, bar_index + 1, int_low, border_color=color.na, bgcolor=color.new(color.green, 90))
+        premium_box := box.new(bar_index, equilibrium, bar_index + 1, int_low, border_color=na, bgcolor=color.new(color.green, 90))
 else
     box.delete(premium_box)
     premium_box := na
