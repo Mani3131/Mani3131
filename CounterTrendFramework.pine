@@ -4,9 +4,9 @@ strategy("Counter-Trend Structural Framework", overlay=true, margin_long=100, ma
 // This script implements a counter-trend trading framework based on multi-timeframe market structure analysis.
 
 // --- Inputs ---
-htf_tf = input.timeframe("60", "Higher Time Frame (Step 1)")
-mtf_tf = input.timeframe("15", "Mid-Term Time Frame (Step 2)")
-ltf_tf = input.timeframe("1", "Lower Time Frame (Step 5)")
+htf_tf = input.timeframe("60", "Higher Time Frame (Step 1)", tooltip="1-Hour is preferred for identifying the External Range.")
+mtf_tf = input.timeframe("15", "Mid-Term Time Frame (Step 2)", tooltip="15-Minute is preferred for the Two-Leg Pullback Signature.")
+ltf_tf = input.timeframe("1", "Lower Time Frame (Step 5)", tooltip="1-Minute or 3-Minute for high-precision entry execution.")
 
 // --- Step 1: External Range (HTF) ---
 // We need to identify BOS on HTF to define the range.
@@ -142,6 +142,20 @@ plot(is_premium ? equilibrium : na, "Premium Zone Marker", #ff525233, 4, plot.st
 float pdh = request.security(syminfo.tickerid, "1440", high[1], lookahead=barmerge.lookahead_on)
 float pdl = request.security(syminfo.tickerid, "1440", low[1], lookahead=barmerge.lookahead_on)
 
+// Gold-Specific: Relative Equal Highs/Lows (Liquidity Pools)
+var float last_m_ph = na
+var float last_m_pl = na
+if not na(mtf_p_high)
+    last_m_ph := mtf_p_high
+if not na(mtf_p_low)
+    last_m_pl := mtf_p_low
+
+bool is_eqh = math.abs(m_high - last_m_ph) < syminfo.mintick * 10
+bool is_eql = math.abs(m_low - last_m_pl) < syminfo.mintick * 10
+
+// Smart Money Traps (SMTs): HTF pivots in Premium/Discount zones that are likely to be swept
+bool is_smt = htf_trend == 1.0 ? (m_high < ext_high and m_high > equilibrium) : (m_low > ext_low and m_low < equilibrium)
+
 bool swept_htf_liq = false
 if htf_trend == 1.0
     if high > pdh or high > ext_high
@@ -151,9 +165,15 @@ else if htf_trend == -1.0
         swept_htf_liq := true
 
 // Objective: Price must achieve premium objective (sweep or POI tap)
-bool objective_met = (pullback_state == 4) and (swept_htf_liq or (htf_trend == 1.0 ? high >= extreme_poi : low <= extreme_poi))
+var bool objective_met = false
+if (pullback_state == 4)
+    if swept_htf_liq or (htf_trend == 1.0 ? high >= extreme_poi : low <= extreme_poi)
+        objective_met := true
 
-plotshape(objective_met, "Objective Met", shape.triangledown, location.abovebar, #9c27b0, size=size.small)
+if ta.change(ext_high) != 0 or ta.change(ext_low) != 0 or strategy.position_size != 0
+    objective_met := false
+
+plotshape(objective_met and not objective_met[1], "Objective Met", shape.triangledown, location.abovebar, #9c27b0, size=size.small)
 
 // --- Step 5: LTF Execution and Management ---
 // LTF Confirmation: 1M or 3M chart.
@@ -269,6 +289,8 @@ if not na(premium_box)
 bool poi_changed = (na(extreme_poi[1]) and not na(extreme_poi)) or ta.change(extreme_poi) != 0
 if poi_changed
     label.new(bar_index, extreme_poi, "Extreme POI", color=#880e4f, textcolor=#ffffff, style=label.style_label_down)
+    if not na(decisional_poi)
+        label.new(bar_index, decisional_poi, "Decisional POI", color=#4a148c, textcolor=#ffffff, style=label.style_label_up)
 
 // Liquidity Labels
 var label pdh_label = na
@@ -280,3 +302,8 @@ pdl_label := label.new(bar_index, pdl, "PDL", color=#b2b5be, style=label.style_l
 
 // Entry/Exit Shapes
 plotshape(entry_signal, "Entry Signal", shape.labeldown, location.abovebar, htf_trend == 1.0 ? #ff5252 : #22ab94, text="ENTRY", textcolor=#ffffff)
+
+// Gold Liquidity Labels
+plotshape(is_eqh, "Equal Highs", shape.triangledown, location.abovebar, #ffffff, size=size.tiny, text="EQH")
+plotshape(is_eql, "Equal Lows", shape.triangleup, location.belowbar, #ffffff, size=size.tiny, text="EQL")
+plotshape(is_smt, "Smart Money Trap", shape.xcross, location.abovebar, #ffa726, size=size.small, text="SMT")
