@@ -17,7 +17,7 @@ float htf_close = request.security(syminfo.tickerid, htf_tf, close[1], lookahead
 
 var float ext_high = na
 var float ext_low = na
-var is_bullish_htf = bool(na)
+var float htf_trend = na // 1.0: Bullish, -1.0: Bearish, na: Unknown
 
 // Pivot-based structure detection for HTF (1H)
 // We define a stateless function to be used within request.security
@@ -41,19 +41,19 @@ if not na(htf_p_low)
     last_htf_pl := htf_p_low
 
 // BOS Detection
-if htf_close > last_htf_ph and (na(is_bullish_htf) or not is_bullish_htf)
-    is_bullish_htf := true
+if htf_close > last_htf_ph and (na(htf_trend) or htf_trend == -1.0)
+    htf_trend := 1.0
     ext_low := last_htf_pl // The low that formed before the break
     ext_high := htf_high
-else if htf_close < last_htf_pl and (na(is_bullish_htf) or is_bullish_htf)
-    is_bullish_htf := false
+else if htf_close < last_htf_pl and (na(htf_trend) or htf_trend == 1.0)
+    htf_trend := -1.0
     ext_high := last_htf_ph // The high that formed before the break
     ext_low := htf_low
 
 // Trailing the extreme high/low for the range
-if is_bullish_htf
+if htf_trend == 1.0
     ext_high := math.max(nz(ext_high, htf_high), htf_high)
-else if not na(is_bullish_htf)
+else if htf_trend == -1.0
     ext_low := math.min(nz(ext_low, htf_low), htf_low)
 
 plot(ext_high, "External High", color.red, 2, plot.style_linebr, offset=-1)
@@ -73,7 +73,7 @@ if ta.change(ext_high) != 0 or ta.change(ext_low) != 0
     int_high := na
     int_low := na
 
-if is_bullish_htf
+if htf_trend == 1.0
     // Step 2.1: Leg 1 (Retrace from External High)
     if pullback_state == 0 and m_close < ext_high
         pullback_state := 1
@@ -94,7 +94,7 @@ if is_bullish_htf
     // Step 2.4: Leg 2 (Break Internal Low)
     if pullback_state == 3 and m_close < int_low
         pullback_state := 4 // Officially bearish mid-term
-else if not is_bullish_htf and not na(is_bullish_htf)
+else if htf_trend == -1.0
     // Opposite for Bearish HTF
     if pullback_state == 0 and m_close > ext_low
         pullback_state := 1
@@ -115,7 +115,7 @@ plot(int_low, "Internal Low", color.blue, 1, plot.style_linebr)
 
 // --- Step 3: Premium/Discount and POI Filtering ---
 float equilibrium = (int_high + int_low) / 2
-bool is_premium = is_bullish_htf ? close > equilibrium : close < equilibrium
+bool is_premium = htf_trend == 1.0 ? close > equilibrium : close < equilibrium
 
 // Identify POIs (Extreme and Decisional)
 // Extreme POI: Origin of the internal range
@@ -124,7 +124,7 @@ var float extreme_poi = na
 var float decisional_poi = na
 
 if pullback_state == 4 and ta.change(pullback_state) != 0
-    if is_bullish_htf
+    if htf_trend == 1.0
         extreme_poi := int_high // Top of the internal range
         // For decisional, we look for the last up candle before the break of int_low
         // This is a simplification.
@@ -143,15 +143,15 @@ float pdh = request.security(syminfo.tickerid, "1440", high[1], lookahead=barmer
 float pdl = request.security(syminfo.tickerid, "1440", low[1], lookahead=barmerge.lookahead_on)
 
 bool swept_htf_liq = false
-if is_bullish_htf
+if htf_trend == 1.0
     if high > pdh or high > ext_high
         swept_htf_liq := true
-else if not is_bullish_htf and not na(is_bullish_htf)
+else if htf_trend == -1.0
     if low < pdl or low < ext_low
         swept_htf_liq := true
 
 // Objective: Price must achieve premium objective (sweep or POI tap)
-bool objective_met = (pullback_state == 4) and (swept_htf_liq or (is_bullish_htf ? high >= extreme_poi : low <= extreme_poi))
+bool objective_met = (pullback_state == 4) and (swept_htf_liq or (htf_trend == 1.0 ? high >= extreme_poi : low <= extreme_poi))
 
 plotshape(objective_met, "Objective Met", shape.triangledown, location.abovebar, color.purple, size=size.small)
 
@@ -166,7 +166,7 @@ var float micro_low = na
 var bool micro_reversal = false
 
 if objective_met and is_premium
-    if is_bullish_htf // Looking for Short
+    if htf_trend == 1.0 // Looking for Short
         if l_high < nz(micro_high, 1e10) and l_close < l_low[1]
             micro_reversal := true
         micro_high := math.max(nz(micro_high, l_high), l_high)
@@ -185,10 +185,10 @@ if not objective_met
 bool entry_signal = objective_met and is_premium and micro_reversal
 
 // Stop Loss: Above micro-high for short, below micro-low for long
-float sl_price = is_bullish_htf ? micro_high : micro_low
+float sl_price = htf_trend == 1.0 ? micro_high : micro_low
 
 if entry_signal and strategy.position_size == 0
-    if is_bullish_htf
+    if htf_trend == 1.0
         strategy.entry("Counter-Trend Short", strategy.short)
     else
         strategy.entry("Counter-Trend Long", strategy.long)
@@ -254,7 +254,7 @@ else if not na(int_box)
 var box premium_box = na
 if pullback_state >= 3 and not na(equilibrium)
     box.delete(premium_box)
-    if is_bullish_htf
+    if htf_trend == 1.0
         premium_box := box.new(bar_index, int_high, bar_index + 1, equilibrium, border_color=color.na, bgcolor=color.new(color.red, 90))
     else
         premium_box := box.new(bar_index, equilibrium, bar_index + 1, int_low, border_color=color.na, bgcolor=color.new(color.green, 90))
@@ -279,4 +279,4 @@ pdh_label := label.new(bar_index, pdh, "PDH", color=color.gray, style=label.styl
 pdl_label := label.new(bar_index, pdl, "PDL", color=color.gray, style=label.style_label_up, textcolor=color.white)
 
 // Entry/Exit Shapes
-plotshape(entry_signal, "Entry Signal", shape.labeldown, location.abovebar, is_bullish_htf ? color.red : color.green, text="ENTRY", textcolor=color.white)
+plotshape(entry_signal, "Entry Signal", shape.labeldown, location.abovebar, htf_trend == 1.0 ? color.red : color.green, text="ENTRY", textcolor=color.white)
