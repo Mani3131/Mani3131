@@ -53,8 +53,8 @@ float bottom_wick = math.min(open, close) - low
 bool bull_weakening = top_wick > body_size * wick_ratio_threshold and is_bull
 bool bear_weakening = bottom_wick > body_size * wick_ratio_threshold and is_bear
 
-plotshape(bull_weakening, "Bullish Weakening", shape.arrowdown, location.abovebar, color=c_bear, size=size.small, title="Bullish Weakening Wick")
-plotshape(bear_weakening, "Bearish Weakening", shape.arrowup, location.belowbar, color=c_bull, size=size.small, title="Bearish Weakening Wick")
+plotshape(bull_weakening, "Bullish Weakening Wick", shape.arrowdown, location.abovebar, color=c_bear, size=size.small)
+plotshape(bear_weakening, "Bearish Weakening Wick", shape.arrowup, location.belowbar, color=c_bull, size=size.small)
 
 // --- Tested Move Detection ---
 // Logic: Expansion -> Retracement -> Failure to continue retracement -> Resumption
