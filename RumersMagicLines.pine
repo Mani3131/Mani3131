@@ -42,8 +42,8 @@ var line l_sl = line.new(na, na, na, na, color=color.green, width=2)
 
 var label lb_rh = label.new(na, na, "Range High", color=color.red, textcolor=color.white, style=label.style_label_left, size=size.small)
 var label lb_rl = label.new(na, na, "Range Low", color=color.green, textcolor=color.white, style=label.style_label_left, size=size.small)
-var label lb_sh = label.new(na, na, "Swing High", color=color.maroon, textcolor=color.white, style=label.style_label_left, size=size.small)
-var label lb_sl = label.new(na, na, "Swing Low", color=color.darkgreen, textcolor=color.white, style=label.style_label_left, size=size.small)
+var label lb_sh = label.new(na, na, "Swing High", color=color.red, textcolor=color.white, style=label.style_label_left, size=size.small)
+var label lb_sl = label.new(na, na, "Swing Low", color=color.green, textcolor=color.white, style=label.style_label_left, size=size.small)
 
 if show_levels and barstate.islast
     int line_start = bar_index[500]
