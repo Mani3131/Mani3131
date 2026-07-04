@@ -3,6 +3,7 @@ strategy("Williams Alligator Strategy", overlay=true, initial_capital=10000, def
 
 // --- Inputs ---
 scalpingMode = input.bool(false, "Scalping Mode", tooltip="Filters noise on lower timeframes like 1m Gold. Sets periods to 130, 80, 50.")
+exitType = input.string("Conservative", "Exit Type", options=["Aggressive", "Conservative"], tooltip="Aggressive: Close when price breaks Lip line. Conservative: Close when Lip crosses Teeth.")
 maTypeInput = input.string("Smoothed", "Moving Average Type", options=["Smoothed", "Linear Weighted"], tooltip="Smoothed is default, Linear Weighted tracks more tightly.")
 
 // Periods
@@ -73,15 +74,16 @@ spread = math.abs(currentLips - currentJaw)
 isFanning = ta.rising(spread, 1)
 
 // Entry Signals
-// Buy: Lines split and widen apart, pointing upwards, Price > Indicator lines
-longCondition = isEatingLong and isFanning and close > currentLips
-// Sell: Lines split and widen apart, pointing downwards, Price < Indicator lines
-shortCondition = isEatingShort and isFanning and close < currentLips
+// Buy: Lines split and widen apart, pointing upwards, Candlestick closes ENTIRELY above all lines
+longCondition = isEatingLong and isFanning and low > math.max(currentLips, math.max(currentTeeth, currentJaw))
+// Sell: Lines split and widen apart, pointing downwards, Candlestick closes ENTIRELY below all lines
+shortCondition = isEatingShort and isFanning and high < math.min(currentLips, math.min(currentTeeth, currentJaw))
 
 // Exit Signals: Lines begin to tightly cross and squeeze back together (Alligator is full)
-// Trigger exit when Lips cross Teeth, or when they start to converge significantly
-exitLong = ta.crossunder(currentLips, currentTeeth)
-exitShort = ta.crossover(currentLips, currentTeeth)
+// Aggressive Exit: Price crosses or breaks past the Lip line
+// Conservative Exit: Lip line crosses back through the Teeth line
+exitLong = exitType == "Aggressive" ? close < currentLips : ta.crossunder(currentLips, currentTeeth)
+exitShort = exitType == "Aggressive" ? close > currentLips : ta.crossover(currentLips, currentTeeth)
 
 // --- Execution ---
 if longCondition
