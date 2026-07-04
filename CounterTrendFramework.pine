@@ -237,7 +237,7 @@ var box ext_box = na
 bool ext_changed = (na(ext_high[1]) and not na(ext_high)) or (na(ext_low[1]) and not na(ext_low)) or ta.change(ext_high) != 0 or ta.change(ext_low) != 0
 if ext_changed
     box.delete(ext_box)
-    ext_box := box.new(bar_index, ext_high, bar_index + 1, ext_low, border_color=color.new(color.gray, 50), bgcolor=color.new(color.gray, 90), title="External Range")
+    ext_box := box.new(bar_index, ext_high, bar_index + 1, ext_low, border_color=color.new(color.gray, 50), bgcolor=color.new(color.gray, 90))
 else if not na(ext_box)
     box.set_right(ext_box, bar_index)
 
@@ -246,7 +246,7 @@ var box int_box = na
 bool int_changed = (na(int_high[1]) and not na(int_high)) or (na(int_low[1]) and not na(int_low)) or ta.change(int_high) != 0 or ta.change(int_low) != 0
 if int_changed
     box.delete(int_box)
-    int_box := box.new(bar_index, int_high, bar_index + 1, int_low, border_color=color.new(color.blue, 50), bgcolor=color.new(color.blue, 95), title="Internal Range")
+    int_box := box.new(bar_index, int_high, bar_index + 1, int_low, border_color=color.new(color.blue, 50), bgcolor=color.new(color.blue, 95))
 else if not na(int_box)
     box.set_right(int_box, bar_index)
 
@@ -255,9 +255,9 @@ var box premium_box = na
 if pullback_state >= 3 and not na(equilibrium)
     box.delete(premium_box)
     if is_bullish_htf
-        premium_box := box.new(bar_index, int_high, bar_index + 1, equilibrium, border_color=color.na, bgcolor=color.new(color.red, 90), title="Premium Zone")
+        premium_box := box.new(bar_index, int_high, bar_index + 1, equilibrium, border_color=color.na, bgcolor=color.new(color.red, 90))
     else
-        premium_box := box.new(bar_index, equilibrium, bar_index + 1, int_low, border_color=color.na, bgcolor=color.new(color.green, 90), title="Discount Zone")
+        premium_box := box.new(bar_index, equilibrium, bar_index + 1, int_low, border_color=color.na, bgcolor=color.new(color.green, 90))
 else
     box.delete(premium_box)
     premium_box := na
