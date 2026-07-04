@@ -1,0 +1,199 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Pure Price Action Momentum [V6]", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
+
+// --- Inputs ---
+int lookback_momentum = input.int(20, "Momentum Lookback", minval=5, tooltip="Number of bars to calculate the fluid momentum scoreboard.")
+float wick_ratio_threshold = input.float(1.5, "Wick to Body Ratio", minval=0.5, step=0.1, tooltip="Ratio of wick size to body size to identify weakening momentum.")
+bool show_dashboard = input.bool(true, "Show Momentum Dashboard")
+string dashboard_loc = input.string("Top Right", "Dashboard Location", options=["Top Right", "Bottom Right", "Top Left", "Bottom Left"])
+
+// --- Color Constants (Pine Script v6 compatibility) ---
+color c_bull = #22ab94
+color c_bear = #ff5252
+color c_neutral = #b2b5be
+color c_bg = #131722cc
+
+// --- Momentum Scoreboard Logic ---
+float body_size = math.abs(close - open)
+bool is_bull = close > open
+bool is_bear = close < open
+
+float sum_bull_body = ta.sma(is_bull ? body_size : 0, lookback_momentum) * lookback_momentum
+float sum_bear_body = ta.sma(is_bear ? body_size : 0, lookback_momentum) * lookback_momentum
+float total_body = sum_bull_body + sum_bear_body
+
+float bull_pct = total_body > 0 ? (sum_bull_body / total_body) * 100 : 50.0
+float bear_pct = total_body > 0 ? (sum_bear_body / total_body) * 100 : 50.0
+
+// Intent detection (Based on body dominance)
+string market_intent = bull_pct > 60 ? "Strong Bullish" : bull_pct > 50 ? "Weak Bullish" : bear_pct > 60 ? "Strong Bearish" : bear_pct > 50 ? "Weak Bearish" : "Consolidation"
+
+// Dashboard Table
+var table dash_table = table.new(
+     dashboard_loc == "Top Right" ? position.top_right :
+     dashboard_loc == "Bottom Right" ? position.bottom_right :
+     dashboard_loc == "Top Left" ? position.top_left :
+     position.bottom_left,
+     2, 4, border_width=1, border_color=c_neutral, frame_color=c_neutral)
+
+if show_dashboard and barstate.islast
+    table.cell(dash_table, 0, 0, "Market Momentum", bgcolor=c_bg, text_color=c_neutral, text_size=size.small)
+    table.cell(dash_table, 1, 0, str.format("{0,number,#.##}% Bull / {1,number,#.##}% Bear", bull_pct, bear_pct), bgcolor=c_bg, text_color=bull_pct > bear_pct ? c_bull : c_bear, text_size=size.small)
+
+    table.cell(dash_table, 0, 1, "Market Intent", bgcolor=c_bg, text_color=c_neutral, text_size=size.small)
+    table.cell(dash_table, 1, 1, market_intent, bgcolor=c_bg, text_color=market_intent == "Strong Bullish" ? c_bull : market_intent == "Strong Bearish" ? c_bear : c_neutral, text_size=size.small)
+
+// --- Wick Analysis (Momentum Weakening) ---
+float top_wick = high - math.max(open, close)
+float bottom_wick = math.min(open, close) - low
+
+bool bull_weakening = top_wick > body_size * wick_ratio_threshold and is_bull
+bool bear_weakening = bottom_wick > body_size * wick_ratio_threshold and is_bear
+
+plotshape(bull_weakening, "Bullish Weakening", shape.arrowdown, location.abovebar, color=c_bear, size=size.small, title="Bullish Weakening Wick")
+plotshape(bear_weakening, "Bearish Weakening", shape.arrowup, location.belowbar, color=c_bull, size=size.small, title="Bearish Weakening Wick")
+
+// --- Tested Move Detection ---
+// Logic: Expansion -> Retracement -> Failure to continue retracement -> Resumption
+// We use simple pivot detection to track these phases.
+float p_high = ta.pivothigh(high, 3, 3)
+float p_low = ta.pivotlow(low, 3, 3)
+
+var float last_p_high = na
+var float last_p_low = na
+if not na(p_high)
+    last_p_high := p_high
+if not na(p_low)
+    last_p_low := p_low
+
+var int bull_move_phase = 0 // 0: Neutral, 1: Expansion, 2: Retracement, 3: Failure
+var float bull_expansion_extreme = na
+var float bull_retracement_extreme = na
+var float bull_expansion_origin = na
+
+var int bear_move_phase = 0 // 0: Neutral, 1: Expansion, 2: Retracement, 3: Failure
+var float bear_expansion_extreme = na
+var float bear_retracement_extreme = na
+var float bear_expansion_origin = na
+
+// Bullish Tested Move
+if close > nz(last_p_high) and bull_move_phase == 0
+    bull_move_phase := 1 // Expansion
+    bull_expansion_extreme := high
+    bull_expansion_origin := low
+else if bull_move_phase == 1
+    bull_expansion_extreme := math.max(bull_expansion_extreme, high)
+    if close < bull_expansion_extreme
+        bull_move_phase := 2 // Retracement started
+        bull_retracement_extreme := low
+else if bull_move_phase == 2
+    if low < bull_retracement_extreme
+        bull_retracement_extreme := low
+    else if close > open // Failed to push lower
+        bull_move_phase := 3 // Failure to continue retracement
+else if bull_move_phase == 3
+    if low < bull_retracement_extreme
+        bull_move_phase := 2 // Back to retracement
+        bull_retracement_extreme := low
+    else if close > bull_expansion_extreme
+        label.new(bar_index, low, "Bullish Tested Move", color=c_bull, textcolor=#ffffff, style=label.style_label_up, tooltip="Expansion -> Retracement -> Failure -> Resumption")
+        bull_move_phase := 0 // Reset
+
+// Bearish Tested Move
+if close < nz(last_p_low) and bear_move_phase == 0
+    bear_move_phase := 1 // Expansion
+    bear_expansion_extreme := low
+    bear_expansion_origin := high
+else if bear_move_phase == 1
+    bear_expansion_extreme := math.min(bear_expansion_extreme, low)
+    if close > bear_expansion_extreme
+        bear_move_phase := 2 // Retracement
+        bear_retracement_extreme := high
+else if bear_move_phase == 2
+    if high > bear_retracement_extreme
+        bear_retracement_extreme := high
+    else if close < open
+        bear_move_phase := 3 // Failure
+else if bear_move_phase == 3
+    if high > bear_retracement_extreme
+        bear_move_phase := 2
+        bear_retracement_extreme := high
+    else if close < bear_expansion_extreme
+        label.new(bar_index, high, "Bearish Tested Move", color=c_bear, textcolor=#ffffff, style=label.style_label_down, tooltip="Expansion -> Retracement -> Failure -> Resumption")
+        bear_move_phase := 0 // Reset
+
+// Reset if move fails completely (e.g. bullish expansion followed by break below retracement start)
+if bull_move_phase != 0 and low < bull_expansion_origin
+    bull_move_phase := 0
+    bull_expansion_extreme := na
+    bull_retracement_extreme := na
+    bull_expansion_origin := na
+
+if bear_move_phase != 0 and high > bear_expansion_origin
+    bear_move_phase := 0
+    bear_expansion_extreme := na
+    bear_retracement_extreme := na
+    bear_expansion_origin := na
+
+// --- Consolidation Detection ---
+// Comparing the magnitude of recent bullish and bearish legs.
+// We'll use the distance between consecutive pivots.
+var float last_bull_leg = na
+var float last_bear_leg = na
+
+if not na(p_high) and not na(last_p_low)
+    last_bear_leg := math.abs(p_high - last_p_low)
+if not na(p_low) and not na(last_p_high)
+    last_bull_leg := math.abs(p_low - last_p_high)
+
+// Function to update average only on changes
+f_update_avg(val, len) =>
+    var float sum = 0.0
+    var int count = 0
+    if ta.change(val)
+        sum := sum + val
+        count := count + 1
+        if count > len
+            // Simple moving average approximation for event-based updates
+            sum := sum - (sum / count)
+            count := len
+    sum / math.max(1, count)
+
+float avg_bull_leg = f_update_avg(last_bull_leg, 5)
+float avg_bear_leg = f_update_avg(last_bear_leg, 5)
+
+// Equilibrium check: If legs are roughly equal in size
+bool is_equilibrium = math.abs(avg_bull_leg - avg_bear_leg) < (avg_bull_leg + avg_bear_leg) * 0.1 // 10% variance
+
+// Visual for consolidation
+var box active_consolidation = na
+if is_equilibrium and market_intent == "Consolidation"
+    if na(active_consolidation)
+        active_consolidation := box.new(bar_index - 5, high, bar_index, low, border_color=c_neutral, bgcolor=#b2b5be1a)
+    else
+        box.set_right(active_consolidation, bar_index)
+        box.set_top(active_consolidation, math.max(box.get_top(active_consolidation), high))
+        box.set_bottom(active_consolidation, math.min(box.get_bottom(active_consolidation), low))
+else
+    if not na(active_consolidation)
+        box.set_right(active_consolidation, bar_index)
+        active_consolidation := na // Finalize and drop reference
+
+// --- Visual Refinements ---
+// Bar Coloring based on Momentum Scoreboard
+barcolor(bull_pct > 60 ? #22ab9480 : bear_pct > 60 ? #ff525280 : na, title="Momentum Bar Color")
+
+// Shifting Background for extreme momentum
+bgcolor(bull_pct > 80 ? #22ab941a : bear_pct > 80 ? #ff52521a : na, title="Strong Momentum BG")
+
+// Update Dashboard with more details
+if show_dashboard and barstate.islast
+    table.cell(dash_table, 0, 2, "Consolidation", bgcolor=c_bg, text_color=c_neutral, text_size=size.small)
+    table.cell(dash_table, 1, 2, is_equilibrium ? "Active (Equilibrium)" : "None (Trending)", bgcolor=c_bg, text_color=is_equilibrium ? #ffa726 : c_neutral, text_size=size.small)
+
+    table.cell(dash_table, 0, 3, "Evidence Level", bgcolor=c_bg, text_color=c_neutral, text_size=size.small)
+    evidence_text = (bull_pct > 70 or bear_pct > 70) ? "High (Momentum)" : (bull_move_phase != 0 or bear_move_phase != 0) ? "Moderate (Structural)" : "Low"
+    table.cell(dash_table, 1, 3, evidence_text, bgcolor=c_bg, text_color=evidence_text == "High (Momentum)" ? #00bcd4 : c_neutral, text_size=size.small)
