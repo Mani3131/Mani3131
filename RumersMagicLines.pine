@@ -1,0 +1,154 @@
+//@version=6
+strategy("Rumers Magic Lines Strategy", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// --- 1. Inputs ---
+pivot_lookback = input.int(20, "Swing Peak/Valley Lookback", minval=1, help="Used to identify major historical peaks and valleys outside the daily range.")
+strong_candle_mult = input.float(1.1, "Strong Candle Body Multiplier", minval=0.1, help="Body must be > this * average body to be 'strong'.")
+sl_buffer = input.int(0, "Stop Loss Buffer (Ticks)", minval=0)
+tp_target = input.string("Opposite Range", "Take Profit Target", options=["Opposite Range", "Opposite Swing"])
+show_levels = input.bool(true, "Show Key Levels")
+
+// --- 2. Key Levels (Range and Swing) ---
+// Range High/Low: Absolute highest/lowest price of the previous trading day
+[pdh, pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead=barmerge.lookahead_on)
+
+// Swing High/Low: The next major price peak/valley located ABOVE/BELOW the Range High/Low
+ph = ta.pivothigh(high, pivot_lookback, pivot_lookback)
+pl = ta.pivotlow(low, pivot_lookback, pivot_lookback)
+
+var float swing_high = na
+var float swing_low = na
+
+// Update Swing High: If a new pivot high is found that is greater than PDH
+if not na(ph) and ph > pdh
+    swing_high := ph
+
+// Update Swing Low: If a new pivot low is found that is less than PDL
+if not na(pl) and pl < pdl
+    swing_low := pl
+
+// If PDH/PDL changes (new day), check if current swing levels are still valid
+if ta.change(time("D")) != 0
+    if not na(swing_high) and swing_high <= pdh
+        swing_high := na
+    if not na(swing_low) and swing_low >= pdl
+        swing_low := na
+
+// --- 3. Visualization of Levels ---
+var line l_rh = line.new(na, na, na, na, color=color.new(color.red, 30), style=line.style_dashed, width=1)
+var line l_rl = line.new(na, na, na, na, color=color.new(color.green, 30), style=line.style_dashed, width=1)
+var line l_sh = line.new(na, na, na, na, color=color.red, width=2)
+var line l_sl = line.new(na, na, na, na, color=color.green, width=2)
+
+var label lb_rh = label.new(na, na, "Range High", color=color.red, textcolor=color.white, style=label.style_label_left, size=size.small)
+var label lb_rl = label.new(na, na, "Range Low", color=color.green, textcolor=color.white, style=label.style_label_left, size=size.small)
+var label lb_sh = label.new(na, na, "Swing High", color=color.maroon, textcolor=color.white, style=label.style_label_left, size=size.small)
+var label lb_sl = label.new(na, na, "Swing Low", color=color.darkgreen, textcolor=color.white, style=label.style_label_left, size=size.small)
+
+if show_levels and barstate.islast
+    int line_start = bar_index[500]
+    int line_end = bar_index + 10
+
+    line.set_xy1(l_rh, line_start, pdh)
+    line.set_xy2(l_rh, line_end, pdh)
+    label.set_xy(lb_rh, line_end, pdh)
+
+    line.set_xy1(l_rl, line_start, pdl)
+    line.set_xy2(l_rl, line_end, pdl)
+    label.set_xy(lb_rl, line_end, pdl)
+
+    if not na(swing_high)
+        line.set_xy1(l_sh, line_start, swing_high)
+        line.set_xy2(l_sh, line_end, swing_high)
+        label.set_xy(lb_sh, line_end, swing_high)
+    else
+        line.set_xy1(l_sh, na, na)
+        label.set_xy(lb_sh, na, na)
+
+    if not na(swing_low)
+        line.set_xy1(l_sl, line_start, swing_low)
+        line.set_xy2(l_sl, line_end, swing_low)
+        label.set_xy(lb_sl, line_end, swing_low)
+    else
+        line.set_xy1(l_sl, na, na)
+        label.set_xy(lb_sl, na, na)
+
+plot(show_levels ? pdh : na, "Range High Plot", color.new(color.red, 80), style=plot.style_linebr)
+plot(show_levels ? pdl : na, "Range Low Plot", color.new(color.green, 80), style=plot.style_linebr)
+
+// --- 4. 3-Candlestick Framework Logic ---
+var int trade_state = 0 // 0: Idle, 1: Candle 1 found, 2: Candle 2 found
+var string trade_dir = ""
+var float c2_high = na
+var float c2_low = na
+
+if ta.change(time("D")) != 0
+    trade_state := 0
+
+avg_body = ta.sma(math.abs(close - open), 20)
+is_strong = math.abs(close - open) > avg_body * strong_candle_mult
+
+is_touching(level) =>
+    not na(level) and low <= level and high >= level
+
+touches_resistance = is_touching(pdh) or is_touching(swing_high)
+touches_support    = is_touching(pdl) or is_touching(swing_low)
+
+is_c1_sell = is_strong and touches_resistance and close > open
+is_c1_buy  = is_strong and touches_support and close < open
+
+if trade_state == 0
+    if is_c1_sell
+        trade_state := 1
+        trade_dir := "Short"
+    else if is_c1_buy
+        trade_state := 1
+        trade_dir := "Long"
+
+else if trade_state == 1
+    // Candle 2 (Sneaky Candle): Tests level again but closes in opposite direction
+    if trade_dir == "Short"
+        if close < open and touches_resistance
+            trade_state := 2
+            c2_high := high
+            c2_low := low
+        else if not (is_strong and close > open) // If it's not a continued C1, reset
+            trade_state := 0
+    else if trade_dir == "Long"
+        if close > open and touches_support
+            trade_state := 2
+            c2_high := high
+            c2_low := low
+        else if not (is_strong and close < open)
+            trade_state := 0
+
+// --- 5. Entry and Risk Management ---
+float target_long = tp_target == "Opposite Range" ? pdh : (not na(swing_high) ? swing_high : pdh)
+float target_short = tp_target == "Opposite Range" ? pdl : (not na(swing_low) ? swing_low : pdl)
+
+if trade_state == 2
+    if trade_dir == "Short"
+        float sl = c2_high + sl_buffer * syminfo.mintick
+        strategy.entry("Short", strategy.short, stop=c2_low, comment="C3 Short Trigger")
+        strategy.exit("Exit Short", "Short", stop=sl, limit=target_short, comment="SL/TP")
+        trade_state := 0
+    else if trade_dir == "Long"
+        float sl = c2_low - sl_buffer * syminfo.mintick
+        strategy.entry("Long", strategy.long, stop=c2_high, comment="C3 Long Trigger")
+        strategy.exit("Exit Long", "Long", stop=sl, limit=target_long, comment="SL/TP")
+        trade_state := 0
+
+// Cancel pending orders if setup is invalidated before entry
+if strategy.position_size == 0
+    if trade_dir == "Short" and high > c2_high
+        strategy.cancel("Short")
+    if trade_dir == "Long" and low < c2_low
+        strategy.cancel("Long")
+
+// Visualization of state
+plotshape(is_c1_sell or is_c1_buy, "Candle 1 (Setup)", shape.circle, location.abovebar, color.blue, size=size.tiny, title="C1 Setup")
+plotshape(trade_state == 2, "Candle 2 (Sneaky)", shape.diamond, location.belowbar, color.orange, size=size.tiny, title="C2 Sneaky")
+
+// Timeframe Warning
+if barstate.islastconfirmed and (not timeframe.isintraday or timeframe.multiplier != 15)
+    runtime.error("This strategy is designed for the 15-minute timeframe.")
