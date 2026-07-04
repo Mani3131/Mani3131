@@ -1,0 +1,108 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Candlestick Bible Professional V6", "CB Pro", overlay = true, max_lines_count = 500, max_labels_count = 500)
+
+// --- INPUTS ---
+grp_patterns = "Candlestick Patterns"
+doji_threshold = input.float(0.1, "Doji Body Max %", 0.0, 0.5, 0.05, group = grp_patterns, tooltip = "Max body size relative to total range for Doji")
+wick_multiplier = input.float(2.0, "Reversal Wick Multiplier", 1.5, 5.0, 0.5, group = grp_patterns, tooltip = "Wick must be at least this many times the body size")
+
+grp_sr = "Support & Resistance"
+pivot_lookback = input.int(5, "Pivot Lookback", 2, 50, group = grp_sr)
+sr_buffer = input.float(0.1, "S&R Buffer %", 0.01, 1.0, 0.05, group = grp_sr, tooltip = "Percentage buffer for price to be considered 'at' a level")
+
+grp_filters = "Filters & Confirmation"
+use_adx_filter = input.bool(true, "Use ADX Filter (Avoid Sideways)", group = grp_filters)
+adx_threshold = input.int(20, "ADX Trend Threshold", 10, 50, group = grp_filters, tooltip = "Only trades when ADX is above this (Trending)")
+adx_len = input.int(14, "ADX Length", 7, 30, group = grp_filters)
+
+// --- MATH & UTILS ---
+body_size = math.abs(close - open)
+total_range = high - low
+upper_wick = high - math.max(open, close)
+lower_wick = math.min(open, close) - low
+
+// --- ADX CALCULATION ---
+[plus_di, minus_di, adx_val] = ta.dmi(adx_len, adx_len)
+is_trending = not use_adx_filter or adx_val > adx_threshold
+
+// --- CANDLESTICK DETECTION ---
+is_doji = total_range > 0 and body_size <= total_range * doji_threshold
+
+// Bullish Reversals
+is_hammer = total_range > 0 and lower_wick >= body_size * wick_multiplier and upper_wick <= total_range * 0.1
+is_dragonfly = is_doji and lower_wick >= total_range * 0.7 and upper_wick <= total_range * 0.1
+
+// Bearish Reversals
+is_shooting_star = total_range > 0 and upper_wick >= body_size * wick_multiplier and lower_wick <= total_range * 0.1
+is_gravestone = is_doji and upper_wick >= total_range * 0.7 and lower_wick <= total_range * 0.1
+
+// Combine signals as potential setups
+potential_bullish_reversal = is_hammer or is_dragonfly or is_doji
+potential_bearish_reversal = is_shooting_star or is_gravestone or is_doji
+
+// --- S&R LOGIC ---
+var float[] res_levels = array.new_float()
+var line[] res_lines = array.new_line()
+var float[] sup_levels = array.new_float()
+var line[] sup_lines = array.new_line()
+
+ph = ta.pivothigh(pivot_lookback, pivot_lookback)
+pl = ta.pivotlow(pivot_lookback, pivot_lookback)
+
+if not na(ph)
+    array.push(res_levels, ph)
+    ln = line.new(bar_index[pivot_lookback], ph, bar_index, ph, color = color.new(color.red, 50), style = line.style_dashed, extend = extend.right)
+    array.push(res_lines, ln)
+    if array.size(res_levels) > 10
+        array.remove(res_levels, 0)
+        line.delete(array.remove(res_lines, 0))
+
+if not na(pl)
+    array.push(sup_levels, pl)
+    ln = line.new(bar_index[pivot_lookback], pl, bar_index, pl, color = color.new(color.green, 50), style = line.style_dashed, extend = extend.right)
+    array.push(sup_lines, ln)
+    if array.size(sup_levels) > 10
+        array.remove(sup_levels, 0)
+        line.delete(array.remove(sup_lines, 0))
+
+// Check for Alignment
+at_resistance = false
+if array.size(res_levels) > 0
+    for i = 0 to array.size(res_levels) - 1
+        level = array.get(res_levels, i)
+        if high >= level * (1 - sr_buffer/100) and low <= level * (1 + sr_buffer/100)
+            at_resistance := true
+            break
+
+at_support = false
+if array.size(sup_levels) > 0
+    for i = 0 to array.size(sup_levels) - 1
+        level = array.get(sup_levels, i)
+        if low <= level * (1 + sr_buffer/100) and high >= level * (1 - sr_buffer/100)
+            at_support := true
+            break
+
+// --- CANDLE-OVER-CANDLE CONFIRMATION ---
+// A signal is confirmed when the candle FOLLOWING the reversal candle closes above/below it.
+
+buy_signal = potential_bullish_reversal[1] and at_support[1] and is_trending[1] and close > high[1]
+sell_signal = potential_bearish_reversal[1] and at_resistance[1] and is_trending[1] and close < low[1]
+
+// --- VISUALS ---
+plotshape(buy_signal, "Strong Bullish Reversal", shape.labelup, location.belowbar, color.green, text="BUY", textcolor=color.white, size=size.small)
+plotshape(sell_signal, "Strong Bearish Reversal", shape.labeldown, location.abovebar, color.red, text="SELL", textcolor=color.white, size=size.small)
+
+// Highlight potential setups (smaller markers)
+plotshape(potential_bullish_reversal and at_support, "Potential Bullish Setup", shape.triangleup, location.belowbar, color.new(color.green, 50), size=size.tiny)
+plotshape(potential_bearish_reversal and at_resistance, "Potential Bearish Setup", shape.triangledown, location.abovebar, color.new(color.red, 50), size=size.tiny)
+
+// Alert for setup (Get ready)
+alertcondition(potential_bullish_reversal and at_support, "Bullish Setup", "Bullish reversal candle detected at support. Wait for confirmation.")
+alertcondition(potential_bearish_reversal and at_resistance, "Bearish Setup", "Bearish reversal candle detected at resistance. Wait for confirmation.")
+
+// Alert for confirmed entry
+alertcondition(buy_signal, "Confirmed Buy", "Bullish Candle-Over-Candle confirmation achieved!")
+alertcondition(sell_signal, "Confirmed Sell", "Bearish Candle-Over-Candle confirmation achieved!")
