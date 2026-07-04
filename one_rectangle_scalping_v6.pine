@@ -1,0 +1,197 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Mulham Trading 1 Rectangle Scalping [Jules]", overlay = true, max_boxes_count = 500, max_labels_count = 500, max_lines_count = 500)
+
+// --- Inputs ---
+group_str = "Strategy Settings"
+pivot_lookback = input.int(5, "M15 Pivot Lookback", minval = 2, group = group_str)
+rr_ratio = input.float(3.0, "Risk:Reward Ratio", minval = 1.0, group = group_str)
+
+group_sessions = "Sessions (UTC+3)"
+use_sessions = input.bool(true, "Use Session Filters", group = group_sessions)
+london_sess = input.session("1000-1300", "London Session", group = group_sessions)
+ny_sess     = input.session("1500-1800", "New York Session", group = group_sessions)
+
+group_vis = "Visuals"
+show_pivots = input.bool(true, "Show M15 Pivots", group = group_vis)
+
+// --- Timezone & Session Check ---
+is_in_session(sess) =>
+    not na(time(timeframe.period, sess, "GMT+3"))
+
+in_trade_window = not use_sessions or is_in_session(london_sess) or is_in_session(ny_sess)
+
+// --- Types ---
+type Pivot
+    float price
+    int   time
+    bool  is_high
+
+type Rectangle
+    float top
+    float bottom
+    int   start_time
+    box   rect
+    bool  is_bearish
+    bool  active
+
+type Trade
+    float entry
+    float sl
+    float tp
+    label l_entry
+    label l_sl
+    label l_tp
+    line  ln_entry
+    line  ln_sl
+    line  ln_tp
+    bool  active
+    bool  filled
+
+// --- Persistent Variables ---
+var Pivot last_m15_ph = na
+var Pivot last_m15_pl = na
+
+var Rectangle active_rect = na
+var Trade[] trades = array.new<Trade>()
+
+// --- Functions ---
+f_get_m15_data() =>
+    ph = ta.pivothigh(pivot_lookback, pivot_lookback)
+    pl = ta.pivotlow(pivot_lookback, pivot_lookback)
+    ph_time = time[pivot_lookback]
+    pl_time = time[pivot_lookback]
+    [ph, ph_time, pl, pl_time, high, low, close, time]
+
+// Helper function to return M15 data with 1-bar offset for lookahead_on
+f_get_m15_data_offset() =>
+    [ph, ph_time, pl, pl_time, h, l, c, t] = f_get_m15_data()
+    [ph[1], ph_time[1], pl[1], pl_time[1], h[1], l[1], c[1], t[1]]
+
+// Using lookahead_on with the offset helper to ensure consistent behavior.
+[m15_ph, m15_ph_time, m15_pl, m15_pl_time, m15_h, m15_l, m15_c, m15_t] = request.security(syminfo.tickerid, "15", f_get_m15_data_offset(), lookahead = barmerge.lookahead_on)
+
+// Detection of confirmed M15 pivots
+if not na(m15_ph)
+    last_m15_ph := Pivot.new(m15_ph, m15_ph_time, true)
+if not na(m15_pl)
+    last_m15_pl := Pivot.new(m15_pl, m15_pl_time, false)
+
+// --- Visualizing M15 Structure ---
+// Initialize lines with xloc.bar_time since we'll be using millisecond timestamps
+var line ph_line = line.new(na, na, na, na, xloc = xloc.bar_time, color = color.new(color.red, 50), style = line.style_dashed)
+var line pl_line = line.new(na, na, na, na, xloc = xloc.bar_time, color = color.new(color.green, 50), style = line.style_dashed)
+
+if show_pivots and not na(last_m15_ph)
+    line.set_xy1(ph_line, last_m15_ph.time, last_m15_ph.price)
+    line.set_xy2(ph_line, time, last_m15_ph.price)
+
+if show_pivots and not na(last_m15_pl)
+    line.set_xy1(pl_line, last_m15_pl.time, last_m15_pl.price)
+    line.set_xy2(pl_line, time, last_m15_pl.price)
+
+// --- Step 2: M15 Weakness Detection ---
+m15_new_bar = ta.change(m15_t) != 0
+
+if m15_new_bar and not na(m15_t) and in_trade_window
+    bool bearish_weakness = false
+    bool bullish_weakness = false
+
+    // Bearish Weakness: Sweep High but fail to close above
+    if not na(last_m15_ph) and m15_h > last_m15_ph.price and m15_c <= last_m15_ph.price
+        bearish_weakness := true
+
+    // Bullish Weakness: Sweep Low but fail to close below
+    if not na(last_m15_pl) and m15_l < last_m15_pl.price and m15_c >= last_m15_pl.price
+        bullish_weakness := true
+
+    // --- Step 3: Draw Execution Rectangle ---
+    if bearish_weakness
+        box_top = m15_h
+        box_bottom = m15_c
+        if not na(active_rect)
+            box.set_bgcolor(active_rect.rect, color.new(color.gray, 90))
+            box.set_border_color(active_rect.rect, color.new(color.gray, 50))
+        active_rect := Rectangle.new(box_top, box_bottom, m15_t, box.new(m15_t, box_top, time, box_bottom, xloc = xloc.bar_time, border_color = color.red, bgcolor = color.new(color.red, 80)), true, true)
+    else if bullish_weakness
+        box_top = m15_c
+        box_bottom = m15_l
+        if not na(active_rect)
+            box.set_bgcolor(active_rect.rect, color.new(color.gray, 90))
+            box.set_border_color(active_rect.rect, color.new(color.gray, 50))
+        active_rect := Rectangle.new(box_top, box_bottom, m15_t, box.new(m15_t, box_top, time, box_bottom, xloc = xloc.bar_time, border_color = color.green, bgcolor = color.new(color.green, 80)), false, true)
+
+// --- Step 4: M1 Breakout Entry ---
+if not na(active_rect) and active_rect.active
+    // Extend the rectangle as long as it is active
+    box.set_right(active_rect.rect, time + 60000 * 5) // Extend 5 mins ahead using time
+
+    bool entry_triggered = false
+    float entry_price = na
+    float sl_price = na
+    float tp_price = na
+
+    if active_rect.is_bearish
+        if close < active_rect.bottom
+            entry_triggered := true
+            entry_price := close
+            sl_price := active_rect.top
+            tp_price := entry_price - (sl_price - entry_price) * rr_ratio
+    else
+        if close > active_rect.top
+            entry_triggered := true
+            entry_price := close
+            sl_price := active_rect.bottom
+            tp_price := entry_price + (entry_price - sl_price) * rr_ratio
+
+    if entry_triggered
+        active_rect.active := false
+        t = Trade.new(entry_price, sl_price, tp_price,
+             label.new(bar_index, entry_price, "Entry", color = color.gray, style = label.style_label_left, textcolor = color.white, size = size.tiny),
+             label.new(bar_index, sl_price, "SL", color = color.red, style = label.style_label_left, textcolor = color.white, size = size.tiny),
+             label.new(bar_index, tp_price, "TP", color = color.green, style = label.style_label_left, textcolor = color.white, size = size.tiny),
+             line.new(bar_index, entry_price, bar_index + 10, entry_price, color = color.gray, style = line.style_dotted),
+             line.new(bar_index, sl_price, bar_index + 10, sl_price, color = color.red, style = line.style_dotted),
+             line.new(bar_index, tp_price, bar_index + 10, tp_price, color = color.green, style = line.style_dotted),
+             true, false)
+        array.push(trades, t)
+
+// --- Trade Management & Visuals ---
+if array.size(trades) > 0
+    for i = array.size(trades) - 1 to 0
+        t = array.get(trades, i)
+        if t.active
+            line.set_x2(t.ln_entry, bar_index + 5)
+            line.set_x2(t.ln_sl, bar_index + 5)
+            line.set_x2(t.ln_tp, bar_index + 5)
+            label.set_x(t.l_entry, bar_index + 5)
+            label.set_x(t.l_sl, bar_index + 5)
+            label.set_x(t.l_tp, bar_index + 5)
+
+            bool is_long = t.entry > t.sl
+            if is_long
+                if high >= t.tp
+                    t.active := false
+                    label.set_text(t.l_tp, "TP HIT")
+                else if low <= t.sl
+                    t.active := false
+                    label.set_text(t.l_sl, "SL HIT")
+            else
+                if low <= t.tp
+                    t.active := false
+                    label.set_text(t.l_tp, "TP HIT")
+                else if high >= t.sl
+                    t.active := false
+                    label.set_text(t.l_sl, "SL HIT")
+
+// Cleanup
+if array.size(trades) > 50
+    t = array.remove(trades, 0)
+    label.delete(t.l_entry)
+    label.delete(t.l_sl)
+    label.delete(t.l_tp)
+    line.delete(t.ln_entry)
+    line.delete(t.ln_sl)
+    line.delete(t.ln_tp)
