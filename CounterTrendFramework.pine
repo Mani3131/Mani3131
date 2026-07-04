@@ -17,7 +17,7 @@ float htf_close = request.security(syminfo.tickerid, htf_tf, close[1], lookahead
 
 var float ext_high = na
 var float ext_low = na
-var bool is_bullish_htf = na
+var is_bullish_htf = bool(na)
 
 // Pivot-based structure detection for HTF (1H)
 // We define a stateless function to be used within request.security
@@ -41,7 +41,7 @@ if not na(htf_p_low)
     last_htf_pl := htf_p_low
 
 // BOS Detection
-if htf_close > last_htf_ph and not is_bullish_htf
+if htf_close > last_htf_ph and (na(is_bullish_htf) or not is_bullish_htf)
     is_bullish_htf := true
     ext_low := last_htf_pl // The low that formed before the break
     ext_high := htf_high
