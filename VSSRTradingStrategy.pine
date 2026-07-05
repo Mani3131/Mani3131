@@ -24,7 +24,7 @@ max_weekly_loss_pct = input.float(6.0, "Max Weekly Loss (%)", minval=0.1, step=0
 // --- Risk Management Logic ---
 // Daily Loss Tracking
 var float daily_start_equity = na
-if timeframe.isintraday and (ta.change(time("D")) or bar_index == 0)
+if timeframe.isintraday and (ta.change(time("D")) != 0 or bar_index == 0)
     daily_start_equity := strategy.equity
 
 float daily_loss = daily_start_equity - strategy.equity
@@ -33,7 +33,7 @@ bool daily_limit_reached = daily_loss_pct >= max_daily_loss_pct
 
 // Weekly Loss Tracking
 var float weekly_start_equity = na
-if timeframe.isintraday and (ta.change(time("W")) or bar_index == 0)
+if timeframe.isintraday and (ta.change(time("W")) != 0 or bar_index == 0)
     weekly_start_equity := strategy.equity
 
 float weekly_loss = weekly_start_equity - strategy.equity
@@ -199,12 +199,12 @@ if short_condition and strategy.position_size == 0
 var box[] b_boxes = array.new_box()
 var box[] s_boxes = array.new_box()
 
-if ta.change(htf_b_fvg_t) and not na(htf_b_fvg_t)
+if ta.change(htf_b_fvg_t) != 0 and not na(htf_b_fvg_t)
     array.push(b_boxes, box.new(bar_index[2], htf_b_fvg_t, bar_index + 10, htf_b_fvg_b, border_color=color.green, bgcolor=color.new(color.green, 90)))
     if array.size(b_boxes) > 10
         box.delete(array.shift(b_boxes))
 
-if ta.change(htf_s_fvg_t) and not na(htf_s_fvg_t)
+if ta.change(htf_s_fvg_t) != 0 and not na(htf_s_fvg_t)
     array.push(s_boxes, box.new(bar_index[2], htf_s_fvg_t, bar_index + 10, htf_s_fvg_b, border_color=color.red, bgcolor=color.new(color.red, 90)))
     if array.size(s_boxes) > 10
         box.delete(array.shift(s_boxes))
