@@ -59,17 +59,26 @@ h1_bullish = request.security(syminfo.tickerid, "60", f_is_bullish_structure("60
 h4_bullish = request.security(syminfo.tickerid, "240", f_is_bullish_structure("240")[1])
 daily_bias_bullish = h1_bullish and h4_bullish
 
-// --- Phase 1.2: Mark Open Price ---
+// --- Phase 1.2: Mark Open Price & Highs ---
 var float london_open_price = na
 var float ny_open_price     = na
+var float last_session_high = na
 
 if t_hour == 10 and t_minute == 0
     london_open_price := open
 if t_hour == 15 and t_minute == 0
     ny_open_price := open
 
+// Track Session Highs for TP2
+var float current_day_high = 0.0
+if ta.change(time("D", timezone_offset)) != 0
+    last_session_high := current_day_high
+    current_day_high := high
+else
+    current_day_high := math.max(current_day_high, high)
+
 // Reset Daily
-if ta.change(time("D", timezone_offset))
+if ta.change(time("D", timezone_offset)) != 0
     london_open_price := na
     ny_open_price := na
 
@@ -87,6 +96,12 @@ var float last_internal_low = na
 if not na(pl_internal)
     last_internal_low := pl_internal
 
+// Reset manipulation at start of session (Moved before detection to avoid reset bug)
+if (t_hour == 10 and t_minute == 0) or (t_hour == 15 and t_minute == 0)
+    manip_occurred := false
+    sweep_occurred := false
+    manip_low := na
+
 if (is_london_manip and not na(london_open_price))
     if low < london_open_price
         manip_occurred := true
@@ -100,12 +115,6 @@ if (is_ny_manip and not na(ny_open_price))
         manip_low := na(manip_low) ? low : math.min(manip_low, low)
         if not na(last_internal_low) and low < last_internal_low
             sweep_occurred := true
-
-// Reset manipulation at start of session
-if (t_hour == 10 and t_minute == 0) or (t_hour == 15 and t_minute == 0)
-    manip_occurred := false
-    sweep_occurred := false
-    manip_low := na
 
 // --- Phase 2: Entry (CHoCH / MSS + FVG) ---
 // Find minor swing high for CHoCH
@@ -134,8 +143,11 @@ if can_trade and choch_detected and is_fvg
     sl = manip_low - (risk_pips * syminfo.mintick * 10)
     tp1 = current_open
 
-    // Target 2: Previous Session High or Daily High (Simplified as fixed 1:3 RR for the remainder)
-    tp2 = fvg_price + (fvg_price - sl) * 3
+    // Target 2: Previous Session High or Daily High
+    tp2 = math.max(current_day_high, last_session_high)
+    // If TP2 is too close (less than 2:1 RR), use 3:1 RR
+    if tp2 < fvg_price + (fvg_price - sl) * 2
+        tp2 := fvg_price + (fvg_price - sl) * 3
 
     // Risk Calculation
     risk_amount = strategy.equity * (risk_percent / 100)
