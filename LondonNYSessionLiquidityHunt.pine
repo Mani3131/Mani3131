@@ -1,0 +1,167 @@
+// @version=6
+strategy("London & NY Session Liquidity Hunt", overlay=true, initial_capital=10000, default_qty_type=strategy.cash, currency=currency.USD)
+
+// ==========================================
+// PHASE 3: EXACT RULES CHECKLIST (UTC+3)
+// ==========================================
+
+// --- Inputs ---
+timezone_offset = input.string("UTC+3", "Timezone", options=["UTC-12", "UTC-11", "UTC-10", "UTC-9", "UTC-8", "UTC-7", "UTC-6", "UTC-5", "UTC-4", "UTC-3", "UTC-2", "UTC-1", "UTC+0", "UTC+1", "UTC+2", "UTC+3", "UTC+4", "UTC+5", "UTC+6", "UTC+7", "UTC+8", "UTC+9", "UTC+10", "UTC+11", "UTC+12"])
+risk_pips       = input.int(3, "Stop Loss Buffer (Pips)", minval=0, tooltip="Extra pips below manipulation wick")
+risk_percent    = input.float(1.0, "Risk Per Trade (%)", minval=0.1, step=0.1)
+
+// --- Time Logic (UTC+3) ---
+t_hour   = hour(time, timezone_offset)
+t_minute = minute(time, timezone_offset)
+t_time   = t_hour * 100 + t_minute
+
+// London Session: 10:00 to 18:00
+// London Killzone (Setup Window): 10:00 to 13:00
+// London Manipulation: 10:00 to 11:30
+is_london_session = (t_time >= 1000 and t_time < 1800)
+is_london_kz      = (t_time >= 1000 and t_time < 1300)
+is_london_manip   = (t_time >= 1000 and t_time < 1130)
+is_london_kz_end  = (t_time >= 1300 and t_time[1] < 1300)
+
+// New York Session: 15:00 to 23:00
+// New York Killzone (Setup Window): 15:00 to 18:00
+// New York Manipulation: 15:00 to 16:30
+is_ny_session = (t_time >= 1500 and t_time < 2300)
+is_ny_kz      = (t_time >= 1500 and t_time < 1800)
+is_ny_manip   = (t_time >= 1500 and t_time < 1630)
+is_ny_kz_end  = (t_time >= 1800 and t_time[1] < 1800)
+
+// --- Phase 1.1: Track Trend Bias (H1 / H4 Structure) ---
+f_is_bullish_structure(_tf) =>
+    var float last_high = na
+    var float last_low = na
+    var bool bullish = false
+
+    ph = ta.pivothigh(high, 5, 5)
+    pl = ta.pivotlow(low, 5, 5)
+
+    if not na(ph)
+        if ph > last_high
+            bullish := true
+        else if ph < last_high
+            bullish := false
+        last_high := ph
+
+    if not na(pl)
+        if pl > last_low
+            bullish := true
+        else if pl < last_low
+            bullish := false
+        last_low := pl
+    bullish
+
+h1_bullish = request.security(syminfo.tickerid, "60", f_is_bullish_structure("60")[1])
+h4_bullish = request.security(syminfo.tickerid, "240", f_is_bullish_structure("240")[1])
+daily_bias_bullish = h1_bullish and h4_bullish
+
+// --- Phase 1.2: Mark Open Price ---
+var float london_open_price = na
+var float ny_open_price     = na
+
+if t_hour == 10 and t_minute == 0
+    london_open_price := open
+if t_hour == 15 and t_minute == 0
+    ny_open_price := open
+
+// Reset Daily
+if ta.change(dayofyear)
+    london_open_price := na
+    ny_open_price := na
+
+plot(london_open_price, "London Open Line", color=color.new(color.blue, 0), style=plot.style_linebr, linewidth=2)
+plot(ny_open_price, "NY Open Line", color=color.new(color.red, 0), style=plot.style_linebr, linewidth=2)
+
+// --- Phase 2: Manipulation & Sweep Detection ---
+var float manip_low = na
+var bool manip_occurred = false
+var bool sweep_occurred = false
+
+// Track internal liquidity (recent swing low)
+pl_internal = ta.pivotlow(low, 3, 3)
+var float last_internal_low = na
+if not na(pl_internal)
+    last_internal_low := pl_internal
+
+if (is_london_manip and not na(london_open_price))
+    if low < london_open_price
+        manip_occurred := true
+        manip_low := na(manip_low) ? low : math.min(manip_low, low)
+        if not na(last_internal_low) and low < last_internal_low
+            sweep_occurred := true
+
+if (is_ny_manip and not na(ny_open_price))
+    if low < ny_open_price
+        manip_occurred := true
+        manip_low := na(manip_low) ? low : math.min(manip_low, low)
+        if not na(last_internal_low) and low < last_internal_low
+            sweep_occurred := true
+
+// Reset manipulation at start of session
+if (t_hour == 10 and t_minute == 0) or (t_hour == 15 and t_minute == 0)
+    manip_occurred := false
+    sweep_occurred := false
+    manip_low := na
+
+// --- Phase 2: Entry (CHoCH / MSS + FVG) ---
+// Find minor swing high for CHoCH
+ph_minor = ta.pivothigh(high, 2, 2)
+var float last_minor_high = na
+if not na(ph_minor)
+    last_minor_high := ph_minor
+
+// CHoCH is valid if it happens AFTER the sweep/manipulation
+choch_detected = (manip_occurred or sweep_occurred) and close > last_minor_high and close[1] <= last_minor_high
+
+// FVG Detection (Displacement)
+is_fvg = low > high[2] and close[1] > high[2]
+var float fvg_price = na
+
+if choch_detected and is_fvg
+    fvg_price := high[2]
+
+// --- Execution & Risk Management ---
+current_open = is_london_kz ? london_open_price : ny_open_price
+// Rule: No Longs Allowed if the price is trading ABOVE the opening price line.
+is_below_open = not na(current_open) and close < current_open
+can_trade = (is_london_kz or is_ny_kz) and daily_bias_bullish and not na(manip_low) and is_below_open
+
+if can_trade and choch_detected and is_fvg
+    sl = manip_low - (risk_pips * syminfo.mintick * 10)
+    tp1 = current_open
+
+    // Target 2: Previous Session High or Daily High (Simplified as fixed 1:3 RR for the remainder)
+    tp2 = fvg_price + (fvg_price - sl) * 3
+
+    // Risk Calculation
+    risk_amount = strategy.equity * (risk_percent / 100)
+    // Avoid division by zero
+    risk_per_share = math.max(syminfo.mintick, fvg_price - sl)
+    qty = risk_amount / risk_per_share
+
+    if fvg_price > sl
+        strategy.entry("Long", strategy.long, limit=fvg_price, qty=qty, comment="FVG Entry")
+        strategy.exit("Exit TP1", "Long", qty_percent=50, limit=tp1, stop=sl, comment_profit="TP1", comment_loss="SL")
+        strategy.exit("Exit TP2", "Long", limit=tp2, stop=sl, comment_profit="TP2", comment_loss="SL")
+
+// --- Cancel & Cleanup ---
+if is_london_kz_end or is_ny_kz_end
+    strategy.cancel_all()
+
+// --- Visuals ---
+bgcolor(is_london_kz ? color.new(color.blue, 95) : na, title="London Killzone")
+bgcolor(is_ny_kz ? color.new(color.red, 95) : na, title="NY Killzone")
+bgcolor(is_london_manip or is_ny_manip ? color.new(color.yellow, 90) : na, title="Manipulation Window")
+
+plotshape(sweep_occurred and not sweep_occurred[1], "Liquidity Sweep", shape.xcross, location.belowbar, color.red, size=size.tiny)
+plotshape(choch_detected, "CHoCH/MSS", shape.triangleup, location.belowbar, color.green, size=size.small, text="MSS")
+
+// Plot trend bias status
+var label bias_label = na
+if barstate.islast
+    bias_label := label.new(bar_index, high, "Bias: " + (daily_bias_bullish ? "BULLISH" : "NEUTRAL/BEARISH"), color=daily_bias_bullish ? color.green : color.red, textcolor=color.white, style=label.style_label_down)
+    label.delete(bias_label[1])
