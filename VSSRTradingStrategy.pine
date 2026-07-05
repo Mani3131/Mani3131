@@ -1,0 +1,212 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+strategy("VSSR Trading Strategy", overlay=true, initial_capital=10000, default_qty_type=strategy.contracts, currency=currency.USD)
+
+// --- Strategy Pillars ---
+// 1. Solid Psychology (User Discipline)
+// 2. Robust Strategy (VSSR Model)
+// 3. Strict Risk Management (Implemented below)
+
+// --- Inputs ---
+// Technical Parameters
+grp_tech = "Technical Parameters"
+ema_len = input.int(50, "EMA Length", minval=1, group=grp_tech, tooltip="Trend Mapping Cheat Code: 50 EMA")
+htf_tf = input.timeframe("240", "Higher Timeframe (HTF)", group=grp_tech, tooltip="Daily POI -> 1H Entry, 4H POI -> 15M Entry, 1H POI -> 5M Entry")
+
+// Risk Management Parameters
+grp_risk = "Risk Management"
+risk_per_trade_pct = input.float(1.0, "Risk Per Trade (%)", minval=0.1, step=0.1, group=grp_risk, tooltip="Recommended golden baseline: 1%")
+max_daily_loss_pct = input.float(2.0, "Max Daily Loss (%)", minval=0.1, step=0.1, group=grp_risk, tooltip="Hard ceiling: 2% daily loss")
+max_weekly_loss_pct = input.float(6.0, "Max Weekly Loss (%)", minval=0.1, step=0.1, group=grp_risk, tooltip="Limit weekly drawdowns to 6%")
+
+// --- Risk Management Logic ---
+// Daily Loss Tracking
+var float daily_start_equity = na
+if timeframe.isintraday and (ta.change(time("D")) or bar_index == 0)
+    daily_start_equity := strategy.equity
+
+float daily_loss = daily_start_equity - strategy.equity
+float daily_loss_pct = (daily_loss / daily_start_equity) * 100
+bool daily_limit_reached = daily_loss_pct >= max_daily_loss_pct
+
+// Weekly Loss Tracking
+var float weekly_start_equity = na
+if timeframe.isintraday and (ta.change(time("W")) or bar_index == 0)
+    weekly_start_equity := strategy.equity
+
+float weekly_loss = weekly_start_equity - strategy.equity
+float weekly_loss_pct = (weekly_loss / weekly_start_equity) * 100
+bool weekly_limit_reached = weekly_loss_pct >= max_weekly_loss_pct
+
+// Global Trading Allowed Flag
+bool can_trade = not daily_limit_reached and not weekly_limit_reached
+
+// Visualization of Limits
+if daily_limit_reached
+    label.new(bar_index, high, "Daily Loss Limit Reached", color=color.red, style=label.style_label_down, textcolor=color.white)
+if weekly_limit_reached
+    label.new(bar_index, high, "Weekly Loss Limit Reached", color=color.maroon, style=label.style_label_down, textcolor=color.white)
+
+// --- Technical Analysis Logic ---
+
+// 50-period EMA for Trend Mapping
+ema50 = ta.ema(close, ema_len)
+ema50_htf = request.security(syminfo.tickerid, htf_tf, ta.ema(close, ema_len)[1], lookahead=barmerge.lookahead_on)
+
+// Trend Bias based on EMA
+bool is_bullish_bias = close > ema50_htf and ema50_htf > ema50_htf[1]
+bool is_bearish_bias = close < ema50_htf and ema50_htf < ema50_htf[1]
+bool is_rangebound = not (is_bullish_bias or is_bearish_bias)
+
+// Fetch HTF Imbalances
+// Using [1] offset inside security with lookahead_on for non-repainting MTF data access
+f_fvg_htf() =>
+    bool b_fvg = high[2] < low[0]
+    bool s_fvg = low[2] > high[0]
+    float b_fvg_top = b_fvg ? low[0] : na
+    float b_fvg_btm = b_fvg ? high[2] : na
+    float s_fvg_top = s_fvg ? low[2] : na
+    float s_fvg_btm = s_fvg ? high[0] : na
+    [b_fvg_top[1], b_fvg_btm[1], s_fvg_top[1], s_fvg_btm[1]]
+
+[htf_b_fvg_t, htf_b_fvg_b, htf_s_fvg_t, htf_s_fvg_b] = request.security(syminfo.tickerid, htf_tf, f_fvg_htf(), lookahead=barmerge.lookahead_on)
+
+// Visualization of HTF Bias
+plot(ema50_htf, "HTF 50 EMA", color=is_bullish_bias ? color.green : is_bearish_bias ? color.red : color.gray, linewidth=2)
+
+// --- Market Structure & Liquidity ---
+
+// Pivot Detection for Swing Points
+leftBars = 5
+rightBars = 5
+ph = ta.pivothigh(high, leftBars, rightBars)
+pl = ta.pivotlow(low, leftBars, rightBars)
+
+// Track Structure Points
+var float last_sh = na
+var float last_sl = na
+if ph
+    last_sh := ph
+if pl
+    last_sl := pl
+
+// Liquidity Pools (Low-Hanging Fruit & Major Liquidity)
+// We track the most recent swing points as potential liquidity pools.
+float bullish_liquidity = last_sh
+float bearish_liquidity = last_sl
+
+// Sweep vs Break Logic
+// Break: Body close past level
+// Sweep: Wick past level but close inside
+bool is_bullish_break = ta.crossover(close, last_sh)
+bool is_bullish_sweep = high > last_sh and close <= last_sh
+bool is_bearish_break = ta.crossunder(close, last_sl)
+bool is_bearish_sweep = low < last_sl and close >= last_sl
+
+// Visualization of Structure
+plotshape(ph, "Swing High", shape.triangledown, location.abovebar, color.red, offset=-rightBars)
+plotshape(pl, "Swing Low", shape.triangleup, location.belowbar, color.green, offset=-rightBars)
+
+// --- VSSR Entry Model & Double Rejection (DR) Rule ---
+
+// Step 2: HTF POI Tap Detection
+bool tap_bullish_fvg = low <= htf_b_fvg_t and low >= htf_b_fvg_b
+bool tap_bearish_fvg = high >= htf_s_fvg_b and high <= htf_s_fvg_t
+
+// Step 4 & 5: Double Rejection (DR) Rule & VSSR Trigger
+// We use a state machine or simple candle tracking for DR.
+var bool dr_long_validated = false
+var bool dr_short_validated = false
+
+// Bullish DR Logic
+if tap_bullish_fvg
+    bool c1_tap = low[1] <= htf_b_fvg_t and low[1] >= htf_b_fvg_b
+    bool c2_respects_c1 = low >= low[1]
+    bool c2_flips = close > high[1]
+    bool c2_engulfs_fail = close < low[1]
+
+    if c1_tap and c2_respects_c1 and c2_flips
+        dr_long_validated := true
+    if c2_engulfs_fail
+        dr_long_validated := false
+else if not tap_bullish_fvg and dr_long_validated
+    // Persistence: Keep valid for 3 bars if not invalidated by structure
+    if ta.barssince(tap_bullish_fvg) > 3 or is_bearish_break
+        dr_long_validated := false
+
+// Bearish DR Logic
+if tap_bearish_fvg
+    bool c1_tap = high[1] >= htf_s_fvg_b and high[1] <= htf_s_fvg_t
+    bool c2_respects_c1 = high <= high[1]
+    bool c2_flips = close < low[1]
+    bool c2_engulfs_fail = close > high[1]
+
+    if c1_tap and c2_respects_c1 and c2_flips
+        dr_short_validated := true
+    if c2_engulfs_fail
+        dr_short_validated := false
+else if not tap_bearish_fvg and dr_short_validated
+    // Persistence: Keep valid for 3 bars if not invalidated by structure
+    if ta.barssince(tap_bearish_fvg) > 3 or is_bullish_break
+        dr_short_validated := false
+
+// LTF VSSR Trigger: Sharp Imbalance Shift (Bullish/Bearish FVG on current TF)
+bool ltf_bullish_imbalance = high[2] < low[0]
+bool ltf_bearish_imbalance = low[2] > high[0]
+
+// Combined Entry Signals
+bool long_condition = can_trade and is_bullish_bias and dr_long_validated and ltf_bullish_imbalance
+bool short_condition = can_trade and is_bearish_bias and dr_short_validated and ltf_bearish_imbalance
+
+// --- Execution & Risk Management ---
+
+// Step 5: Place Protective Orders (SL & TP)
+float sl_long = ta.lowest(low, 3) // Absolute lowest point formed during tap/turn
+float sl_short = ta.highest(high, 3) // Absolute highest point formed during tap/turn
+
+// Risk calculation: 1% of account balance
+float risk_amt = strategy.equity * (risk_per_trade_pct / 100)
+float long_risk_per_share = close - sl_long
+float short_risk_per_share = sl_short - close
+
+float pos_size_long = long_risk_per_share > 0 ? risk_amt / long_risk_per_share : na
+float pos_size_short = short_risk_per_share > 0 ? risk_amt / short_risk_per_share : na
+
+// Take Profit (1:1.5 RR or Low-Hanging Fruit)
+float tp_long = close + (long_risk_per_share * 1.5)
+float tp_short = close - (short_risk_per_share * 1.5)
+
+// Strategy Execution
+if long_condition and strategy.position_size == 0
+    strategy.entry("VSSR Long", strategy.long, qty=pos_size_long)
+    strategy.exit("Exit Long", "VSSR Long", stop=sl_long, limit=tp_long)
+
+if short_condition and strategy.position_size == 0
+    strategy.entry("VSSR Short", strategy.short, qty=pos_size_short)
+    strategy.exit("Exit Short", "VSSR Short", stop=sl_short, limit=tp_short)
+
+// --- Visuals & Polish ---
+
+// Cleanup old boxes (limit to most recent for clarity)
+// In a full script, we might manage boxes in an array, but for visualization:
+var box[] b_boxes = array.new_box()
+var box[] s_boxes = array.new_box()
+
+if ta.change(htf_b_fvg_t) and not na(htf_b_fvg_t)
+    array.push(b_boxes, box.new(bar_index[2], htf_b_fvg_t, bar_index + 10, htf_b_fvg_b, border_color=color.green, bgcolor=color.new(color.green, 90)))
+    if array.size(b_boxes) > 10
+        box.delete(array.shift(b_boxes))
+
+if ta.change(htf_s_fvg_t) and not na(htf_s_fvg_t)
+    array.push(s_boxes, box.new(bar_index[2], htf_s_fvg_t, bar_index + 10, htf_s_fvg_b, border_color=color.red, bgcolor=color.new(color.red, 90)))
+    if array.size(s_boxes) > 10
+        box.delete(array.shift(s_boxes))
+
+// Label VSSR Entry Triggers
+plotshape(long_condition, "VSSR Long Signal", shape.labelup, location.belowbar, color.green, text="VSSR BUY", textcolor=color.white)
+plotshape(short_condition, "VSSR Short Signal", shape.labeldown, location.abovebar, color.red, text="VSSR SELL", textcolor=color.white)
+
+// Background color for Bias
+bgcolor(is_bullish_bias ? color.new(color.green, 95) : is_bearish_bias ? color.new(color.red, 95) : na)
