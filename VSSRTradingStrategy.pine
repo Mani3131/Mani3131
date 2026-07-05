@@ -53,29 +53,29 @@ if not can_trade
 
 // --- Technical Analysis Logic ---
 
-// 50-period EMA for Trend Mapping
-f_ema_bias() =>
+// 50-period EMA for Trend Mapping (Non-repainting confirmed values)
+f_ema_bias_confirmed() =>
     val = ta.ema(close, ema_len)
-    [val, val > val[1], val < val[1]]
+    [val[1], val[1] > val[2], val[1] < val[2]]
 
-[ema50_htf, htf_bullish_slope, htf_bearish_slope] = request.security(syminfo.tickerid, htf_tf, f_ema_bias()[1])
+[ema50_htf, htf_bullish_slope, htf_bearish_slope] = request.security(syminfo.tickerid, htf_tf, f_ema_bias_confirmed())
 
 // Trend Bias based on EMA
 bool is_bullish_bias = close > ema50_htf and htf_bullish_slope
 bool is_bearish_bias = close < ema50_htf and htf_bearish_slope
 bool is_rangebound = not (is_bullish_bias or is_bearish_bias)
 
-// Fetch HTF Imbalances
-f_fvg_htf() =>
+// Fetch HTF Imbalances (Non-repainting confirmed values)
+f_fvg_htf_confirmed() =>
     bool b_fvg = high[2] < low[0]
     bool s_fvg = low[2] > high[0]
     float b_fvg_top = b_fvg ? low[0] : na
     float b_fvg_btm = b_fvg ? high[2] : na
     float s_fvg_top = s_fvg ? low[2] : na
     float s_fvg_btm = s_fvg ? high[0] : na
-    [b_fvg_top, b_fvg_btm, s_fvg_top, s_fvg_btm]
+    [b_fvg_top[1], b_fvg_btm[1], s_fvg_top[1], s_fvg_btm[1]]
 
-[htf_b_fvg_t, htf_b_fvg_b, htf_s_fvg_t, htf_s_fvg_b] = request.security(syminfo.tickerid, htf_tf, f_fvg_htf()[1])
+[htf_b_fvg_t, htf_b_fvg_b, htf_s_fvg_t, htf_s_fvg_b] = request.security(syminfo.tickerid, htf_tf, f_fvg_htf_confirmed())
 
 // Visualization of HTF Bias
 plot(ema50_htf, "HTF 50 EMA", color=is_bullish_bias ? color.green : is_bearish_bias ? color.red : color.gray, linewidth=2)
