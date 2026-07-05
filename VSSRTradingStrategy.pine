@@ -2,7 +2,7 @@
 // © Mani3131
 
 //@version=6
-strategy("VSSR Trading Strategy", overlay=true, initial_capital=10000, default_qty_type=strategy.contracts, currency=currency.USD)
+strategy("VSSR Trading Strategy", overlay=true, initial_capital=10000, default_qty_type=strategy.fixed, currency=currency.USD)
 
 // --- Strategy Pillars ---
 // 1. Solid Psychology (User Discipline)
@@ -44,20 +44,25 @@ bool weekly_limit_reached = weekly_loss_pct >= max_weekly_loss_pct
 bool can_trade = not daily_limit_reached and not weekly_limit_reached
 
 // Visualization of Limits
-if daily_limit_reached
-    label.new(bar_index, high, "Daily Loss Limit Reached", color=color.red, style=label.style_label_down, textcolor=color.white)
-if weekly_limit_reached
-    label.new(bar_index, high, "Weekly Loss Limit Reached", color=color.maroon, style=label.style_label_down, textcolor=color.white)
+plotshape(daily_limit_reached and not daily_limit_reached[1], "Daily Limit Reached", shape.labeldown, location.abovebar, color.red, text="DAILY LIMIT", textcolor=color.white)
+plotshape(weekly_limit_reached and not weekly_limit_reached[1], "Weekly Limit Reached", shape.labeldown, location.abovebar, color.maroon, text="WEEKLY LIMIT", textcolor=color.white)
+
+// Hard Stop Behavior
+if not can_trade
+    strategy.close_all("Loss Limit Hit")
 
 // --- Technical Analysis Logic ---
 
 // 50-period EMA for Trend Mapping
-ema50 = ta.ema(close, ema_len)
-ema50_htf = request.security(syminfo.tickerid, htf_tf, ta.ema(close, ema_len)[1], lookahead=barmerge.lookahead_on)
+f_ema_bias() =>
+    val = ta.ema(close, ema_len)
+    [val, val > val[1], val < val[1]]
+
+[ema50_htf, htf_bullish_slope, htf_bearish_slope] = request.security(syminfo.tickerid, htf_tf, f_ema_bias(), lookahead=barmerge.lookahead_on)
 
 // Trend Bias based on EMA
-bool is_bullish_bias = close > ema50_htf and ema50_htf > ema50_htf[1]
-bool is_bearish_bias = close < ema50_htf and ema50_htf < ema50_htf[1]
+bool is_bullish_bias = close > ema50_htf and htf_bullish_slope
+bool is_bearish_bias = close < ema50_htf and htf_bearish_slope
 bool is_rangebound = not (is_bullish_bias or is_bearish_bias)
 
 // Fetch HTF Imbalances
