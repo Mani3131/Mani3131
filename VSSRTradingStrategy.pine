@@ -92,9 +92,9 @@ pl = ta.pivotlow(low, leftBars, rightBars)
 // Track Structure Points
 var float last_sh = na
 var float last_sl = na
-if ph
+if not na(ph)
     last_sh := ph
-if pl
+if not na(pl)
     last_sl := pl
 
 // Liquidity Pools (Low-Hanging Fruit & Major Liquidity)
