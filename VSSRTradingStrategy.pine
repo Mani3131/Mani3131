@@ -209,9 +209,21 @@ if ta.change(htf_s_fvg_t) != 0 and not na(htf_s_fvg_t)
     if array.size(s_boxes) > 10
         box.delete(array.shift(s_boxes))
 
+// Entry Signal Visuals
+barcolor(long_condition ? color.green : short_condition ? color.red : na)
+
 // Label VSSR Entry Triggers
-plotshape(long_condition, "VSSR Long Signal", shape.labelup, location.belowbar, color.green, text="VSSR BUY", textcolor=color.white)
-plotshape(short_condition, "VSSR Short Signal", shape.labeldown, location.abovebar, color.red, text="VSSR SELL", textcolor=color.white)
+plotshape(long_condition, "VSSR Long Signal", shape.labelup, location.belowbar, color.green, text="VSSR BUY", textcolor=color.white, size=size.normal)
+plotshape(short_condition, "VSSR Short Signal", shape.labeldown, location.abovebar, color.red, text="VSSR SELL", textcolor=color.white, size=size.normal)
+
+// Visualizing Stop Loss and Take Profit levels on entry
+if long_condition
+    label.new(bar_index, sl_long, "SL: " + str.tostring(sl_long, format.mintick), color=color.red, style=label.style_label_up, textcolor=color.white)
+    label.new(bar_index, tp_long, "TP: " + str.tostring(tp_long, format.mintick), color=color.green, style=label.style_label_down, textcolor=color.white)
+
+if short_condition
+    label.new(bar_index, sl_short, "SL: " + str.tostring(sl_short, format.mintick), color=color.red, style=label.style_label_down, textcolor=color.white)
+    label.new(bar_index, tp_short, "TP: " + str.tostring(tp_short, format.mintick), color=color.green, style=label.style_label_up, textcolor=color.white)
 
 // Background color for Bias
 bgcolor(is_bullish_bias ? color.new(color.green, 95) : is_bearish_bias ? color.new(color.red, 95) : na)
