@@ -69,7 +69,7 @@ if t_hour == 15 and t_minute == 0
     ny_open_price := open
 
 // Reset Daily
-if ta.change(dayofyear)
+if ta.change(time("D", timezone_offset))
     london_open_price := na
     ny_open_price := na
 
