@@ -1,0 +1,94 @@
+//@version=6
+indicator("Institutional Time & Price Delivery Strategy", overlay=true, max_labels_count=500)
+
+// ==========================================
+// 1. TIME-BASED WINDOWS (THE "WHEN")
+// ==========================================
+// The strategy dictates that the algorithm injects volume at specific hourly intervals
+i_timeZone  = input.string("UTC+0", title="Session Timezone", tooltip="Set to your broker's timezone (e.g. UTC+0 for London)")
+i_session   = input.session("1000-1900", title="London Session Range", tooltip="The algorithmic windows only trigger during this session")
+i_showHours = input.bool(true, title="Highlight Session Opens", tooltip="Highlights the critical top-of-the-hour algorithmic windows")
+
+// Check if current time is within the specified session
+is_in_session = not na(time(timeframe.period, i_session, i_timeZone))
+
+// Detect the first 10 minutes of critical hourly blocks (e.g., 10:00 AM, 11:00 AM) inside the session
+is_new_hour_window = is_in_session and minute(time, i_timeZone) >= 0 and minute(time, i_timeZone) <= 10
+
+// Visual Anchor: Highlight the time window on the chart
+// Using hex code with alpha for transparency (#0000ff14 ≈ color.new(color.blue, 92))
+bgcolor(i_showHours and is_new_hour_window ? #0000ff14 : na, title="Algorithmic Window")
+
+
+// ==========================================
+// 2. INCOMPLETE HIGHS & LOWS (THE "WHERE")
+// ==========================================
+i_showIncomplete = input.bool(true, title="Show Incomplete Highs/Lows")
+i_candleTF       = input.timeframe("60", title="Candle Language Timeframe", tooltip="The strategy measures incomplete levels on higher timeframes like 1-hour or 4-hour candles")
+
+// Request higher timeframe data to evaluate candle structures accurately
+// Using [1] to avoid repainting - fetching confirmed historical data
+[htf_open, htf_high, htf_low, htf_close] = request.security(syminfo.tickerid, i_candleTF, [open[1], high[1], low[1], close[1]])
+htf_new = ta.change(time(i_candleTF)) != 0
+
+// Core Mathematical Formulas from the Strategy Video
+htf_midpoint = (htf_high + htf_low) / 2.0
+htf_is_bullish = htf_close > htf_open
+htf_is_bearish = htf_close < htf_open
+
+// Conditional States:
+// Incomplete High: Bullish HTF candle that closes BELOW its own mathematical midpoint (leaving a massive top wick)
+incomplete_high_detected = htf_new and htf_is_bullish and htf_close < htf_midpoint
+
+// Incomplete Low: Bearish HTF candle that closes ABOVE its own mathematical midpoint (leaving a massive bottom wick)
+incomplete_low_detected  = htf_new and htf_is_bearish and htf_close > htf_midpoint
+
+// Track active targets to plot them across the chart until mitigated
+var active_incomplete_high = float(na)
+var active_incomplete_low  = float(na)
+
+if incomplete_high_detected
+    active_incomplete_high := htf_high
+if incomplete_low_detected
+    active_incomplete_low := htf_low
+
+// Invalidation Logic: Clear targets if live price breaches them
+if high >= active_incomplete_high
+    active_incomplete_high := float(na)
+if low <= active_incomplete_low
+    active_incomplete_low := float(na)
+
+// Plotting the Target Vectors
+plot(i_showIncomplete ? active_incomplete_high : na, title="Incomplete High Target", color=#ffa500, style=plot.style_linebr, linewidth=2)
+plot(i_showIncomplete ? active_incomplete_low : na, title="Incomplete Low Target", color=#ff00ff, style=plot.style_linebr, linewidth=2)
+
+
+// ==========================================
+// 3. MATHEMATICAL BANKING LEVELS (THE EXECUTION)
+// ==========================================
+i_showPivots = input.bool(true, title="Display Mathematical Banking Pivots")
+
+// Mathematical Formula: Pivot = (High + Low + Close) / 3
+htf_pivot = (htf_high + htf_low + htf_close) / 3.0
+
+var daily_banking_level_zero = float(na)
+if htf_new
+    daily_banking_level_zero := htf_pivot
+
+plot(i_showPivots ? daily_banking_level_zero : na, title="Banking Level Zero (Pivot)", color=#808080, style=plot.style_stepline, linewidth=1)
+
+
+// ==========================================
+// 4. CHART LABELS & ALERTS
+// ==========================================
+// Generate visual UI markers when an institutional target is printed by the market structure
+if i_showIncomplete and incomplete_high_detected
+    label.new(x=bar_index, y=htf_high, text="Incomplete High\n(Algo Target)", color=#ffa500, textcolor=#ffffff, style=label.style_label_down, size=size.small)
+
+if i_showIncomplete and incomplete_low_detected
+    label.new(x=bar_index, y=htf_low, text="Incomplete Low\n(Algo Target)", color=#ff00ff, textcolor=#ffffff, style=label.style_label_up, size=size.small)
+
+// Strategy Alerts for Automation Setup
+alertcondition(incomplete_high_detected, title="Incomplete High Target Formed", message="Algorithm engineered an incomplete high target zone.")
+alertcondition(incomplete_low_detected, title="Incomplete Low Target Formed", message="Algorithm engineered an incomplete low target zone.")
+alertcondition(is_new_hour_window, title="Algorithmic Time Window Open", message="Top-of-the-hour volume injection cycle is active.")
