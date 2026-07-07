@@ -4,14 +4,14 @@ indicator("Ultimate Institutional Combo", overlay=true, max_boxes_count=500, max
 // ==========================================
 // GLOBAL SETTINGS & SHARED INPUTS
 // ==========================================
-show_oma = input.bool(true, "Show Opening Manipulation Axiom", group="Global Toggles")
+show_oma = input.bool(true, "Show Opening Impulse Axiom", group="Global Toggles")
 show_ibp = input.bool(true, "Show Institutional Bank Point", group="Global Toggles")
-show_feels_willy = input.bool(true, "Show S&R + Fibonacci Engine", group="Global Toggles")
+show_s_r_engine = input.bool(true, "Show S&R + Fibonacci Engine", group="Global Toggles")
 
 // ==========================================
-// 1. OPENING MANIPULATION AXIOM (OMA)
+// 1. OPENING IMPULSE AXIOM (OMA)
 // ==========================================
-grp_oma = "OMA - Opening Manipulation Axiom"
+grp_oma = "Opening Impulse Axiom"
 oma_anchor_color = input.color(color.new(color.blue, 90), "Anchor Box Color", group=grp_oma)
 oma_high_color   = input.color(color.new(color.green, 50), "Zone High Color", group=grp_oma)
 oma_low_color    = input.color(color.new(color.red, 50), "Zone Low Color", group=grp_oma)
@@ -110,8 +110,8 @@ ibp_only_focus_sessions = input.bool(false, "Only Trade Focused Sessions", group
 var float ibp_bank_point = na
 var float ibp_prev_4h_high = na
 var float ibp_prev_4h_low = na
-var float ibp_manipulation_high = na
-var float ibp_manipulation_low = na
+var float ibp_impulse_high = na
+var float ibp_impulse_low = na
 var bool ibp_session_eligible = false
 var int ibp_bars_since_cycle_start = 0
 var bool ibp_has_broken_above = false
@@ -120,17 +120,17 @@ var bool ibp_trade_taken_this_cycle = false
 bool ibp_buy_trigger = false
 bool ibp_sell_trigger = false
 bool ibp_is_cycle_start = false
-bool ibp_is_after_manipulation = false
+bool ibp_is_after_impulse = false
 
 // Helper function for Bank Point calculation
 f_ibp_get_anchor_midpoint() =>
-    float min_range = 1e10
+    float min_prange = 1e10
     float a_h = na
     float a_l = na
     for i = 0 to 15
         float r = high[i] - low[i]
-        if r < min_range
-            min_range := r
+        if r < min_prange
+            min_prange := r
             a_h := high[i]
             a_l := low[i]
     (a_h + a_l) / 2.0
@@ -152,28 +152,28 @@ if show_ibp
         ibp_bank_point := ibp_bp_from_15m
         ibp_prev_4h_high := ibp_p4h_h
         ibp_prev_4h_low := ibp_p4h_l
-        ibp_manipulation_high := na
-        ibp_manipulation_low := na
+        ibp_impulse_high := na
+        ibp_impulse_low := na
         ibp_bars_since_cycle_start := 0
         ibp_has_broken_above := false
         ibp_trade_taken_this_cycle := false
     else
         ibp_bars_since_cycle_start += 1
 
-    ibp_is_manipulation_window = ibp_bars_since_cycle_start < 10
-    ibp_is_after_manipulation := ibp_bars_since_cycle_start >= 10
+    ibp_is_impulse_window = ibp_bars_since_cycle_start < 10
+    ibp_is_after_impulse := ibp_bars_since_cycle_start >= 10
 
-    if ibp_is_manipulation_window
-        ibp_manipulation_high := na(ibp_manipulation_high) ? high : math.max(ibp_manipulation_high, high)
-        ibp_manipulation_low := na(ibp_manipulation_low) ? low : math.min(ibp_manipulation_low, low)
+    if ibp_is_impulse_window
+        ibp_impulse_high := na(ibp_impulse_high) ? high : math.max(ibp_impulse_high, high)
+        ibp_impulse_low := na(ibp_impulse_low) ? low : math.min(ibp_impulse_low, low)
 
-    if ibp_is_after_manipulation and close[1] > ibp_bank_point
+    if ibp_is_after_impulse and close[1] > ibp_bank_point
         ibp_has_broken_above := true
 
     ibp_is_bearish_rejection = close[1] < open[1] and high[1] >= ibp_bank_point and close[1] < ibp_bank_point
     ibp_is_bullish_rejection = close[1] > open[1] and low[1] <= ibp_bank_point and close[1] > ibp_bank_point
 
-    ibp_can_trigger = ibp_is_after_manipulation and ibp_session_eligible and not ibp_trade_taken_this_cycle and not na(ibp_bank_point)
+    ibp_can_trigger = ibp_is_after_impulse and ibp_session_eligible and not ibp_trade_taken_this_cycle and not na(ibp_bank_point)
     ibp_sell_trigger := ibp_can_trigger and not ibp_has_broken_above and ibp_is_bearish_rejection
     ibp_buy_trigger := ibp_can_trigger and ibp_has_broken_above and ibp_is_bullish_rejection
 
@@ -184,37 +184,37 @@ if show_ibp
     var line ibp_bp_line = na
     var line ibp_p4h_h_line = na
     var line ibp_p4h_l_line = na
-    var line ibp_manip_h_line = na
-    var line ibp_manip_l_line = na
+    var line ibp_imp_h_line = na
+    var line ibp_imp_l_line = na
 
     if ibp_is_cycle_start
         ibp_bp_line := line.new(bar_index, ibp_bank_point, bar_index, ibp_bank_point, color=color.yellow, width=2)
         ibp_p4h_h_line := line.new(bar_index, ibp_prev_4h_high, bar_index, ibp_prev_4h_high, color=color.green, width=1)
         ibp_p4h_l_line := line.new(bar_index, ibp_prev_4h_low, bar_index, ibp_prev_4h_low, color=color.red, width=1)
-        ibp_manip_h_line := na
-        ibp_manip_l_line := na
+        ibp_imp_h_line := na
+        ibp_imp_l_line := na
 
     if not na(ibp_bp_line)
         line.set_x2(ibp_bp_line, bar_index)
         line.set_x2(ibp_p4h_h_line, bar_index)
         line.set_x2(ibp_p4h_l_line, bar_index)
 
-    if ibp_is_after_manipulation
-        if na(ibp_manip_h_line)
-            ibp_manip_h_line := line.new(bar_index - 1, ibp_manipulation_high, bar_index, ibp_manipulation_high, color=color.gray, width=1)
-            ibp_manip_l_line := line.new(bar_index - 1, ibp_manipulation_low, bar_index, ibp_manipulation_low, color=color.gray, width=1)
+    if ibp_is_after_impulse
+        if na(ibp_imp_h_line)
+            ibp_imp_h_line := line.new(bar_index - 1, ibp_impulse_high, bar_index, ibp_impulse_high, color=color.gray, width=1)
+            ibp_imp_l_line := line.new(bar_index - 1, ibp_impulse_low, bar_index, ibp_impulse_low, color=color.gray, width=1)
         else
-            line.set_x2(ibp_manip_h_line, bar_index)
-            line.set_x2(ibp_manip_l_line, bar_index)
+            line.set_x2(ibp_imp_h_line, bar_index)
+            line.set_x2(ibp_imp_l_line, bar_index)
 
-    var box ibp_manip_box = na
+    var box ibp_imp_box = na
     if ibp_is_cycle_start
-        ibp_manip_box := box.new(bar_index, high, bar_index + 9, low, bgcolor=color.new(color.gray, 80), border_color=color.gray, text="Manipulation Window", text_color=color.white, text_size=size.tiny)
+        ibp_imp_box := box.new(bar_index, high, bar_index + 9, low, bgcolor=color.new(color.gray, 80), border_color=color.gray, text="Impulse Window", text_color=color.white, text_size=size.tiny)
 
-    if not na(ibp_manip_box) and ibp_bars_since_cycle_start < 10
-        box.set_top(ibp_manip_box, ibp_manipulation_high)
-        box.set_bottom(ibp_manip_box, ibp_manipulation_low)
-        box.set_right(ibp_manip_box, bar_index)
+    if not na(ibp_imp_box) and ibp_bars_since_cycle_start < 10
+        box.set_top(ibp_imp_box, ibp_impulse_high)
+        box.set_bottom(ibp_imp_box, ibp_impulse_low)
+        box.set_right(ibp_imp_box, bar_index)
 
     if ibp_is_cycle_start
         label.new(bar_index, ibp_bank_point, "Bank Point", color=color.yellow, textcolor=color.black, style=label.style_label_down, size=size.small)
@@ -226,15 +226,15 @@ plotshape(show_ibp and ibp_sell_trigger, "IBP Sell Signal", shape.triangledown, 
 plotshape(show_ibp and ibp_is_cycle_start, "New 4H Cycle", shape.triangleup, location.top, color.blue, size=size.tiny)
 
 // ==========================================
-// 3. S&R + FIBONACCI (FEELS + WILLY)
+// 3. S&R + FIBONACCI (S&R + ENGINE)
 // ==========================================
-type fw_Pivot
+type uis_Pivot
     float price
     int   bar
     float vol
     float wick
 
-type fw_Zone
+type uis_Zone
     float top
     float bot
     float center
@@ -248,61 +248,61 @@ type fw_Zone
     bool  wasBroken
     bool  isLiveBreak
 
-// --- FEELS Inputs ---
-grp_feels = "FEELS - S&R Zones"
-feels_preset      = input.string("Swing", "Strength preset", options = ["Scalp", "Local", "Swing", "Major", "Custom"], group = grp_feels)
-feels_pivLeftIn    = input.int(15, "Custom Left bars",  minval = 2, maxval = 100, group = grp_feels)
-feels_pivRightIn   = input.int(8,  "Custom Right bars", minval = 2, maxval = 50, group = grp_feels)
-feels_clusterTolIn = input.float(0.9, "Cluster tolerance (× ATR)", minval = 0.2, maxval = 3.0, step = 0.1, group = grp_feels)
-feels_minSpacingIn = input.int(20, "Min bars between touches", minval = 0, maxval = 200, group = grp_feels)
-feels_pivBuffer    = input.int(80, "Pivot memory", minval = 20, maxval = 200, group = grp_feels)
-feels_zoneCount  = input.int(6, "Active zones per side", minval = 1, maxval = 8, group = grp_feels)
-feels_minTouches = input.int(2, "Minimum touches", minval = 2, maxval = 10, group = grp_feels)
-feels_fadeAge    = input.int(120, "Fade after (bars)", minval = 0, maxval = 500, group = grp_feels)
-feels_hideFar    = input.float(60.0, "Hide zones farther than (%)", minval = 0.0, maxval = 200.0, step = 5.0, group = grp_feels)
-feels_showBroken   = input.bool(false, "Show broken zones", group = grp_feels)
-feels_resColor    = input.color(color.rgb(244, 67, 79),  "Resistance Color", group = grp_feels)
-feels_supColor    = input.color(color.rgb(38, 166, 154), "Support Color",    group = grp_feels)
-feels_useVolColor = input.bool(true,  "Color zones by volume",  group = grp_feels)
-feels_showLabels  = input.bool(true,  "Show zone strength label", group = grp_feels)
+// --- S&R Inputs ---
+grp_s_r = "S&R - S&R Zones"
+s_r_preset      = input.string("Swing", "Strength preset", options = ["Scalp", "Local", "Swing", "Major", "Custom"], group = grp_s_r)
+s_r_pivLeftIn    = input.int(15, "Custom Left bars",  minval = 2, maxval = 100, group = grp_s_r)
+s_r_pivRightIn   = input.int(8,  "Custom Right bars", minval = 2, maxval = 50, group = grp_s_r)
+s_r_clusterTolIn = input.float(0.9, "Cluster tolerance (× ATR)", minval = 0.2, maxval = 3.0, step = 0.1, group = grp_s_r)
+s_r_minSpacingIn = input.int(20, "Min bars between touches", minval = 0, maxval = 200, group = grp_s_r)
+s_r_pivBuffer    = input.int(80, "Pivot memory", minval = 20, maxval = 200, group = grp_s_r)
+s_r_zoneCount  = input.int(6, "Active zones per side", minval = 1, maxval = 8, group = grp_s_r)
+s_r_minTouches = input.int(2, "Minimum touches", minval = 2, maxval = 10, group = grp_s_r)
+s_r_fadeAge    = input.int(120, "Fade after (bars)", minval = 0, maxval = 500, group = grp_s_r)
+s_r_hideFar    = input.float(60.0, "Hide zones farther than (%)", minval = 0.0, maxval = 200.0, step = 5.0, group = grp_s_r)
+s_r_showBroken   = input.bool(false, "Show broken zones", group = grp_s_r)
+s_r_resColor    = input.color(color.rgb(244, 67, 79),  "Resistance Color", group = grp_s_r)
+s_r_supColor    = input.color(color.rgb(38, 166, 154), "Support Color",    group = grp_s_r)
+s_r_useVolColor = input.bool(true,  "Color zones by volume",  group = grp_s_r)
+s_r_showLabels  = input.bool(true,  "Show zone strength label", group = grp_s_r)
 
-// --- FEELS logic and functions ---
-feels_pivLeft    = feels_preset == "Scalp" ?  4  : feels_preset == "Local" ?  6  : feels_preset == "Swing" ? 15  : feels_preset == "Major" ? 35  : feels_pivLeftIn
-feels_pivRight   = feels_preset == "Scalp" ?  2  : feels_preset == "Local" ?  4  : feels_preset == "Swing" ?  8  : feels_preset == "Major" ? 15  : feels_pivRightIn
-feels_clusterTol = feels_preset == "Scalp" ? 0.4 : feels_preset == "Local" ? 0.5 : feels_preset == "Swing" ? 0.9 : feels_preset == "Major" ? 1.4 : feels_clusterTolIn
-feels_minSpacing = feels_preset == "Scalp" ?  4  : feels_preset == "Local" ?  8  : feels_preset == "Swing" ? 20  : feels_preset == "Major" ? 50  : feels_minSpacingIn
+// --- S&R logic and functions ---
+s_r_pivLeft    = s_r_preset == "Scalp" ?  4  : s_r_preset == "Local" ?  6  : s_r_preset == "Swing" ? 15  : s_r_preset == "Major" ? 35  : s_r_pivLeftIn
+s_r_pivRight   = s_r_preset == "Scalp" ?  2  : s_r_preset == "Local" ?  4  : s_r_preset == "Swing" ?  8  : s_r_preset == "Major" ? 15  : s_r_pivRightIn
+s_r_clusterTol = s_r_preset == "Scalp" ? 0.4 : s_r_preset == "Local" ? 0.5 : s_r_preset == "Swing" ? 0.9 : s_r_preset == "Major" ? 1.4 : s_r_clusterTolIn
+s_r_minSpacing = s_r_preset == "Scalp" ?  4  : s_r_preset == "Local" ?  8  : s_r_preset == "Swing" ? 20  : s_r_preset == "Major" ? 50  : s_r_minSpacingIn
 
-feels_atr50   = ta.atr(50)
-feels_volMa50 = ta.sma(volume, 50)
-feels_phPx = ta.pivothigh(high, feels_pivLeft, feels_pivRight)
-feels_plPx = ta.pivotlow(low,   feels_pivLeft, feels_pivRight)
+s_r_atr50   = ta.atr(50)
+s_r_volMa50 = ta.sma(volume, 50)
+s_r_phPx = ta.pivothigh(high, s_r_pivLeft, s_r_pivRight)
+s_r_plPx = ta.pivotlow(low,   s_r_pivLeft, s_r_pivRight)
 
-f_feels_upperWick(int idx) => high[idx] - math.max(open[idx], close[idx])
-f_feels_lowerWick(int idx) => math.min(open[idx], close[idx]) - low[idx]
-f_feels_safeVolume(int idx) =>
+f_s_r_upperWick(int idx) => high[idx] - math.max(open[idx], close[idx])
+f_s_r_lowerWick(int idx) => math.min(open[idx], close[idx]) - low[idx]
+f_s_r_safeVolume(int idx) =>
     v = volume[idx]
     na(v) or v <= 0 ? 1.0 : v
 
-var array<fw_Pivot> feels_highPivots = array.new<fw_Pivot>()
-var array<fw_Pivot> feels_lowPivots  = array.new<fw_Pivot>()
+var array<uis_Pivot> s_r_highPivots = array.new<uis_Pivot>()
+var array<uis_Pivot> s_r_lowPivots  = array.new<uis_Pivot>()
 
-feels_dataReady = not na(feels_atr50) and feels_atr50 > 0
-feels_newHighPivot = false
-feels_newLowPivot  = false
+s_r_dataReady = not na(s_r_atr50) and s_r_atr50 > 0
+s_r_newHighPivot = false
+s_r_newLowPivot  = false
 
-if show_feels_willy and not na(feels_phPx) and feels_phPx > 0 and feels_dataReady
-    feels_highPivots.push(fw_Pivot.new(feels_phPx, bar_index - feels_pivRight, f_feels_safeVolume(feels_pivRight), f_feels_upperWick(feels_pivRight)))
-    if feels_highPivots.size() > feels_pivBuffer
-        feels_highPivots.shift()
-    feels_newHighPivot := true
+if show_s_r_engine and not na(s_r_phPx) and s_r_phPx > 0 and s_r_dataReady
+    s_r_highPivots.push(uis_Pivot.new(s_r_phPx, bar_index - s_r_pivRight, f_s_r_safeVolume(s_r_pivRight), f_s_r_upperWick(s_r_pivRight)))
+    if s_r_highPivots.size() > s_r_pivBuffer
+        s_r_highPivots.shift()
+    s_r_newHighPivot := true
 
-if show_feels_willy and not na(feels_plPx) and feels_plPx > 0 and feels_dataReady
-    feels_lowPivots.push(fw_Pivot.new(feels_plPx, bar_index - feels_pivRight, f_feels_safeVolume(feels_pivRight), f_feels_lowerWick(feels_pivRight)))
-    if feels_lowPivots.size() > feels_pivBuffer
-        feels_lowPivots.shift()
-    feels_newLowPivot := true
+if show_s_r_engine and not na(s_r_plPx) and s_r_plPx > 0 and s_r_dataReady
+    s_r_lowPivots.push(uis_Pivot.new(s_r_plPx, bar_index - s_r_pivRight, f_s_r_safeVolume(s_r_pivRight), f_s_r_lowerWick(s_r_pivRight)))
+    if s_r_lowPivots.size() > s_r_pivBuffer
+        s_r_lowPivots.shift()
+    s_r_newLowPivot := true
 
-f_feels_pivotWeight(fw_Pivot p, float a, float vAvg) =>
+f_s_r_pivotWeight(uis_Pivot p, float a, float vAvg) =>
     safeVol  = na(p.vol)  or p.vol  <= 0 ? 0.0 : p.vol
     safeWick = na(p.wick) or p.wick <  0 ? 0.0 : p.wick
     age      = math.max(1, bar_index - p.bar)
@@ -311,17 +311,17 @@ f_feels_pivotWeight(fw_Pivot p, float a, float vAvg) =>
     wickNorm = a > 0 ? safeWick / a : 0.0
     (1.0 + volNorm * 0.5 + wickNorm * 0.5) * decay
 
-f_feels_buildZones(array<fw_Pivot> src, bool resistance, float a, float vAvg) =>
-    out = array.new<fw_Zone>()
-    if src.size() >= feels_minTouches and a > 0
+f_s_r_buildZones(array<uis_Pivot> src, bool resistance, float a, float vAvg) =>
+    out = array.new<uis_Zone>()
+    if src.size() >= s_r_minTouches and a > 0
         used = array.new<bool>()
         for i = 0 to src.size() - 1
             used.push(false)
-        tol = a * feels_clusterTol
+        tol = a * s_r_clusterTol
         for i = 0 to src.size() - 1
             if not used.get(i)
                 seed    = src.get(i)
-                members = array.new<fw_Pivot>()
+                members = array.new<uis_Pivot>()
                 members.push(seed)
                 used.set(i, true)
                 if i + 1 <= src.size() - 1
@@ -330,15 +330,15 @@ f_feels_buildZones(array<fw_Pivot> src, bool resistance, float a, float vAvg) =>
                             cand = src.get(j)
                             if math.abs(cand.price - seed.price) <= tol
                                 farEnough = true
-                                if feels_minSpacing > 0
+                                if s_r_minSpacing > 0
                                     for k = 0 to members.size() - 1
-                                        if math.abs(cand.bar - members.get(k).bar) < feels_minSpacing
+                                        if math.abs(cand.bar - members.get(k).bar) < s_r_minSpacing
                                             farEnough := false
                                             break
                                 if farEnough
                                     members.push(cand)
                                     used.set(j, true)
-                if members.size() >= feels_minTouches
+                if members.size() >= s_r_minTouches
                     priceSum  = 0.0
                     weightSum = 0.0
                     volSum    = 0.0
@@ -346,7 +346,7 @@ f_feels_buildZones(array<fw_Pivot> src, bool resistance, float a, float vAvg) =>
                     latest    = members.get(0).bar
                     for k = 0 to members.size() - 1
                         m = members.get(k)
-                        w = f_feels_pivotWeight(m, a, vAvg)
+                        w = f_s_r_pivotWeight(m, a, vAvg)
                         priceSum  += m.price * w
                         weightSum += w
                         volSum    += na(m.vol) ? 0.0 : m.vol
@@ -355,11 +355,11 @@ f_feels_buildZones(array<fw_Pivot> src, bool resistance, float a, float vAvg) =>
                     if weightSum > 0
                         center = priceSum / weightSum
                         pad    = a * 0.25
-                        out.push(fw_Zone.new(center + pad, center - pad, center, weightSum, volSum, members.size(), earliest, latest, na, resistance, false, false))
+                        out.push(uis_Zone.new(center + pad, center - pad, center, weightSum, volSum, members.size(), earliest, latest, na, resistance, false, false))
     out
 
-f_feels_trimToTopN(array<fw_Zone> zones, int keep) =>
-    result = array.new<fw_Zone>()
+f_s_r_trimToTopN(array<uis_Zone> zones, int keep) =>
+    result = array.new<uis_Zone>()
     if zones.size() > 0
         copy = zones.copy()
         limit = math.min(keep, copy.size())
@@ -377,62 +377,62 @@ f_feels_trimToTopN(array<fw_Zone> zones, int keep) =>
             copy.remove(bestIdx)
     result
 
-var array<fw_Zone> feels_resZones    = array.new<fw_Zone>()
-var array<fw_Zone> feels_supZones    = array.new<fw_Zone>()
-var array<fw_Zone> feels_brokenZones = array.new<fw_Zone>()
+var array<uis_Zone> s_r_resZones    = array.new<uis_Zone>()
+var array<uis_Zone> s_r_supZones    = array.new<uis_Zone>()
+var array<uis_Zone> s_r_brokenZones = array.new<uis_Zone>()
 
-f_feels_archiveIfNew(fw_Zone z, float a) =>
+f_s_r_archiveIfNew(uis_Zone z, float a) =>
     duplicate = false
-    if feels_brokenZones.size() > 0
-        tol = a * feels_clusterTol * 0.7
-        for i = 0 to feels_brokenZones.size() - 1
-            existing = feels_brokenZones.get(i)
+    if s_r_brokenZones.size() > 0
+        tol = a * s_r_clusterTol * 0.7
+        for i = 0 to s_r_brokenZones.size() - 1
+            existing = s_r_brokenZones.get(i)
             if existing.isResistance == z.isResistance and math.abs(existing.center - z.center) <= tol
                 duplicate := true
                 if z.wasBroken and not existing.wasBroken
                     existing.wasBroken   := true
                     existing.diedBar     := z.diedBar
                     existing.isLiveBreak := z.isLiveBreak
-                    feels_brokenZones.set(i, existing)
+                    s_r_brokenZones.set(i, existing)
                 break
     if not duplicate
-        feels_brokenZones.push(z)
-        if feels_brokenZones.size() > 100
-            feels_brokenZones.shift()
+        s_r_brokenZones.push(z)
+        if s_r_brokenZones.size() > 100
+            s_r_brokenZones.shift()
     duplicate
 
-if show_feels_willy
+if show_s_r_engine
     // Live-break and touch tracking
-    if feels_resZones.size() > 0
-        for i = 0 to feels_resZones.size() - 1
-            z = feels_resZones.get(i)
+    if s_r_resZones.size() > 0
+        for i = 0 to s_r_resZones.size() - 1
+            z = s_r_resZones.get(i)
             if na(z.diedBar) and close > z.top
                 z.diedBar     := bar_index
                 z.wasBroken   := true
                 z.isLiveBreak := close[1] <= z.top
-                feels_resZones.set(i, z)
-                f_feels_archiveIfNew(z, feels_atr50)
+                s_r_resZones.set(i, z)
+                f_s_r_archiveIfNew(z, s_r_atr50)
             else if na(z.diedBar) and high >= z.bot and low <= z.top
                 z.lastTouch := bar_index
-                feels_resZones.set(i, z)
+                s_r_resZones.set(i, z)
 
-    if feels_supZones.size() > 0
-        for i = 0 to feels_supZones.size() - 1
-            z = feels_supZones.get(i)
+    if s_r_supZones.size() > 0
+        for i = 0 to s_r_supZones.size() - 1
+            z = s_r_supZones.get(i)
             if na(z.diedBar) and close < z.bot
                 z.diedBar     := bar_index
                 z.wasBroken   := true
                 z.isLiveBreak := close[1] >= z.bot
-                feels_supZones.set(i, z)
-                f_feels_archiveIfNew(z, feels_atr50)
+                s_r_supZones.set(i, z)
+                f_s_r_archiveIfNew(z, s_r_atr50)
             else if na(z.diedBar) and high >= z.bot and low <= z.top
                 z.lastTouch := bar_index
-                feels_supZones.set(i, z)
+                s_r_supZones.set(i, z)
 
-f_feels_zoneSurvives(fw_Zone old, array<fw_Zone> newSet, float a) =>
+f_s_r_zoneSurvives(uis_Zone old, array<uis_Zone> newSet, float a) =>
     survived = false
     if newSet.size() > 0
-        tol = a * feels_clusterTol
+        tol = a * s_r_clusterTol
         for i = 0 to newSet.size() - 1
             nz = newSet.get(i)
             if math.abs(nz.center - old.center) <= tol
@@ -440,21 +440,21 @@ f_feels_zoneSurvives(fw_Zone old, array<fw_Zone> newSet, float a) =>
                 break
     survived
 
-f_feels_isAlreadyBroken(fw_Zone z, float a) =>
+f_s_r_isAlreadyBroken(uis_Zone z, float a) =>
     broken = false
-    if feels_brokenZones.size() > 0
-        tol = a * feels_clusterTol * 0.7
-        for i = 0 to feels_brokenZones.size() - 1
-            bz = feels_brokenZones.get(i)
+    if s_r_brokenZones.size() > 0
+        tol = a * s_r_clusterTol * 0.7
+        for i = 0 to s_r_brokenZones.size() - 1
+            bz = s_r_brokenZones.get(i)
             if bz.isResistance == z.isResistance and bz.wasBroken and math.abs(bz.center - z.center) <= tol
                 broken := true
                 break
     broken
 
-f_feels_inheritState(fw_Zone newZ, array<fw_Zone> oldZones, float a) =>
+f_s_r_inheritState(uis_Zone newZ, array<uis_Zone> oldZones, float a) =>
     inherited = newZ
     if oldZones.size() > 0
-        tol = a * feels_clusterTol
+        tol = a * s_r_clusterTol
         for i = 0 to oldZones.size() - 1
             oldZ = oldZones.get(i)
             if math.abs(oldZ.center - newZ.center) <= tol
@@ -462,257 +462,257 @@ f_feels_inheritState(fw_Zone newZ, array<fw_Zone> oldZones, float a) =>
                 break
     inherited
 
-if show_feels_willy and (feels_newHighPivot or feels_newLowPivot)
-    newRes = f_feels_trimToTopN(f_feels_buildZones(feels_highPivots, true,  feels_atr50, feels_volMa50), feels_zoneCount)
-    newSup = f_feels_trimToTopN(f_feels_buildZones(feels_lowPivots,  false, feels_atr50, feels_volMa50), feels_zoneCount)
+if show_s_r_engine and (s_r_newHighPivot or s_r_newLowPivot)
+    newRes = f_s_r_trimToTopN(f_s_r_buildZones(s_r_highPivots, true,  s_r_atr50, s_r_volMa50), s_r_zoneCount)
+    newSup = f_s_r_trimToTopN(f_s_r_buildZones(s_r_lowPivots,  false, s_r_atr50, s_r_volMa50), s_r_zoneCount)
 
-    if feels_resZones.size() > 0
-        for i = 0 to feels_resZones.size() - 1
-            old = feels_resZones.get(i)
-            if na(old.diedBar) and old.touches >= feels_minTouches and not f_feels_zoneSurvives(old, newRes, feels_atr50)
+    if s_r_resZones.size() > 0
+        for i = 0 to s_r_resZones.size() - 1
+            old = s_r_resZones.get(i)
+            if na(old.diedBar) and old.touches >= s_r_minTouches and not f_s_r_zoneSurvives(old, newRes, s_r_atr50)
                 old.diedBar   := bar_index
                 old.wasBroken := false
-                f_feels_archiveIfNew(old, feels_atr50)
+                f_s_r_archiveIfNew(old, s_r_atr50)
 
-    if feels_supZones.size() > 0
-        for i = 0 to feels_supZones.size() - 1
-            old = feels_supZones.get(i)
-            if na(old.diedBar) and old.touches >= feels_minTouches and not f_feels_zoneSurvives(old, newSup, feels_atr50)
+    if s_r_supZones.size() > 0
+        for i = 0 to s_r_supZones.size() - 1
+            old = s_r_supZones.get(i)
+            if na(old.diedBar) and old.touches >= s_r_minTouches and not f_s_r_zoneSurvives(old, newSup, s_r_atr50)
                 old.diedBar   := bar_index
                 old.wasBroken := false
-                f_feels_archiveIfNew(old, feels_atr50)
+                f_s_r_archiveIfNew(old, s_r_atr50)
 
-    oldResCopy = feels_resZones.copy()
-    oldSupCopy = feels_supZones.copy()
-    feels_resZones.clear()
+    oldResCopy = s_r_resZones.copy()
+    oldSupCopy = s_r_supZones.copy()
+    s_r_resZones.clear()
     if newRes.size() > 0
         for i = 0 to newRes.size() - 1
             nz = newRes.get(i)
-            if not f_feels_isAlreadyBroken(nz, feels_atr50)
-                feels_resZones.push(f_feels_inheritState(nz, oldResCopy, feels_atr50))
+            if not f_s_r_isAlreadyBroken(nz, s_r_atr50)
+                s_r_resZones.push(f_s_r_inheritState(nz, oldResCopy, s_r_atr50))
 
-    feels_supZones.clear()
+    s_r_supZones.clear()
     if newSup.size() > 0
         for i = 0 to newSup.size() - 1
             nz = newSup.get(i)
-            if not f_feels_isAlreadyBroken(nz, feels_atr50)
-                feels_supZones.push(f_feels_inheritState(nz, oldSupCopy, feels_atr50))
+            if not f_s_r_isAlreadyBroken(nz, s_r_atr50)
+                s_r_supZones.push(f_s_r_inheritState(nz, oldSupCopy, s_r_atr50))
 
-// --- Willy Inputs ---
-grp_willy = "Willy - Structure & Fib"
-willy_showDash = input.bool(true, "Show Dashboard", group = grp_willy)
-willy_swingLen = input.int(10, "Swing Length", minval = 3, group = grp_willy)
-willy_atrMult = input.float(0.5, "ATR Filter Mult", minval = 0.1, group = grp_willy)
-willy_showFib = input.bool(true, "Show Fibonacci", group = grp_willy)
-willy_showStruct = input.bool(true, "Show BOS/CHoCH", group = grp_willy)
-willy_showSwings = input.bool(true, "Show HH/LL Labels", group = grp_willy)
-willy_showSweeps = input.bool(true, "Show Liquidity Sweeps", group = grp_willy)
-willy_showEngulf = input.bool(true, "Show Engulfing Signals", group = grp_willy)
-willy_bullColor = input.color(#00E676, "Bull Color", group = grp_willy)
-willy_bearColor = input.color(#FF5252, "Bear Color", group = grp_willy)
+// --- Structure Inputs ---
+grp_engine = "Structure - Structure & Fib"
+struct_showDash = input.bool(true, "Show Dashboard", group = grp_engine)
+struct_swingLen = input.int(10, "Swing Length", minval = 3, group = grp_engine)
+struct_atrMult = input.float(0.5, "ATR Filter Mult", minval = 0.1, group = grp_engine)
+struct_showFib = input.bool(true, "Show Fibonacci", group = grp_engine)
+struct_showStruct = input.bool(true, "Show BOS/CHoCH", group = grp_engine)
+struct_showSwings = input.bool(true, "Show HH/LL Labels", group = grp_engine)
+struct_showSweeps = input.bool(true, "Show Liquidity Sweeps", group = grp_engine)
+struct_showEngulf = input.bool(true, "Show Engulfing Signals", group = grp_engine)
+struct_bullColor = input.color(#00E676, "Bull Color", group = grp_engine)
+struct_bearColor = input.color(#FF5252, "Bear Color", group = grp_engine)
 
-// --- Visual Buffers for FEELS + Willy ---
-var array<box>   fw_box_buffer   = array.new<box>()
-var array<line>  fw_line_buffer  = array.new<line>()
-var array<label> fw_label_buffer = array.new<label>()
+// --- Visual Buffers for S&R + Structure ---
+var array<box>   uis_box_buffer   = array.new<box>()
+var array<line>  uis_line_buffer  = array.new<line>()
+var array<label> uis_label_buffer = array.new<label>()
 
-f_fw_clear_buffers() =>
-    if fw_box_buffer.size() > 0
-        for i = 0 to fw_box_buffer.size() - 1
-            box.delete(fw_box_buffer.get(i))
-    fw_box_buffer.clear()
-    if fw_line_buffer.size() > 0
-        for i = 0 to fw_line_buffer.size() - 1
-            line.delete(fw_line_buffer.get(i))
-    fw_line_buffer.clear()
-    if fw_label_buffer.size() > 0
-        for i = 0 to fw_label_buffer.size() - 1
-            label.delete(fw_label_buffer.get(i))
-    fw_label_buffer.clear()
+f_uis_clear_buffers() =>
+    if uis_box_buffer.size() > 0
+        for i = 0 to uis_box_buffer.size() - 1
+            box.delete(uis_box_buffer.get(i))
+    uis_box_buffer.clear()
+    if uis_line_buffer.size() > 0
+        for i = 0 to uis_line_buffer.size() - 1
+            line.delete(uis_line_buffer.get(i))
+    uis_line_buffer.clear()
+    if uis_label_buffer.size() > 0
+        for i = 0 to uis_label_buffer.size() - 1
+            label.delete(uis_label_buffer.get(i))
+    uis_label_buffer.clear()
 
-// --- Willy Logic ---
-var float willy_swHigh1 = na
-var int   willy_swHigh1Idx = na
-var float willy_swHigh2 = na
-var float willy_swLow1 = na
-var int   willy_swLow1Idx = na
-var float willy_swLow2 = na
+// --- Structure Logic ---
+var float struct_swHigh1 = na
+var int   struct_swHigh1Idx = na
+var float struct_swHigh2 = na
+var float struct_swLow1 = na
+var int   struct_swLow1Idx = na
+var float struct_swLow2 = na
 
-var float willy_fibSwingHigh = na
-var int   willy_fibSwingHighIdx = na
-var float willy_fibSwingLow  = na
-var int   willy_fibSwingLowIdx  = na
-var int   willy_fibDirection = 0
+var float struct_fibSwingHigh = na
+var int   struct_fibSwingHighIdx = na
+var float struct_fibSwingLow  = na
+var int   struct_fibSwingLowIdx  = na
+var int   struct_fibDirection = 0
 
-willy_atr14 = nz(ta.atr(14), 0.0)
-willy_pivotHigh = ta.pivothigh(high, willy_swingLen, willy_swingLen)
-willy_pivotLow  = ta.pivotlow(low,   willy_swingLen, willy_swingLen)
+struct_atr14 = nz(ta.atr(14), 0.0)
+struct_pivotHigh = ta.pivothigh(high, struct_swingLen, struct_swingLen)
+struct_pivotLow  = ta.pivotlow(low,   struct_swingLen, struct_swingLen)
 
-willy_newSwingHigh = false
-willy_newSwingLow  = false
-willy_atrMinSize = willy_atr14 * willy_atrMult
+struct_newSwingHigh = false
+struct_newSwingLow  = false
+struct_atrMinSize = struct_atr14 * struct_atrMult
 
 // Liquidity Sweeps tracking
-var int willy_lastSweptHighIdx = na
-var int willy_lastSweptLowIdx  = na
-bool willy_sweepHigh = false
-bool willy_sweepLow  = false
+var int struct_lastSweptHighIdx = na
+var int struct_lastSweptLowIdx  = na
+bool struct_sweepHigh = false
+bool struct_sweepLow  = false
 
-if show_feels_willy
-    if not na(willy_swHigh1) and willy_swHigh1Idx != willy_lastSweptHighIdx
-        if high > willy_swHigh1 and close < willy_swHigh1 and open < willy_swHigh1
-            willy_sweepHigh := true
-            willy_lastSweptHighIdx := willy_swHigh1Idx
+if show_s_r_engine
+    if not na(struct_swHigh1) and struct_swHigh1Idx != struct_lastSweptHighIdx
+        if high > struct_swHigh1 and close < struct_swHigh1 and open < struct_swHigh1
+            struct_sweepHigh := true
+            struct_lastSweptHighIdx := struct_swHigh1Idx
 
-    if not na(willy_swLow1) and willy_swLow1Idx != willy_lastSweptLowIdx
-        if low < willy_swLow1 and close > willy_swLow1 and open > willy_swLow1
-            willy_sweepLow := true
-            willy_lastSweptLowIdx := willy_swLow1Idx
+    if not na(struct_swLow1) and struct_swLow1Idx != struct_lastSweptLowIdx
+        if low < struct_swLow1 and close > struct_swLow1 and open > struct_swLow1
+            struct_sweepLow := true
+            struct_lastSweptLowIdx := struct_swLow1Idx
 
-if show_feels_willy and willy_showSweeps
-    if willy_sweepHigh
+if show_s_r_engine and struct_showSweeps
+    if struct_sweepHigh
         label.new(bar_index, high, "✗", color = color.new(color.orange, 100), textcolor = color.orange, style = label.style_label_down, size = size.small)
-    if willy_sweepLow
+    if struct_sweepLow
         label.new(bar_index, low, "✗", color = color.new(color.orange, 100), textcolor = color.orange, style = label.style_label_up, size = size.small)
 
 // Engulfing Patterns
-willy_bodyHi = math.max(close, open)
-willy_bodyLo = math.min(close, open)
-willy_body = willy_bodyHi - willy_bodyLo
-willy_bodyAvg = ta.ema(willy_body, 14)
-willy_isLongBody = willy_body > willy_bodyAvg
+struct_bodyHi = math.max(close, open)
+struct_bodyLo = math.min(close, open)
+struct_body = struct_bodyHi - struct_bodyLo
+struct_bodyAvg = ta.ema(struct_body, 14)
+struct_isLongBody = struct_body > struct_bodyAvg
 
-willy_bearishEngulf = close < open and willy_isLongBody and willy_body > willy_body[1] and close[1] > open[1] and open > close[1] and close < open[1]
-willy_bullishEngulf = close > open and willy_isLongBody and willy_body > willy_body[1] and close[1] < open[1] and open < close[1] and close > open[1]
+struct_bearishEngulf = close < open and struct_isLongBody and struct_body > struct_body[1] and close[1] > open[1] and open > close[1] and close < open[1]
+struct_bullishEngulf = close > open and struct_isLongBody and struct_body > struct_body[1] and close[1] < open[1] and open < close[1] and close > open[1]
 
-if show_feels_willy and willy_showEngulf
-    if willy_bearishEngulf
-        label.new(bar_index, high, "▼", color = color.new(willy_bearColor, 100), textcolor = willy_bearColor, style = label.style_label_down, size = size.small)
-    if willy_bullishEngulf
-        label.new(bar_index, low, "▲", color = color.new(willy_bullColor, 100), textcolor = willy_bullColor, style = label.style_label_up, size = size.small)
+if show_s_r_engine and struct_showEngulf
+    if struct_bearishEngulf
+        label.new(bar_index, high, "▼", color = color.new(struct_bearColor, 100), textcolor = struct_bearColor, style = label.style_label_down, size = size.small)
+    if struct_bullishEngulf
+        label.new(bar_index, low, "▲", color = color.new(struct_bullColor, 100), textcolor = struct_bullColor, style = label.style_label_up, size = size.small)
 
-if show_feels_willy
-    if not na(willy_pivotHigh)
-        if na(willy_swLow1) or (willy_pivotHigh - willy_swLow1) >= willy_atrMinSize
-            willy_swHigh2 := willy_swHigh1
-            willy_swHigh1 := willy_pivotHigh
-            willy_swHigh1Idx := bar_index - willy_swingLen
-            willy_newSwingHigh := true
+if show_s_r_engine
+    if not na(struct_pivotHigh)
+        if na(struct_swLow1) or (struct_pivotHigh - struct_swLow1) >= struct_atrMinSize
+            struct_swHigh2 := struct_swHigh1
+            struct_swHigh1 := struct_pivotHigh
+            struct_swHigh1Idx := bar_index - struct_swingLen
+            struct_newSwingHigh := true
 
-    if not na(willy_pivotLow)
-        if na(willy_swHigh1) or (willy_swHigh1 - willy_pivotLow) >= willy_atrMinSize
-            willy_swLow2 := willy_swLow1
-            willy_swLow1 := willy_pivotLow
-            willy_swLow1Idx := bar_index - willy_swingLen
-            willy_newSwingLow := true
+    if not na(struct_pivotLow)
+        if na(struct_swHigh1) or (struct_swHigh1 - struct_pivotLow) >= struct_atrMinSize
+            struct_swLow2 := struct_swLow1
+            struct_swLow1 := struct_pivotLow
+            struct_swLow1Idx := bar_index - struct_swingLen
+            struct_newSwingLow := true
 
-    if willy_newSwingHigh and not na(willy_swHigh2) and willy_showSwings
-        label.new(willy_swHigh1Idx, willy_swHigh1, willy_swHigh1 > willy_swHigh2 ? "HH" : "LH", color = color.new(color.white, 100), textcolor = willy_swHigh1 > willy_swHigh2 ? willy_bullColor : willy_bearColor, style = label.style_label_down, size = size.tiny)
-    if willy_newSwingLow and not na(willy_swLow2) and willy_showSwings
-        label.new(willy_swLow1Idx, willy_swLow1, willy_swLow1 > willy_swLow2 ? "HL" : "LL", color = color.new(color.white, 100), textcolor = willy_swLow1 > willy_swLow2 ? willy_bullColor : willy_bearColor, style = label.style_label_up, size = size.tiny)
+    if struct_newSwingHigh and not na(struct_swHigh2) and struct_showSwings
+        label.new(struct_swHigh1Idx, struct_swHigh1, struct_swHigh1 > struct_swHigh2 ? "HH" : "LH", color = color.new(color.white, 100), textcolor = struct_swHigh1 > struct_swHigh2 ? struct_bullColor : struct_bearColor, style = label.style_label_down, size = size.tiny)
+    if struct_newSwingLow and not na(struct_swLow2) and struct_showSwings
+        label.new(struct_swLow1Idx, struct_swLow1, struct_swLow1 > struct_swLow2 ? "HL" : "LL", color = color.new(color.white, 100), textcolor = struct_swLow1 > struct_swLow2 ? struct_bullColor : struct_bearColor, style = label.style_label_up, size = size.tiny)
 
-var int willy_structureBias = 0
-var int willy_lastBrokenHighIdx = na
-var int willy_lastBrokenLowIdx  = na
-bool willy_isBOS = false
-bool willy_isCHoCH = false
+var int struct_structureBias = 0
+var int struct_lastBrokenHighIdx = na
+var int struct_lastBrokenLowIdx  = na
+bool struct_isBOS = false
+bool struct_isCHoCH = false
 
-if show_feels_willy
-    if not na(willy_swHigh1) and close > willy_swHigh1 and willy_swHigh1Idx != willy_lastBrokenHighIdx
-        if willy_structureBias <= 0
-            willy_isCHoCH := true
-            willy_fibDirection := 1
-            willy_fibSwingHigh := high
-            willy_fibSwingHighIdx := bar_index
-            willy_fibSwingLow := willy_swLow1
-            willy_fibSwingLowIdx := willy_swLow1Idx
+if show_s_r_engine
+    if not na(struct_swHigh1) and close > struct_swHigh1 and struct_swHigh1Idx != struct_lastBrokenHighIdx
+        if struct_structureBias <= 0
+            struct_isCHoCH := true
+            struct_fibDirection := 1
+            struct_fibSwingHigh := high
+            struct_fibSwingHighIdx := bar_index
+            struct_fibSwingLow := struct_swLow1
+            struct_fibSwingLowIdx := struct_swLow1Idx
         else
-            willy_isBOS := true
-            willy_fibSwingHigh := high
-            willy_fibSwingHighIdx := bar_index
-            willy_fibSwingLow := willy_swLow1
-            willy_fibSwingLowIdx := willy_swLow1Idx
-        willy_structureBias := 1
-        willy_lastBrokenHighIdx := willy_swHigh1Idx
-        if willy_showStruct
-            line.new(willy_swHigh1Idx, willy_swHigh1, bar_index, willy_swHigh1, color = willy_bullColor, style = line.style_dashed)
-            label.new(math.round(math.avg(willy_swHigh1Idx, bar_index)), willy_swHigh1, willy_isCHoCH ? "CHoCH" : "BOS", color = color.new(willy_bullColor, 100), textcolor = willy_bullColor, style = label.style_label_down, size = size.small)
+            struct_isBOS := true
+            struct_fibSwingHigh := high
+            struct_fibSwingHighIdx := bar_index
+            struct_fibSwingLow := struct_swLow1
+            struct_fibSwingLowIdx := struct_swLow1Idx
+        struct_structureBias := 1
+        struct_lastBrokenHighIdx := struct_swHigh1Idx
+        if struct_showStruct
+            line.new(struct_swHigh1Idx, struct_swHigh1, bar_index, struct_swHigh1, color = struct_bullColor, style = line.style_dashed)
+            label.new(math.round(math.avg(struct_swHigh1Idx, bar_index)), struct_swHigh1, struct_isCHoCH ? "CHoCH" : "BOS", color = color.new(struct_bullColor, 100), textcolor = struct_bullColor, style = label.style_label_down, size = size.small)
 
-    if not na(willy_swLow1) and close < willy_swLow1 and willy_swLow1Idx != willy_lastBrokenLowIdx
-        if willy_structureBias >= 0
-            willy_isCHoCH := true
-            willy_fibDirection := -1
-            willy_fibSwingLow := low
-            willy_fibSwingLowIdx := bar_index
-            willy_fibSwingHigh := willy_swHigh1
-            willy_fibSwingHighIdx := willy_swHigh1Idx
+    if not na(struct_swLow1) and close < struct_swLow1 and struct_swLow1Idx != struct_lastBrokenLowIdx
+        if struct_structureBias >= 0
+            struct_isCHoCH := true
+            struct_fibDirection := -1
+            struct_fibSwingLow := low
+            struct_fibSwingLowIdx := bar_index
+            struct_fibSwingHigh := struct_swHigh1
+            struct_fibSwingHighIdx := struct_swHigh1Idx
         else
-            willy_isBOS := true
-            willy_fibSwingLow := low
-            willy_fibSwingLowIdx := bar_index
-            willy_fibSwingHigh := willy_swHigh1
-            willy_fibSwingHighIdx := willy_swHigh1Idx
-        willy_structureBias := -1
-        willy_lastBrokenLowIdx := willy_swLow1Idx
-        if willy_showStruct
-            line.new(willy_swLow1Idx, willy_swLow1, bar_index, willy_swLow1, color = willy_bearColor, style = line.style_dashed)
-            label.new(math.round(math.avg(willy_swLow1Idx, bar_index)), willy_swLow1, willy_isCHoCH ? "CHoCH" : "BOS", color = color.new(willy_bearColor, 100), textcolor = willy_bearColor, style = label.style_label_up, size = size.small)
+            struct_isBOS := true
+            struct_fibSwingLow := low
+            struct_fibSwingLowIdx := bar_index
+            struct_fibSwingHigh := struct_swHigh1
+            struct_fibSwingHighIdx := struct_swHigh1Idx
+        struct_structureBias := -1
+        struct_lastBrokenLowIdx := struct_swLow1Idx
+        if struct_showStruct
+            line.new(struct_swLow1Idx, struct_swLow1, bar_index, struct_swLow1, color = struct_bearColor, style = line.style_dashed)
+            label.new(math.round(math.avg(struct_swLow1Idx, bar_index)), struct_swLow1, struct_isCHoCH ? "CHoCH" : "BOS", color = color.new(struct_bearColor, 100), textcolor = struct_bearColor, style = label.style_label_up, size = size.small)
 
     // Update live Fib extremes
-    if willy_fibDirection == 1 and high > willy_fibSwingHigh
-        willy_fibSwingHigh := high
-        willy_fibSwingHighIdx := bar_index
-    if willy_fibDirection == -1 and low < willy_fibSwingLow
-        willy_fibSwingLow := low
-        willy_fibSwingLowIdx := bar_index
+    if struct_fibDirection == 1 and high > struct_fibSwingHigh
+        struct_fibSwingHigh := high
+        struct_fibSwingHighIdx := bar_index
+    if struct_fibDirection == -1 and low < struct_fibSwingLow
+        struct_fibSwingLow := low
+        struct_fibSwingLowIdx := bar_index
 
-f_draw_zone(fw_Zone z, color baseCol, float maxS, float maxV) =>
+f_draw_zone(uis_Zone z, color baseCol, float maxS, float maxV) =>
     if not na(z.top) and not na(z.bot)
         fillOp = 85
         fill = color.new(baseCol, fillOp)
-        fw_box_buffer.push(box.new(z.firstBar, z.top, bar_index + 10, z.bot, border_color = na, bgcolor = fill))
+        uis_box_buffer.push(box.new(z.firstBar, z.top, bar_index + 10, z.bot, border_color = na, bgcolor = fill))
 
 // Fib logic and Visuals drawing
-if show_feels_willy and barstate.islast
-    f_fw_clear_buffers()
+if show_s_r_engine and barstate.islast
+    f_uis_clear_buffers()
 
     mxS = 0.0
     mvV = 0.0
-    for i = 0 to (feels_resZones.size() > 0 ? feels_resZones.size() - 1 : -1)
+    for i = 0 to (s_r_resZones.size() > 0 ? s_r_resZones.size() - 1 : -1)
         if i >= 0
-            mxS := math.max(mxS, feels_resZones.get(i).strength)
-            mvV := math.max(mvV, feels_resZones.get(i).volSum)
-    for i = 0 to (feels_supZones.size() > 0 ? feels_supZones.size() - 1 : -1)
+            mxS := math.max(mxS, s_r_resZones.get(i).strength)
+            mvV := math.max(mvV, s_r_resZones.get(i).volSum)
+    for i = 0 to (s_r_supZones.size() > 0 ? s_r_supZones.size() - 1 : -1)
         if i >= 0
-            mxS := math.max(mxS, feels_supZones.get(i).strength)
-            mvV := math.max(mvV, feels_supZones.get(i).volSum)
+            mxS := math.max(mxS, s_r_supZones.get(i).strength)
+            mvV := math.max(mvV, s_r_supZones.get(i).volSum)
 
-    if feels_resZones.size() > 0
-        for i = 0 to feels_resZones.size() - 1
-            z = feels_resZones.get(i)
+    if s_r_resZones.size() > 0
+        for i = 0 to s_r_resZones.size() - 1
+            z = s_r_resZones.get(i)
             if na(z.diedBar)
-                f_draw_zone(z, feels_resColor, mxS, mvV)
-    if feels_supZones.size() > 0
-        for i = 0 to feels_supZones.size() - 1
-            z = feels_supZones.get(i)
+                f_draw_zone(z, s_r_resColor, mxS, mvV)
+    if s_r_supZones.size() > 0
+        for i = 0 to s_r_supZones.size() - 1
+            z = s_r_supZones.get(i)
             if na(z.diedBar)
-                f_draw_zone(z, feels_supColor, mxS, mvV)
+                f_draw_zone(z, s_r_supColor, mxS, mvV)
 
-    // Willy Fibonacci Drawing
-    if willy_showFib and not na(willy_fibSwingHigh) and not na(willy_fibSwingLow)
-        float fib0 = willy_fibDirection == 1 ? willy_fibSwingLow : willy_fibSwingHigh
-        float fib1 = willy_fibDirection == 1 ? willy_fibSwingHigh : willy_fibSwingLow
-        float range = math.abs(fib1 - fib0)
+    // Structure Fibonacci Drawing
+    if struct_showFib and not na(struct_fibSwingHigh) and not na(struct_fibSwingLow)
+        float fib0 = struct_fibDirection == 1 ? struct_fibSwingLow : struct_fibSwingHigh
+        float fib1 = struct_fibDirection == 1 ? struct_fibSwingHigh : struct_fibSwingLow
+        float price_range = math.abs(fib1 - fib0)
 
-        if range > 0
-            fw_line_buffer.push(line.new(bar_index, fib0 + range * 0.382 * (willy_fibDirection == 1 ? 1 : -1), bar_index + 10, fib0 + range * 0.382 * (willy_fibDirection == 1 ? 1 : -1), color=color.new(color.gray, 50), style=line.style_dotted))
-            fw_label_buffer.push(label.new(bar_index + 10, fib0 + range * 0.382 * (willy_fibDirection == 1 ? 1 : -1), "0.382", style=label.style_label_left, size=size.tiny, color=color.new(color.white, 100), textcolor=color.gray))
+        if price_range > 0
+            uis_line_buffer.push(line.new(bar_index, fib0 + price_range * 0.382 * (struct_fibDirection == 1 ? 1 : -1), bar_index + 10, fib0 + price_range * 0.382 * (struct_fibDirection == 1 ? 1 : -1), color=color.new(color.gray, 50), style=line.style_dotted))
+            uis_label_buffer.push(label.new(bar_index + 10, fib0 + price_range * 0.382 * (struct_fibDirection == 1 ? 1 : -1), "0.382", style=label.style_label_left, size=size.tiny, color=color.new(color.white, 100), textcolor=color.gray))
 
-            fw_line_buffer.push(line.new(bar_index, fib0 + range * 0.5 * (willy_fibDirection == 1 ? 1 : -1), bar_index + 10, fib0 + range * 0.5 * (willy_fibDirection == 1 ? 1 : -1), color=color.new(color.gray, 50), style=line.style_dotted))
-            fw_label_buffer.push(label.new(bar_index + 10, fib0 + range * 0.5 * (willy_fibDirection == 1 ? 1 : -1), "0.5", style=label.style_label_left, size=size.tiny, color=color.new(color.white, 100), textcolor=color.gray))
+            uis_line_buffer.push(line.new(bar_index, fib0 + price_range * 0.5 * (struct_fibDirection == 1 ? 1 : -1), bar_index + 10, fib0 + price_range * 0.5 * (struct_fibDirection == 1 ? 1 : -1), color=color.new(color.gray, 50), style=line.style_dotted))
+            uis_label_buffer.push(label.new(bar_index + 10, fib0 + price_range * 0.5 * (struct_fibDirection == 1 ? 1 : -1), "0.5", style=label.style_label_left, size=size.tiny, color=color.new(color.white, 100), textcolor=color.gray))
 
-            fw_line_buffer.push(line.new(bar_index, fib0 + range * 0.618 * (willy_fibDirection == 1 ? 1 : -1), bar_index + 10, fib0 + range * 0.618 * (willy_fibDirection == 1 ? 1 : -1), color=color.new(color.gray, 50), style=line.style_dotted))
-            fw_label_buffer.push(label.new(bar_index + 10, fib0 + range * 0.618 * (willy_fibDirection == 1 ? 1 : -1), "0.618", style=label.style_label_left, size=size.tiny, color=color.new(color.white, 100), textcolor=color.gray))
+            uis_line_buffer.push(line.new(bar_index, fib0 + price_range * 0.618 * (struct_fibDirection == 1 ? 1 : -1), bar_index + 10, fib0 + price_range * 0.618 * (struct_fibDirection == 1 ? 1 : -1), color=color.new(color.gray, 50), style=line.style_dotted))
+            uis_label_buffer.push(label.new(bar_index + 10, fib0 + price_range * 0.618 * (struct_fibDirection == 1 ? 1 : -1), "0.618", style=label.style_label_left, size=size.tiny, color=color.new(color.white, 100), textcolor=color.gray))
 
 // ==========================================
 // ALERTS
@@ -731,41 +731,41 @@ if show_ibp
     if ibp_sell_trigger
         alert("IBP Sell Signal: Bearish rejection at Bank Point", alert.freq_once_per_bar)
 
-// FEELS Alerts
-f_feels_priceTouchesAlive(array<fw_Zone> zs) =>
+// S&R Alerts
+f_s_r_priceTouchesAlive(array<uis_Zone> zs) =>
     hit = false
     if zs.size() > 0
         for i = 0 to zs.size() - 1
             z = zs.get(i)
-            if na(z.diedBar) and z.touches >= feels_minTouches and high >= z.bot and low <= z.top
+            if na(z.diedBar) and z.touches >= s_r_minTouches and high >= z.bot and low <= z.top
                 hit := true
                 break
     hit
 
-if show_feels_willy
-    if f_feels_priceTouchesAlive(feels_resZones)
-        alert("FEELS: Price reached an active resistance zone", alert.freq_once_per_bar)
-    if f_feels_priceTouchesAlive(feels_supZones)
-        alert("FEELS: Price reached an active support zone", alert.freq_once_per_bar)
+if show_s_r_engine
+    if f_s_r_priceTouchesAlive(s_r_resZones)
+        alert("S&R: Price reached an active resistance zone", alert.freq_once_per_bar)
+    if f_s_r_priceTouchesAlive(s_r_supZones)
+        alert("S&R: Price reached an active support zone", alert.freq_once_per_bar)
 
-// Willy Alerts
-if show_feels_willy
-    if willy_isBOS
-        alert("Willy: Break of Structure (" + (willy_structureBias > 0 ? "Bull" : "Bear") + ")", alert.freq_once_per_bar_close)
-    if willy_isCHoCH
-        alert("Willy: Change of Character (" + (willy_structureBias > 0 ? "Bull" : "Bear") + ")", alert.freq_once_per_bar_close)
+// Structure Alerts
+if show_s_r_engine
+    if struct_isBOS
+        alert("Structure: Break of Structure (" + (struct_structureBias > 0 ? "Bull" : "Bear") + ")", alert.freq_once_per_bar_close)
+    if struct_isCHoCH
+        alert("Structure: Change of Character (" + (struct_structureBias > 0 ? "Bull" : "Bear") + ")", alert.freq_once_per_bar_close)
 
 // Dashboard
-if show_feels_willy and willy_showDash and barstate.islast
-    var table fw_dash = table.new(position.top_right, 2, 5, color.new(color.black, 10), color.gray, 1, color.gray, 1)
-    table.cell(fw_dash, 0, 0, "Trend", text_color=color.white)
-    table.cell(fw_dash, 1, 0, willy_structureBias > 0 ? "Bullish" : willy_structureBias < 0 ? "Bearish" : "Neutral", text_color=willy_structureBias > 0 ? willy_bullColor : willy_structureBias < 0 ? willy_bearColor : color.gray)
-    table.cell(fw_dash, 0, 1, "OMA Status", text_color=color.white)
-    table.cell(fw_dash, 1, 1, oma_status, text_color=color.white)
-    table.cell(fw_dash, 0, 2, "IBP Eligible", text_color=color.white)
-    table.cell(fw_dash, 1, 2, ibp_session_eligible ? "Yes" : "No", text_color=ibp_session_eligible ? color.green : color.red)
-    table.cell(fw_dash, 0, 3, "ATR", text_color=color.white)
-    table.cell(fw_dash, 1, 3, str.tostring(willy_atr14, format.mintick), text_color=color.white)
+if show_s_r_engine and struct_showDash and barstate.islast
+    var table uis_dash = table.new(position.top_right, 2, 5, color.new(color.black, 10), color.gray, 1, color.gray, 1)
+    table.cell(uis_dash, 0, 0, "Trend", text_color=color.white)
+    table.cell(uis_dash, 1, 0, struct_structureBias > 0 ? "Bullish" : struct_structureBias < 0 ? "Bearish" : "Neutral", text_color=struct_structureBias > 0 ? struct_bullColor : struct_structureBias < 0 ? struct_bearColor : color.gray)
+    table.cell(uis_dash, 0, 1, "OMA Status", text_color=color.white)
+    table.cell(uis_dash, 1, 1, oma_status, text_color=color.white)
+    table.cell(uis_dash, 0, 2, "IBP Eligible", text_color=color.white)
+    table.cell(uis_dash, 1, 2, ibp_session_eligible ? "Yes" : "No", text_color=ibp_session_eligible ? color.green : color.red)
+    table.cell(uis_dash, 0, 3, "ATR", text_color=color.white)
+    table.cell(uis_dash, 1, 3, str.tostring(struct_atr14, format.mintick), text_color=color.white)
 
 // Cleanup
 if array.size(label.all) > 450
