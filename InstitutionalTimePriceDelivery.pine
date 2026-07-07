@@ -55,7 +55,7 @@ if low <= active_incomplete_low
 
 // Plotting the Target Vectors
 plot(i_showIncomplete ? active_incomplete_high : na, title="Incomplete High Target", color=color.orange, style=plot.style_linebr, linewidth=2)
-plot(i_showIncomplete ? active_incomplete_low : na, title="Incomplete Low Target", color=color.magenta, style=plot.style_linebr, linewidth=2)
+plot(i_showIncomplete ? active_incomplete_low : na, title="Incomplete Low Target", color=color.fuchsia, style=plot.style_linebr, linewidth=2)
 
 
 // ==========================================
@@ -81,7 +81,7 @@ if i_showIncomplete and incomplete_high_detected
     label.new(x=bar_index, y=htf_high, text="Incomplete High\n(Algo Target)", color=color.orange, textcolor=color.white, style=label.style_label_down, size=size.small)
 
 if i_showIncomplete and incomplete_low_detected
-    label.new(x=bar_index, y=htf_low, text="Incomplete Low\n(Algo Target)", color=color.magenta, textcolor=color.white, style=label.style_label_up, size=size.small)
+    label.new(x=bar_index, y=htf_low, text="Incomplete Low\n(Algo Target)", color=color.fuchsia, textcolor=color.white, style=label.style_label_up, size=size.small)
 
 // Strategy Alerts for Automation Setup
 alertcondition(incomplete_high_detected, title="Incomplete High Target Formed", message="Algorithm engineered an incomplete high target zone.")
