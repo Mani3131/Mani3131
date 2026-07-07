@@ -1,0 +1,312 @@
+//@version=6
+strategy("Ultimate Institutional Combo", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, max_boxes_count=500, max_lines_count=500)
+
+// ==========================================
+// 1. GLOBAL SETTINGS & TOGGLES
+// ==========================================
+grp_main = "Global Settings"
+enable_alli = input.bool(true, "Enable Williams Alligator", group=grp_main)
+enable_oma  = input.bool(true, "Enable Opening Manipulation Axiom", group=grp_main)
+enable_ibp  = input.bool(true, "Enable Institutional Bank Point", group=grp_main)
+
+// ==========================================
+// 2. WILLIAMS ALLIGATOR MODULE
+// ==========================================
+grp_alli = "Williams Alligator"
+alli_scalpingMode = input.bool(false, "Scalping Mode", tooltip="Filters noise on lower timeframes like 1m Gold. Sets periods to 130, 80, 50.", group=grp_alli)
+alli_exitType = input.string("Conservative", "Exit Type", options=["Aggressive", "Conservative"], tooltip="Aggressive: Close when price breaks Lip line. Conservative: Close when Lip crosses Teeth.", group=grp_alli)
+alli_maTypeInput = input.string("Smoothed", "Moving Average Type", options=["Smoothed", "Linear Weighted"], tooltip="Smoothed is default, Linear Weighted tracks more tightly.", group=grp_alli)
+
+// Periods
+alli_jawPeriodInput = input.int(13, "Jaw Period", minval=1, group=grp_alli)
+alli_teethPeriodInput = input.int(8, "Teeth Period", minval=1, group=grp_alli)
+alli_lipsPeriodInput = input.int(5, "Lips Period", minval=1, group=grp_alli)
+
+// Offsets
+alli_jawOffsetInput = input.int(8, "Jaw Offset", minval=0, group=grp_alli)
+alli_teethOffsetInput = input.int(5, "Teeth Offset", minval=0, group=grp_alli)
+alli_lipsOffsetInput = input.int(3, "Lips Offset", minval=0, group=grp_alli)
+
+// Colors
+alli_jawColor = input.color(color.blue, "Jaw Color", group=grp_alli)
+alli_teethColor = input.color(color.red, "Teeth Color", group=grp_alli)
+alli_lipsColor = input.color(color.green, "Lips Color", group=grp_alli)
+
+// ==========================================
+// 3. OPENING MANIPULATION AXIOM (OMA)
+// ==========================================
+grp_oma = "Opening Manipulation Axiom"
+// (OMA logic doesn't have many inputs in the provided snippet besides behavior)
+
+// ==========================================
+// 4. INSTITUTIONAL BANK POINT (IBP)
+// ==========================================
+grp_ibp = "Institutional Bank Point"
+ibp_use_london = input.bool(true, "Focus on London Open (08:00 GMT)", group=grp_ibp)
+ibp_use_ny = input.bool(true, "Focus on NY Open (12:00 GMT)", group=grp_ibp)
+ibp_only_focus_sessions = input.bool(false, "Only Trade Focused Sessions", group=grp_ibp)
+
+// ==========================================
+// 5. SHARED HELPERS & TIME LOGIC
+// ==========================================
+// Common time variables
+hour_gmt3 = hour(time, "GMT+3")
+minute_gmt3 = minute(time, "GMT+3")
+
+// ==========================================
+// 6. WILLIAMS ALLIGATOR LOGIC
+// ==========================================
+alli_jawPeriod = alli_scalpingMode ? 130 : alli_jawPeriodInput
+alli_teethPeriod = alli_scalpingMode ? 80 : alli_teethPeriodInput
+alli_lipsPeriod = alli_scalpingMode ? 50 : alli_lipsPeriodInput
+
+alli_f_ma(src, length, type) =>
+    switch type
+        "Smoothed" => ta.rma(src, length)
+        "Linear Weighted" => ta.wma(src, length)
+        => ta.sma(src, length)
+
+alli_src = hl2
+alli_jawValue = alli_f_ma(alli_src, alli_jawPeriod, alli_maTypeInput)
+alli_teethValue = alli_f_ma(alli_src, alli_teethPeriod, alli_maTypeInput)
+alli_lipsValue = alli_f_ma(alli_src, alli_lipsPeriod, alli_maTypeInput)
+
+// Strategy Logic
+alli_currentJaw = alli_jawValue[alli_jawOffsetInput]
+alli_currentTeeth = alli_teethValue[alli_teethOffsetInput]
+alli_currentLips = alli_lipsValue[alli_lipsOffsetInput]
+
+alli_isEatingLong = alli_currentLips > alli_currentTeeth and alli_currentTeeth > alli_currentJaw
+alli_isEatingShort = alli_currentLips < alli_currentTeeth and alli_currentTeeth < alli_currentJaw
+alli_isSleeping = not (alli_isEatingLong or alli_isEatingShort)
+
+alli_spread = math.abs(alli_currentLips - alli_currentJaw)
+alli_isFanning = ta.rising(alli_spread, 1)
+
+alli_longCondition = enable_alli and alli_isEatingLong and alli_isFanning and low > math.max(alli_currentLips, math.max(alli_currentTeeth, alli_currentJaw))
+alli_shortCondition = enable_alli and alli_isEatingShort and alli_isFanning and high < math.min(alli_currentLips, math.min(alli_currentTeeth, alli_currentJaw))
+
+alli_exitLong = alli_exitType == "Aggressive" ? close < alli_currentLips : ta.crossunder(alli_currentLips, alli_currentTeeth)
+alli_exitShort = alli_exitType == "Aggressive" ? close > alli_currentLips : ta.crossover(alli_currentLips, alli_currentTeeth)
+
+// ==========================================
+// 7. OPENING MANIPULATION AXIOM (OMA) LOGIC
+// ==========================================
+var float oma_zone_high = float(na)
+var float oma_zone_low = float(na)
+var float oma_post_zone_high = float(na)
+var float oma_post_zone_low = float(na)
+var string oma_strategy_status = "Idle"
+var float oma_entry_sl = float(na)
+
+oma_is_new_hour = ta.change(time("60")) != 0
+oma_is_purge_min = minute(time) == 59
+
+if oma_is_new_hour or oma_is_purge_min
+    oma_zone_high := float(na)
+    oma_zone_low := float(na)
+    oma_post_zone_high := float(na)
+    oma_post_zone_low := float(na)
+    oma_strategy_status := "Idle"
+    oma_entry_sl := float(na)
+    if oma_is_purge_min and enable_oma
+        strategy.close_all(comment="OMA Safety Purge")
+        strategy.cancel_all()
+
+oma_curr_min = minute(time)
+
+// Phase A: Anchor Window (00-09)
+if oma_curr_min >= 0 and oma_curr_min <= 9
+    if oma_is_new_hour or na(oma_zone_high)
+        oma_zone_high := high
+        oma_zone_low := low
+    else
+        oma_zone_high := math.max(oma_zone_high, high)
+        oma_zone_low := math.min(oma_zone_low, low)
+    oma_strategy_status := "Searching for Expansion"
+
+// Phase B: Expansion Window (10-58)
+if oma_curr_min >= 10 and oma_curr_min <= 58
+    if na(oma_post_zone_high)
+        oma_post_zone_high := high
+        oma_post_zone_low := low
+    else
+        oma_post_zone_high := math.max(oma_post_zone_high, high)
+        oma_post_zone_low := math.min(oma_post_zone_low, low)
+
+    if oma_strategy_status == "Searching for Expansion"
+        oma_strategy_status := "Waiting for Retracement"
+
+oma_price_touches_low = low <= oma_zone_low and high >= oma_zone_low
+oma_buy_condition = enable_oma and oma_strategy_status == "Waiting for Retracement" and oma_post_zone_low < oma_zone_low and oma_price_touches_low and strategy.position_size == 0
+
+oma_price_touches_high = high >= oma_zone_high and low <= oma_zone_high
+oma_sell_condition = enable_oma and oma_strategy_status == "Waiting for Retracement" and oma_post_zone_high > oma_zone_high and oma_price_touches_high and strategy.position_size == 0
+
+// ==========================================
+// 8. INSTITUTIONAL BANK POINT (IBP) LOGIC
+// ==========================================
+var float ibp_bank_point = float(na)
+var float ibp_prev_4h_high = float(na)
+var float ibp_prev_4h_low = float(na)
+var float ibp_manipulation_high = float(na)
+var float ibp_manipulation_low = float(na)
+
+ibp_is_cycle_hour = hour_gmt3 == 7 or hour_gmt3 == 11 or hour_gmt3 == 15 or hour_gmt3 == 19 or hour_gmt3 == 23 or hour_gmt3 == 3
+ibp_is_cycle_start = ibp_is_cycle_hour and minute_gmt3 == 0 and ta.change(time) != 0
+
+var bool ibp_session_eligible = false
+if ibp_is_cycle_start
+    ibp_session_eligible := not ibp_only_focus_sessions or (ibp_use_london and hour_gmt3 == 11) or (ibp_use_ny and hour_gmt3 == 15)
+
+f_ibp_get_anchor_midpoint() =>
+    float min_range = 1e10
+    float a_h = na
+    float a_l = na
+    for i = 0 to 15
+        float r = high[i] - low[i]
+        if r < min_range
+            min_range := r
+            a_h := high[i]
+            a_l := low[i]
+    (a_h + a_l) / 2.0
+
+ibp_bp_from_15m = request.security(syminfo.tickerid, "15", f_ibp_get_anchor_midpoint()[1])
+[ibp_p4h_h, ibp_p4h_l] = request.security(syminfo.tickerid, "240", [high[1], low[1]])
+
+if ibp_is_cycle_start
+    ibp_bank_point := ibp_bp_from_15m
+    ibp_prev_4h_high := ibp_p4h_h
+    ibp_prev_4h_low := ibp_p4h_l
+    ibp_manipulation_high := float(na)
+    ibp_manipulation_low := float(na)
+
+var int ibp_bars_since_cycle_start = 0
+if ibp_is_cycle_start
+    ibp_bars_since_cycle_start := 0
+else
+    ibp_bars_since_cycle_start += 1
+
+ibp_is_manipulation_window = ibp_bars_since_cycle_start < 10
+ibp_is_after_manipulation = ibp_bars_since_cycle_start >= 10
+
+if ibp_is_manipulation_window
+    ibp_manipulation_high := na(ibp_manipulation_high) ? high : math.max(ibp_manipulation_high, high)
+    ibp_manipulation_low := na(ibp_manipulation_low) ? low : math.min(ibp_manipulation_low, low)
+
+var bool ibp_has_broken_above = false
+if ibp_is_cycle_start
+    ibp_has_broken_above := false
+if ibp_is_after_manipulation and close[1] > ibp_bank_point
+    ibp_has_broken_above := true
+
+ibp_is_bearish_rejection = close[1] < open[1] and high[1] >= ibp_bank_point and close[1] < ibp_bank_point
+ibp_is_bullish_rejection = close[1] > open[1] and low[1] <= ibp_bank_point and close[1] > ibp_bank_point
+
+var bool ibp_trade_taken_this_cycle = false
+if ibp_is_cycle_start
+    ibp_trade_taken_this_cycle := false
+
+ibp_can_trigger = enable_ibp and ibp_is_after_manipulation and ibp_session_eligible and not ibp_trade_taken_this_cycle and not na(ibp_bank_point)
+ibp_sell_trigger = ibp_can_trigger and not ibp_has_broken_above and ibp_is_bearish_rejection
+ibp_buy_trigger = ibp_can_trigger and ibp_has_broken_above and ibp_is_bullish_rejection
+
+// ==========================================
+// 9. EXECUTION CONSOLIDATION
+// ==========================================
+// Alligator Entry
+if alli_longCondition
+    strategy.entry("Alli Long", strategy.long, comment="Alligator Long")
+if alli_shortCondition
+    strategy.entry("Alli Short", strategy.short, comment="Alligator Short")
+
+// Alligator Exit
+if strategy.position_size > 0 and alli_exitLong and not (oma_buy_condition or ibp_buy_trigger)
+    strategy.close("Alli Long", comment="Alligator Exit Long")
+if strategy.position_size < 0 and alli_exitShort and not (oma_sell_condition or ibp_sell_trigger)
+    strategy.close("Alli Short", comment="Alligator Exit Short")
+
+// OMA Entry
+if oma_buy_condition
+    oma_entry_sl := oma_post_zone_low
+    strategy.entry("OMA Long", strategy.long, comment="OMA Low of Hour")
+    strategy.exit("OMA Exit Long", "OMA Long", stop=oma_entry_sl, comment="OMA SL")
+
+if oma_sell_condition
+    oma_entry_sl := oma_post_zone_high
+    strategy.entry("OMA Short", strategy.short, comment="OMA High of Hour")
+    strategy.exit("OMA Exit Short", "OMA Short", stop=oma_entry_sl, comment="OMA SL")
+
+// IBP Entry
+if ibp_buy_trigger
+    ibp_trade_taken_this_cycle := true
+    strategy.entry("IBP Long", strategy.long, comment="IBP Buy")
+
+if ibp_sell_trigger
+    ibp_trade_taken_this_cycle := true
+    strategy.entry("IBP Short", strategy.short, comment="IBP Sell")
+
+// ==========================================
+// 10. VISUALS & DASHBOARD
+// ==========================================
+// Alligator Plots
+plot(alli_jawValue, "Alli Jaw", color=enable_alli ? alli_jawColor : color.new(color.gray, 100), offset=alli_jawOffsetInput)
+plot(alli_teethValue, "Alli Teeth", color=enable_alli ? alli_teethColor : color.new(color.gray, 100), offset=alli_teethOffsetInput)
+plot(alli_lipsValue, "Alli Lips", color=enable_alli ? alli_lipsColor : color.new(color.gray, 100), offset=alli_lipsOffsetInput)
+bgcolor(enable_alli and alli_isSleeping ? color.new(color.gray, 90) : na, title="Alli Sleeping Phase")
+plotshape(enable_alli and alli_longCondition, "Alli Buy Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(enable_alli and alli_shortCondition, "Alli Sell Signal", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// OMA Plots
+var box oma_anchor_box = box(na)
+if oma_is_new_hour and enable_oma
+    oma_anchor_box := box.new(bar_index, na, bar_index + 9, na, border_color=color.blue, bgcolor=color.new(color.blue, 90))
+
+if not na(oma_anchor_box) and oma_curr_min <= 58 and enable_oma
+    box.set_top(oma_anchor_box, oma_zone_high)
+    box.set_bottom(oma_anchor_box, oma_zone_low)
+    box.set_right(oma_anchor_box, bar_index)
+
+plot(enable_oma ? oma_zone_high : na, "OMA Zone High", color=color.new(color.green, 50), style=plot.style_stepline, linewidth=2)
+plot(enable_oma ? oma_zone_low : na, "OMA Zone Low", color=color.new(color.red, 50), style=plot.style_stepline, linewidth=2)
+
+if barstate.islast and enable_oma
+    label.new(bar_index, high, "OMA Status: " + oma_strategy_status, color=color.white, style=label.style_label_down)
+
+// IBP Plots
+var line ibp_bp_line = na
+if ibp_is_cycle_start and enable_ibp
+    ibp_bp_line := line.new(bar_index, ibp_bank_point, bar_index, ibp_bank_point, color=color.yellow, width=2)
+if not na(ibp_bp_line) and enable_ibp
+    line.set_x2(ibp_bp_line, bar_index)
+
+plotshape(ibp_buy_trigger, "IBP Buy Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(ibp_sell_trigger, "IBP Sell Signal", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+var box ibp_manip_box = na
+if ibp_is_cycle_start and enable_ibp
+    ibp_manip_box := box.new(bar_index, high, bar_index + 9, low, bgcolor=color.new(color.gray, 80), border_color=color.gray, text="IBP Manip", text_color=color.white, text_size=size.tiny)
+if not na(ibp_manip_box) and ibp_is_manipulation_window and enable_ibp
+    box.set_top(ibp_manip_box, ibp_manipulation_high)
+    box.set_bottom(ibp_manip_box, ibp_manipulation_low)
+    box.set_right(ibp_manip_box, bar_index)
+
+if ibp_is_cycle_start and enable_ibp
+    label.new(bar_index, ibp_bank_point, "Bank Point", color=color.yellow, textcolor=color.black, style=label.style_label_down, size=size.small)
+    label.new(bar_index, ibp_prev_4h_high, "4H High", color=color.green, textcolor=color.white, style=label.style_label_down, size=size.small)
+    label.new(bar_index, ibp_prev_4h_low, "4H Low", color=color.red, textcolor=color.white, style=label.style_label_up, size=size.small)
+
+// DASHBOARD
+var table dash = table.new(position.top_right, 2, 4, bgcolor=color.new(color.black, 50), border_color=color.white, border_width=1)
+if barstate.islast
+    table.cell(dash, 0, 0, "Module", text_color=color.white)
+    table.cell(dash, 1, 0, "Status", text_color=color.white)
+
+    table.cell(dash, 0, 1, "Alligator", text_color=color.white)
+    table.cell(dash, 1, 1, enable_alli ? (alli_isEatingLong ? "Eating Long" : alli_isEatingShort ? "Eating Short" : "Sleeping") : "Disabled", text_color=alli_isSleeping ? color.gray : color.green)
+
+    table.cell(dash, 0, 2, "OMA", text_color=color.white)
+    table.cell(dash, 1, 2, enable_oma ? oma_strategy_status : "Disabled", text_color=color.yellow)
+
+    table.cell(dash, 0, 3, "IBP", text_color=color.white)
+    table.cell(dash, 1, 3, enable_ibp ? (ibp_trade_taken_this_cycle ? "Trade Taken" : "Eligible") : "Disabled", text_color=ibp_session_eligible ? color.green : color.red)
