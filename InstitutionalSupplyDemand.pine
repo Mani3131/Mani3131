@@ -1,0 +1,276 @@
+//@version=6
+strategy("Institutional Supply & Demand Strategy", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=1, max_bars_back=5000)
+
+// --- Inputs ---
+i_htf = input.timeframe("240", "Higher Timeframe (HTF)")
+i_risk_per_trade = input.float(1.0, "Risk per Trade (%)", minval=0.1, step=0.1)
+i_min_rr = input.float(2.0, "Minimum Risk:Reward Ratio", minval=1.0)
+
+// --- HTF Data and Trend Detection ---
+f_get_htf_data() =>
+    ph = ta.pivothigh(5, 5)
+    pl = ta.pivotlow(5, 5)
+
+    ph1 = ta.valuewhen(not na(ph), ph, 0)
+    ph2 = ta.valuewhen(not na(ph), ph, 1)
+    ph3 = ta.valuewhen(not na(ph), ph, 2)
+    pl1 = ta.valuewhen(not na(pl), pl, 0)
+    pl2 = ta.valuewhen(not na(pl), pl, 1)
+    pl3 = ta.valuewhen(not na(pl), pl, 2)
+
+    // Trend Logic: 2 Higher Lows for Uptrend, 2 Lower Highs for Downtrend
+    bool uptrend = pl1 > pl2 and pl2 > pl3 and not na(pl3)
+    bool downtrend = ph1 < ph2 and ph2 < ph3 and not na(ph3)
+    int trend = uptrend ? 1 : (downtrend ? -1 : 0)
+
+    // HTF Zone Detection: Base + Victor
+    body_size = math.abs(close - open)
+    candle_range = high - low
+    is_base = candle_range > 0 and body_size <= candle_range * 0.5
+    is_victor_bull = candle_range > 0 and (close > open) and (body_size >= candle_range * 0.6)
+    is_victor_bear = candle_range > 0 and (close < open) and (body_size >= candle_range * 0.6)
+
+    float d_top = is_victor_bull and is_base[1] ? high[1] : na
+    float d_btm = is_victor_bull and is_base[1] ? low[1] : na
+    float s_top = is_victor_bear and is_base[1] ? high[1] : na
+    float s_btm = is_victor_bear and is_base[1] ? low[1] : na
+
+    [trend, ph1, pl1, high, low, d_top, d_btm, s_top, s_btm]
+
+// Non-repainting HTF security call
+f_get_htf_data_shifted() =>
+    [t, ph, pl, h, l, dt, db, st, sb] = f_get_htf_data()
+    [t[1], ph[1], pl[1], h[1], l[1], dt[1], db[1], st[1], sb[1]]
+
+[htf_trend, htf_last_ph, htf_last_pl, htf_high, htf_low, htf_d_top, htf_d_btm, htf_s_top, htf_s_btm] = request.security(syminfo.tickerid, i_htf, f_get_htf_data_shifted())
+
+// Persist the most recent valid HTF zones
+var float last_htf_d_top = float(na)
+var float last_htf_d_btm = float(na)
+var float last_htf_s_top = float(na)
+var float last_htf_s_btm = float(na)
+
+if not na(htf_d_top)
+    last_htf_d_top := htf_d_top
+    last_htf_d_btm := htf_d_btm
+
+if not na(htf_s_top)
+    last_htf_s_top := htf_s_top
+    last_htf_s_btm := htf_s_btm
+
+// HTF Zone Visualization
+var box htf_d_box = box.new(int(na), float(na), int(na), float(na), border_color=color.green, bgcolor=color.new(color.green, 90))
+var box htf_s_box = box.new(int(na), float(na), int(na), float(na), border_color=color.red, bgcolor=color.new(color.red, 90))
+
+if not na(last_htf_d_top)
+    box.set_lefttop(htf_d_box, bar_index - 100, last_htf_d_top)
+    box.set_rightbottom(htf_d_box, bar_index, last_htf_d_btm)
+
+if not na(last_htf_s_top)
+    box.set_lefttop(htf_s_box, bar_index - 100, last_htf_s_top)
+    box.set_rightbottom(htf_s_box, bar_index, last_htf_s_btm)
+
+// Visualization for debugging
+plotshape(htf_trend == 1, "HTF Uptrend", shape.triangleup, location.top, color.green, size=size.small)
+plotshape(htf_trend == -1, "HTF Downtrend", shape.triangledown, location.top, color.red, size=size.small)
+
+// --- Fibonacci HTF Range ---
+float htf_range_low = htf_last_pl
+float htf_range_high = htf_last_ph
+float htf_equilibrium = (htf_range_low + htf_range_high) / 2
+
+bool is_premium = close > htf_equilibrium
+bool is_discount = close < htf_equilibrium
+
+// Visualization of Fibonacci/Equilibrium
+var line eq_line = line.new(int(na), float(na), int(na), float(na), color=color.gray, style=line.style_dashed)
+if not na(htf_equilibrium)
+    line.set_xy1(eq_line, bar_index - 100, htf_equilibrium)
+    line.set_xy2(eq_line, bar_index, htf_equilibrium)
+
+// --- LTF Zone Detection ---
+// 1. Departure (Explosive Move)
+ltf_body_size = math.abs(close - open)
+ltf_candle_range = high - low
+is_explosive_bull = ltf_candle_range > 0 and close > open and ltf_body_size >= ltf_candle_range * 0.7 and ltf_body_size > ta.sma(ltf_body_size, 20) * 1.5
+is_explosive_bear = ltf_candle_range > 0 and close < open and ltf_body_size >= ltf_candle_range * 0.7 and ltf_body_size > ta.sma(ltf_body_size, 20) * 1.5
+
+// 2. Base (Tightness & Candle Count)
+// We look back from the explosive candle to find the base
+is_ltf_base = ltf_candle_range > 0 and ltf_body_size <= ltf_candle_range * 0.5
+
+// Function to find base characteristics
+f_detect_base(is_bull) =>
+    float base_top = na
+    float base_btm = na
+    int base_count = 0
+    if (is_bull and is_explosive_bull) or (not is_bull and is_explosive_bear)
+        for i = 1 to 5 // Max 5 candles for a "tight" base as per logic
+            if is_ltf_base[i]
+                base_count += 1
+                base_top := na(base_top) ? high[i] : math.max(base_top, high[i])
+                base_btm := na(base_btm) ? low[i] : math.min(base_btm, low[i])
+            else
+                break
+    [base_top, base_btm, base_count]
+
+[ltf_d_top_raw, ltf_d_btm_raw, ltf_d_base_count] = f_detect_base(true)
+[ltf_s_top_raw, ltf_s_btm_raw, ltf_s_base_count] = f_detect_base(false)
+
+// Valid LTF Zone if base count is between 1 and 4 (ensuring orders aren't used up)
+bool ltf_d_found = not na(ltf_d_top_raw) and ltf_d_base_count >= 1 and ltf_d_base_count <= 4
+bool ltf_s_found = not na(ltf_s_top_raw) and ltf_s_base_count >= 1 and ltf_s_base_count <= 4
+
+// --- LTF Zone Persistence and Qualifiers ---
+type Zone
+    float top
+    float btm
+    int start_index
+    int touches = 0
+    bool active = true
+
+var Zone[] demand_zones = array.new<Zone>()
+var Zone[] supply_zones = array.new<Zone>()
+
+if ltf_d_found
+    array.push(demand_zones, Zone.new(ltf_d_top_raw, ltf_d_btm_raw, bar_index - 1))
+if ltf_s_found
+    array.push(supply_zones, Zone.new(ltf_s_top_raw, ltf_s_btm_raw, bar_index - 1))
+
+// 4. Profit Margin
+f_get_nearest_opposing_zone(is_long) =>
+    float opposing_level = na
+    if is_long
+        for i = array.size(supply_zones) - 1 to 0
+            z = array.get(supply_zones, i)
+            if z.active
+                opposing_level := na(opposing_level) ? z.btm : math.min(opposing_level, z.btm)
+    else
+        for i = array.size(demand_zones) - 1 to 0
+            z = array.get(demand_zones, i)
+            if z.active
+                opposing_level := na(opposing_level) ? z.top : math.max(opposing_level, z.top)
+    opposing_level
+
+f_check_profit_margin(entry, stop, is_long) =>
+    opp_zone = f_get_nearest_opposing_zone(is_long)
+    if na(opp_zone)
+        true // Assume infinite margin if no active opposing zone found
+    else
+        risk = math.abs(entry - stop)
+        reward = math.abs(opp_zone - entry)
+        reward >= risk * i_min_rr
+
+// 5. Arrival Check: No new opposing zones blocking path
+f_check_arrival(z_start_index, is_long) =>
+    bool arrival_clean = true
+    if is_long
+        for i = array.size(supply_zones) - 1 to 0
+            sz = array.get(supply_zones, i)
+            if sz.start_index > z_start_index + 1 and sz.active
+                arrival_clean := false
+                break
+    else
+        for i = array.size(demand_zones) - 1 to 0
+            dz = array.get(demand_zones, i)
+            if dz.start_index > z_start_index + 1 and dz.active
+                arrival_clean := false
+                break
+    arrival_clean
+
+// --- "Trade Covered" Logic ---
+f_is_covered(top, btm, is_long) =>
+    if is_long
+        not na(last_htf_d_top) and top <= last_htf_d_top and btm >= last_htf_d_btm
+    else
+        not na(last_htf_s_top) and top <= last_htf_s_top and btm >= last_htf_s_btm
+
+// --- Execution Logic ---
+// We check for entry when price returns to an active, covered, fresh zone in the correct HTF context
+long_entry_signal = false
+short_entry_signal = false
+float entry_price = na
+float sl_price = na
+float tp_price = na
+
+// Search for active zones to enter
+for i = array.size(demand_zones) - 1 to 0
+    z = array.get(demand_zones, i)
+    if z.active and z.touches == 0 and htf_trend >= 0 and is_discount and f_is_covered(z.top, z.btm, true)
+        if low <= z.top and strategy.position_size == 0
+            if f_check_profit_margin(z.top, z.btm, true) and f_check_arrival(z.start_index, true)
+                long_entry_signal := true
+                entry_price := z.top
+                sl_price := z.btm
+                tp_price := entry_price + (entry_price - sl_price) * i_min_rr
+                break
+
+for i = array.size(supply_zones) - 1 to 0
+    z = array.get(supply_zones, i)
+    if z.active and z.touches == 0 and htf_trend <= 0 and is_premium and f_is_covered(z.top, z.btm, false)
+        if high >= z.btm and strategy.position_size == 0
+            if f_check_profit_margin(z.btm, z.top, false) and f_check_arrival(z.start_index, false)
+                short_entry_signal := true
+                entry_price := z.btm
+                sl_price := z.top
+                tp_price := entry_price - (sl_price - entry_price) * i_min_rr
+                break
+
+// Risk Management & Position Sizing
+equity = strategy.equity
+risk_amount = equity * (i_risk_per_trade / 100)
+qty = 0.0
+if not na(entry_price) and not na(sl_price)
+    qty := risk_amount / math.abs(entry_price - sl_price)
+
+if long_entry_signal
+    strategy.entry("Long", strategy.long, qty=qty)
+    strategy.exit("Exit Long", "Long", stop=sl_price, limit=tp_price)
+
+if short_entry_signal
+    strategy.entry("Short", strategy.short, qty=qty)
+    strategy.exit("Exit Short", "Short", stop=sl_price, limit=tp_price)
+
+// Break-Even Logic: Move SL to entry at 1:1 RR
+var float active_sl = float(na)
+var float active_tp = float(na)
+
+if long_entry_signal
+    active_sl := sl_price
+    active_tp := tp_price
+elif short_entry_signal
+    active_sl := sl_price
+    active_tp := tp_price
+
+if strategy.position_size > 0
+    avg_price = strategy.position_avg_price
+    if high >= avg_price + (avg_price - active_sl)
+        active_sl := avg_price
+    strategy.exit("Exit Long", "Long", stop=active_sl, limit=active_tp)
+elif strategy.position_size < 0
+    avg_price = strategy.position_avg_price
+    if low <= avg_price - (active_sl - avg_price)
+        active_sl := avg_price
+    strategy.exit("Exit Short", "Short", stop=active_sl, limit=active_tp)
+else
+    active_sl := na
+    active_tp := na
+
+// 3. Freshness and 5. Arrival
+// Update zones at the end of the bar to avoid skipping first-touch entries
+for i = array.size(demand_zones) - 1 to 0
+    z = array.get(demand_zones, i)
+    if z.active
+        // Check for touch (Freshness: prioritize untouched, avoid 3+ touches)
+        if low <= z.top and high >= z.btm
+            z.touches += 1
+        if z.touches >= 3 or close < z.btm // Invalidated if broken or too many touches
+            z.active := false
+
+for i = array.size(supply_zones) - 1 to 0
+    z = array.get(supply_zones, i)
+    if z.active
+        if high >= z.btm and low <= z.top
+            z.touches += 1
+        if z.touches >= 3 or close > z.top
+            z.active := false
