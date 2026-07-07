@@ -5,11 +5,15 @@ indicator("Institutional Time & Price Delivery Strategy", overlay=true, max_labe
 // 1. TIME-BASED WINDOWS (THE "WHEN")
 // ==========================================
 // The strategy dictates that the algorithm injects volume at specific hourly intervals
-i_timeZone  = input.string("UTC+1", title="Session Timezone", tooltip="Set to London or your broker's timezone")
+i_timeZone  = input.string("UTC+0", title="Session Timezone", tooltip="Set to your broker's timezone (e.g. UTC+0 for London)")
+i_session   = input.session("1000-1900", title="London Session Range", tooltip="The algorithmic windows only trigger during this session")
 i_showHours = input.bool(true, title="Highlight Session Opens", tooltip="Highlights the critical top-of-the-hour algorithmic windows")
 
-// Detect the first 10 minutes of critical hourly blocks (e.g., 10:00 AM, 11:00 AM)
-is_new_hour_window = minute(time, i_timeZone) >= 0 and minute(time, i_timeZone) <= 10
+// Check if current time is within the specified session
+is_in_session = not na(time(timeframe.period, i_session, i_timeZone))
+
+// Detect the first 10 minutes of critical hourly blocks (e.g., 10:00 AM, 11:00 AM) inside the session
+is_new_hour_window = is_in_session and minute(time, i_timeZone) >= 0 and minute(time, i_timeZone) <= 10
 
 // Visual Anchor: Highlight the time window on the chart
 // Using hex code with alpha for transparency (#0000ff14 ≈ color.new(color.blue, 92))
