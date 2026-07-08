@@ -1,0 +1,309 @@
+//@version=6
+strategy("Counter-Trend Structural Framework", overlay=true, margin_long=100, margin_short=100)
+
+// This script implements a counter-trend trading framework based on multi-timeframe market structure analysis.
+
+// --- Inputs ---
+htf_tf = input.timeframe("60", "Higher Time Frame (Step 1)", tooltip="1-Hour is preferred for identifying the External Range.")
+mtf_tf = input.timeframe("15", "Mid-Term Time Frame (Step 2)", tooltip="15-Minute is preferred for the Two-Leg Pullback Signature.")
+ltf_tf = input.timeframe("1", "Lower Time Frame (Step 5)", tooltip="1-Minute or 3-Minute for high-precision entry execution.")
+
+// --- Step 1: External Range (HTF) ---
+// We need to identify BOS on HTF to define the range.
+// Using lookahead=on and [1] index to prevent repainting and ensure data consistency.
+float htf_high = request.security(syminfo.tickerid, htf_tf, high[1], lookahead=barmerge.lookahead_on)
+float htf_low  = request.security(syminfo.tickerid, htf_tf, low[1], lookahead=barmerge.lookahead_on)
+float htf_close = request.security(syminfo.tickerid, htf_tf, close[1], lookahead=barmerge.lookahead_on)
+
+var float ext_high = na
+var float ext_low = na
+var float htf_trend = na // 1.0: Bullish, -1.0: Bearish, na: Unknown
+
+// Pivot-based structure detection for HTF (1H)
+// We define a stateless function to be used within request.security
+f_calc_pivots(len) =>
+    ph = ta.pivothigh(high, len, len)
+    pl = ta.pivotlow(low, len, len)
+    [ph, pl]
+
+f_calc_pivots_shifted(len) =>
+    [ph, pl] = f_calc_pivots(len)
+    [ph[1], pl[1]]
+
+[htf_p_high, htf_p_low] = request.security(syminfo.tickerid, htf_tf, f_calc_pivots_shifted(5), lookahead=barmerge.lookahead_on)
+
+var float last_htf_ph = na
+var float last_htf_pl = na
+
+if not na(htf_p_high)
+    last_htf_ph := htf_p_high
+if not na(htf_p_low)
+    last_htf_pl := htf_p_low
+
+// BOS Detection
+if htf_close > last_htf_ph and (na(htf_trend) or htf_trend == -1.0)
+    htf_trend := 1.0
+    ext_low := last_htf_pl // The low that formed before the break
+    ext_high := htf_high
+else if htf_close < last_htf_pl and (na(htf_trend) or htf_trend == 1.0)
+    htf_trend := -1.0
+    ext_high := last_htf_ph // The high that formed before the break
+    ext_low := htf_low
+
+// Trailing the extreme high/low for the range
+if htf_trend == 1.0
+    ext_high := math.max(nz(ext_high, htf_high), htf_high)
+else if htf_trend == -1.0
+    ext_low := math.min(nz(ext_low, htf_low), htf_low)
+
+plot(ext_high, "External High", #ff5252, 2, plot.style_linebr, offset=-1)
+plot(ext_low, "External Low", #22ab94, 2, plot.style_linebr, offset=-1)
+
+// --- Step 2: Mid-Term Pullback Signature (MTF) ---
+[m_high, m_low, m_close] = request.security(syminfo.tickerid, mtf_tf, [high[1], low[1], close[1]], lookahead=barmerge.lookahead_on)
+[mtf_p_high, mtf_p_low] = request.security(syminfo.tickerid, mtf_tf, f_calc_pivots_shifted(3), lookahead=barmerge.lookahead_on)
+
+var float int_high = na
+var float int_low = na
+var int pullback_state = 0 // 0: None, 1: Leg 1, 2: Failed Rally, 3: Leg 2 (Confirmed)
+
+// Reset logic if external range changes
+if ta.change(ext_high) != 0 or ta.change(ext_low) != 0
+    pullback_state := 0
+    int_high := na
+    int_low := na
+
+if htf_trend == 1.0
+    // Step 2.1: Leg 1 (Retrace from External High)
+    if pullback_state == 0 and m_close < ext_high
+        pullback_state := 1
+
+    // Step 2.2: Identify Internal Low after Leg 1
+    if pullback_state == 1 and not na(mtf_p_low)
+        int_low := mtf_p_low
+        pullback_state := 2
+
+    // Step 2.3: Failed Rally (Internal High)
+    if pullback_state == 2 and not na(mtf_p_high)
+        if mtf_p_high < ext_high
+            int_high := mtf_p_high
+            pullback_state := 3
+        else
+            pullback_state := 0 // Broke ceiling, reset
+
+    // Step 2.4: Leg 2 (Break Internal Low)
+    if pullback_state == 3 and m_close < int_low
+        pullback_state := 4 // Officially bearish mid-term
+else if htf_trend == -1.0
+    // Opposite for Bearish HTF
+    if pullback_state == 0 and m_close > ext_low
+        pullback_state := 1
+    if pullback_state == 1 and not na(mtf_p_high)
+        int_high := mtf_p_high
+        pullback_state := 2
+    if pullback_state == 2 and not na(mtf_p_low)
+        if mtf_p_low > ext_low
+            int_low := mtf_p_low
+            pullback_state := 3
+        else
+            pullback_state := 0
+    if pullback_state == 3 and m_close > int_high
+        pullback_state := 4 // Officially bullish mid-term
+
+plot(int_high, "Internal High", #ff9800, 1, plot.style_linebr)
+plot(int_low, "Internal Low", #2196f3, 1, plot.style_linebr)
+
+// --- Step 3: Premium/Discount and POI Filtering ---
+float equilibrium = (int_high + int_low) / 2
+bool is_premium = htf_trend == 1.0 ? close > equilibrium : close < equilibrium
+
+// Identify POIs (Extreme and Decisional)
+// Extreme POI: Origin of the internal range
+// Decisional POI: The candle that broke the structure
+var float extreme_poi = na
+var float decisional_poi = na
+
+if pullback_state == 4 and ta.change(pullback_state) != 0
+    if htf_trend == 1.0
+        extreme_poi := int_high // Top of the internal range
+        // For decisional, we look for the last up candle before the break of int_low
+        // This is a simplification.
+        decisional_poi := equilibrium
+    else
+        extreme_poi := int_low
+        decisional_poi := equilibrium
+
+plot(equilibrium, "Equilibrium (50%)", #b2b5be, 1, plot.style_stepline)
+plot(is_premium ? equilibrium : na, "Premium Zone Marker", #ff525233, 4, plot.style_circles)
+
+// --- Step 4: Trade Objectives (HTF POI / Liquidity Sweeps) ---
+// HTF Supply/Demand Zone (Simplified: HTF Order Block)
+// We'll look for HTF liquidity: Previous Day High (PDH) or Previous Day Low (PDL)
+float pdh = request.security(syminfo.tickerid, "1440", high[1], lookahead=barmerge.lookahead_on)
+float pdl = request.security(syminfo.tickerid, "1440", low[1], lookahead=barmerge.lookahead_on)
+
+// Gold-Specific: Relative Equal Highs/Lows (Liquidity Pools)
+var float last_m_ph = na
+var float last_m_pl = na
+if not na(mtf_p_high)
+    last_m_ph := mtf_p_high
+if not na(mtf_p_low)
+    last_m_pl := mtf_p_low
+
+bool is_eqh = math.abs(m_high - last_m_ph) < syminfo.mintick * 10
+bool is_eql = math.abs(m_low - last_m_pl) < syminfo.mintick * 10
+
+// Smart Money Traps (SMTs): HTF pivots in Premium/Discount zones that are likely to be swept
+bool is_smt = htf_trend == 1.0 ? (m_high < ext_high and m_high > equilibrium) : (m_low > ext_low and m_low < equilibrium)
+
+bool swept_htf_liq = false
+if htf_trend == 1.0
+    if high > pdh or high > ext_high
+        swept_htf_liq := true
+else if htf_trend == -1.0
+    if low < pdl or low < ext_low
+        swept_htf_liq := true
+
+// Objective: Price must achieve premium objective (sweep or POI tap)
+var bool objective_met = false
+if (pullback_state == 4)
+    if swept_htf_liq or (htf_trend == 1.0 ? high >= extreme_poi : low <= extreme_poi)
+        objective_met := true
+
+if ta.change(ext_high) != 0 or ta.change(ext_low) != 0 or strategy.position_size != 0
+    objective_met := false
+
+plotshape(objective_met and not objective_met[1], "Objective Met", shape.triangledown, location.abovebar, #9c27b0, size=size.small)
+
+// --- Step 5: LTF Execution and Management ---
+// LTF Confirmation: 1M or 3M chart.
+// Repeated micro-reversal pattern or clean 3M engulfing candle.
+[l_high, l_low, l_close, l_open] = request.security(syminfo.tickerid, ltf_tf, [high[1], low[1], close[1], open[1]], lookahead=barmerge.lookahead_on)
+
+// Micro-reversal: failure to make HH followed by internal LL
+var float micro_high = na
+var float micro_low = na
+var bool micro_reversal = false
+
+if objective_met and is_premium
+    if htf_trend == 1.0 // Looking for Short
+        if l_high < nz(micro_high, 1e10) and l_close < l_low[1]
+            micro_reversal := true
+        micro_high := math.max(nz(micro_high, l_high), l_high)
+    else // Looking for Long
+        if l_low > nz(micro_low, -1e10) and l_close > l_high[1]
+            micro_reversal := true
+        micro_low := math.min(nz(micro_low, l_low), l_low)
+
+// Reset micro structure if objective not met
+if not objective_met
+    micro_high := na
+    micro_low := na
+    micro_reversal := false
+
+// Entry Trigger
+bool entry_signal = objective_met and is_premium and micro_reversal
+
+// Stop Loss: Above micro-high for short, below micro-low for long
+float sl_price = htf_trend == 1.0 ? micro_high : micro_low
+
+if entry_signal and strategy.position_size == 0
+    if htf_trend == 1.0
+        strategy.entry("Counter-Trend Short", strategy.short)
+    else
+        strategy.entry("Counter-Trend Long", strategy.long)
+
+// --- Step 5: Trade Management Logic ---
+// 1. Move to Break-Even (Risk-Free) when price shifts structure in your direction.
+// 2. Take partial profits at 1:3 RR.
+// 3. Target ultimate internal low/demand zones.
+
+var float entry_price = na
+var float current_sl = na
+var bool tp1_hit = false
+
+if strategy.position_size != 0 and ta.change(strategy.position_size) != 0
+    entry_price := strategy.position_avg_price
+    current_sl := sl_price
+    tp1_hit := false
+
+if strategy.position_size != 0
+    risk = math.abs(entry_price - current_sl)
+
+    // Partial Profit at 1:3 RR
+    if not tp1_hit
+        if strategy.position_size < 0 and low <= entry_price - (3 * risk)
+            strategy.exit("TP1", "Counter-Trend Short", qty_percent=50, limit=entry_price - (3 * risk))
+            tp1_hit := true
+        else if strategy.position_size > 0 and high >= entry_price + (3 * risk)
+            strategy.exit("TP1", "Counter-Trend Long", qty_percent=50, limit=entry_price + (3 * risk))
+            tp1_hit := true
+
+    // Break-Even Logic: Move SL to entry if price moves 1:1 RR (as a proxy for structure shift)
+    if strategy.position_size < 0 and low <= entry_price - risk
+        current_sl := entry_price
+    else if strategy.position_size > 0 and high >= entry_price + risk
+        current_sl := entry_price
+
+    // Apply Stop Loss
+    if strategy.position_size < 0
+        strategy.exit("SL/TP", "Counter-Trend Short", stop=current_sl, limit=int_low)
+    else if strategy.position_size > 0
+        strategy.exit("SL/TP", "Counter-Trend Long", stop=current_sl, limit=int_high)
+
+// --- Step 9: Visualizations ---
+// External Range Boxes
+var box ext_box = na
+bool ext_changed = (na(ext_high[1]) and not na(ext_high)) or (na(ext_low[1]) and not na(ext_low)) or ta.change(ext_high) != 0 or ta.change(ext_low) != 0
+if ext_changed
+    box.delete(ext_box)
+    ext_box := box.new(bar_index, ext_high, bar_index + 1, ext_low, border_color=#b2b5be80, bgcolor=#b2b5be1a)
+else if not na(ext_box)
+    box.set_right(ext_box, bar_index)
+
+// Internal Range Boxes
+var box int_box = na
+bool int_changed = (na(int_high[1]) and not na(int_high)) or (na(int_low[1]) and not na(int_low)) or ta.change(int_high) != 0 or ta.change(int_low) != 0
+if int_changed
+    box.delete(int_box)
+    int_box := box.new(bar_index, int_high, bar_index + 1, int_low, border_color=#2196f380, bgcolor=#2196f30d)
+else if not na(int_box)
+    box.set_right(int_box, bar_index)
+
+// Premium Zone Visualization
+var box premium_box = na
+if pullback_state >= 3 and not na(equilibrium)
+    box.delete(premium_box)
+    if htf_trend == 1.0
+        premium_box := box.new(bar_index, int_high, bar_index + 1, equilibrium, border_color=na, bgcolor=#ff52521a)
+    else
+        premium_box := box.new(bar_index, equilibrium, bar_index + 1, int_low, border_color=na, bgcolor=#22ab941a)
+else
+    box.delete(premium_box)
+    premium_box := na
+
+if not na(premium_box)
+    box.set_right(premium_box, bar_index)
+
+// Labels for POIs
+bool poi_changed = (na(extreme_poi[1]) and not na(extreme_poi)) or ta.change(extreme_poi) != 0
+if poi_changed
+    label.new(bar_index, extreme_poi, "Extreme POI", color=#880e4f, textcolor=#ffffff, style=label.style_label_down)
+    if not na(decisional_poi)
+        label.new(bar_index, decisional_poi, "Decisional POI", color=#4a148c, textcolor=#ffffff, style=label.style_label_up)
+
+// Liquidity Labels
+var label pdh_label = na
+var label pdl_label = na
+label.delete(pdh_label)
+label.delete(pdl_label)
+pdh_label := label.new(bar_index, pdh, "PDH", color=#b2b5be, style=label.style_label_down, textcolor=#ffffff)
+pdl_label := label.new(bar_index, pdl, "PDL", color=#b2b5be, style=label.style_label_up, textcolor=#ffffff)
+
+// Entry/Exit Shapes
+plotshape(entry_signal, "Entry Signal", shape.labeldown, location.abovebar, htf_trend == 1.0 ? #ff5252 : #22ab94, text="ENTRY", textcolor=#ffffff)
+
+// Gold Liquidity Labels
+plotshape(is_eqh, "Equal Highs", shape.triangledown, location.abovebar, #ffffff, size=size.tiny, text="EQH")
+plotshape(is_eql, "Equal Lows", shape.triangleup, location.belowbar, #ffffff, size=size.tiny, text="EQL")
+plotshape(is_smt, "Smart Money Trap", shape.xcross, location.abovebar, #ffa726, size=size.small, text="SMT")
