@@ -1,0 +1,180 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+strategy("Supply and Demand Four Core Formations", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=1)
+
+// --- Inputs ---
+group_viz = "Visualization Settings"
+ltf_s_color = input.color(color.new(color.red, 90), "LTF Supply Color", group=group_viz)
+ltf_d_color = input.color(color.new(color.blue, 90), "LTF Demand Color", group=group_viz)
+htf_s_color = input.color(color.new(color.red, 95), "HTF Supply Color", group=group_viz)
+htf_d_color = input.color(color.new(color.blue, 95), "HTF Demand Color", group=group_viz)
+max_ltf = input.int(10, "Max LTF Zones", minval=1, group=group_viz)
+max_htf = input.int(5, "Max HTF Zones", minval=1, group=group_viz)
+
+group_trend = "Trend and Timeframe"
+htf_tf = input.timeframe("240", "Higher Timeframe", group=group_trend)
+use_trend = input.bool(true, "Use EMA Trend Filter", group=group_trend)
+ema_len = input.int(200, "EMA Length", group=group_trend)
+
+group_risk = "Risk Management"
+rr = input.float(3.0, "Risk:Reward Ratio", minval=0.1, group=group_risk)
+
+// --- Classification ---
+is_base() =>
+    math.abs(close - open) <= 0.5 * (high - low) and high > low
+
+is_rally() =>
+    math.abs(close - open) > 0.5 * (high - low) and close > open
+
+is_drop() =>
+    math.abs(close - open) > 0.5 * (high - low) and close < open
+
+is_explosive(avg) =>
+    math.abs(close - open) > 1.5 * avg and math.abs(close - open) > 0.5 * (high - low)
+
+// --- HTF Logic ---
+get_htf_data(avg) =>
+    _base = is_base()
+    _rally = is_rally()
+    _drop = is_drop()
+    _explosive = is_explosive(avg)
+
+    _s_found = _rally[2] and _base[1] and _drop and _explosive
+    _s_found_c = _drop[2] and _base[1] and _drop and _explosive
+
+    _d_found = _drop[2] and _base[1] and _rally and _explosive
+    _d_found_c = _rally[2] and _base[1] and _rally and _explosive
+
+    [(_s_found or _s_found_c), (_d_found or _d_found_c), high[1], low[1]]
+
+htf_avg = request.security(syminfo.tickerid, htf_tf, ta.sma(math.abs(close - open), 10))
+[htf_s, htf_d, htf_h, htf_l] = request.security(syminfo.tickerid, htf_tf, get_htf_data(htf_avg))
+
+var float[] htf_s_h = array.new_float()
+var float[] htf_s_l = array.new_float()
+var box[] htf_s_b = array.new_box()
+
+var float[] htf_d_h = array.new_float()
+var float[] htf_d_l = array.new_float()
+var box[] htf_d_b = array.new_box()
+
+if ta.change(time(htf_tf)) != 0
+    if htf_s
+        array.push(htf_s_h, htf_h)
+        array.push(htf_s_l, htf_l)
+        nb = box.new(bar_index, htf_h, bar_index + 10, htf_l, bgcolor=htf_s_color, border_color=color.new(color.red, 70), extend=extend.right, text="HTF SUPPLY", text_color=color.red, text_size=size.tiny)
+        array.push(htf_s_b, nb)
+    if htf_d
+        array.push(htf_d_h, htf_h)
+        array.push(htf_d_l, htf_l)
+        nb = box.new(bar_index, htf_h, bar_index + 10, htf_l, bgcolor=htf_d_color, border_color=color.new(color.blue, 70), extend=extend.right, text="HTF DEMAND", text_color=color.blue, text_size=size.tiny)
+        array.push(htf_d_b, nb)
+
+// Prune HTF
+if array.size(htf_s_b) > max_htf
+    box.delete(array.shift(htf_s_b))
+    array.shift(htf_s_h)
+    array.shift(htf_s_l)
+if array.size(htf_d_b) > max_htf
+    box.delete(array.shift(htf_d_b))
+    array.shift(htf_d_h)
+    array.shift(htf_d_l)
+
+// HTF Invalidation (50% Pierce)
+if array.size(htf_s_h) > 0
+    for i = array.size(htf_s_h) - 1 to 0
+        sh = array.get(htf_s_h, i)
+        sl = array.get(htf_s_l, i)
+        if high > sl + (sh - sl) * 0.5
+            box.delete(array.get(htf_s_b, i))
+            array.remove(htf_s_b, i)
+            array.remove(htf_s_h, i)
+            array.remove(htf_s_l, i)
+
+if array.size(htf_d_h) > 0
+    for i = array.size(htf_d_h) - 1 to 0
+        dh = array.get(htf_d_h, i)
+        dl = array.get(htf_d_l, i)
+        if low < dl + (dh - dl) * 0.5
+            box.delete(array.get(htf_d_b, i))
+            array.remove(htf_d_b, i)
+            array.remove(htf_d_h, i)
+            array.remove(htf_d_l, i)
+
+// --- LTF Logic ---
+ltf_avg = ta.sma(math.abs(close - open), 10)
+ema = ta.ema(close, ema_len)
+trend_up = not use_trend or close > ema
+trend_down = not use_trend or close < ema
+
+check_aligned_s(h, l) =>
+    found = false
+    if array.size(htf_s_h) > 0
+        for i = 0 to array.size(htf_s_h) - 1
+            sh = array.get(htf_s_h, i)
+            sl = array.get(htf_s_l, i)
+            if h <= sh + (sh-sl)*0.05 and l >= sl - (sh-sl)*0.05
+                found := true
+                break
+    found
+
+check_aligned_d(h, l) =>
+    found = false
+    if array.size(htf_d_h) > 0
+        for i = 0 to array.size(htf_d_h) - 1
+            dh = array.get(htf_d_h, i)
+            dl = array.get(htf_d_l, i)
+            if h <= dh + (dh-dl)*0.05 and l >= dl - (dh-dl)*0.05
+                found := true
+                break
+    found
+
+s_found = is_rally()[2] and is_base()[1] and is_drop() and is_explosive(ltf_avg)
+s_found_c = is_drop()[2] and is_base()[1] and is_drop() and is_explosive(ltf_avg)
+d_found = is_drop()[2] and is_base()[1] and is_rally() and is_explosive(ltf_avg)
+d_found_c = is_rally()[2] and is_base()[1] and is_rally() and is_explosive(ltf_avg)
+
+var float active_sh = na
+var float active_sl = na
+var float active_dh = na
+var float active_dl = na
+var box[] ltf_b = array.new_box()
+
+if (s_found or s_found_c) and trend_down and check_aligned_s(high[1], low[1])
+    active_sh := high[1]
+    active_sl := low[1]
+    nb = box.new(bar_index[1], active_sh, bar_index + 5, active_sl, bgcolor=ltf_s_color, border_color=color.new(color.red, 40), extend=extend.right, text="ALIGNED SUPPLY", text_color=color.red, text_size=size.tiny)
+    array.push(ltf_b, nb)
+
+if (d_found or d_found_c) and trend_up and check_aligned_d(high[1], low[1])
+    active_dh := high[1]
+    active_dl := low[1]
+    nb = box.new(bar_index[1], active_dh, bar_index + 5, active_dl, bgcolor=ltf_d_color, border_color=color.new(color.blue, 40), extend=extend.right, text="ALIGNED DEMAND", text_color=color.blue, text_size=size.tiny)
+    array.push(ltf_b, nb)
+
+if array.size(ltf_b) > max_ltf
+    box.delete(array.shift(ltf_b))
+
+// --- Entry ---
+can_e = not (s_found or s_found_c or d_found or d_found_c)
+if not na(active_dh) and low <= active_dh and can_e and trend_up and strategy.position_size == 0
+    sl = active_dl
+    tp = close + (close - sl) * rr
+    strategy.entry("L", strategy.long)
+    strategy.exit("XL", "L", stop=sl, limit=tp)
+    active_dh := na
+
+if not na(active_sh) and high >= active_sl and can_e and trend_down and strategy.position_size == 0
+    sl = active_sh
+    tp = close - (sl - close) * rr
+    strategy.entry("S", strategy.short)
+    strategy.exit("XS", "S", stop=sl, limit=tp)
+    active_sh := na
+
+// LTF Invalidation
+if not na(active_sh) and high > active_sl + (active_sh - active_sl) * 0.5
+    active_sh := na
+if not na(active_dh) and low < active_dl + (active_dh - active_dl) * 0.5
+    active_dh := na
