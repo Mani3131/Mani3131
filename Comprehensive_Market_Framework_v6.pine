@@ -1,0 +1,294 @@
+//@version=6
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+indicator("Comprehensive Market Framework [Phase 1-5]", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ==========================================
+// Phase 1: Multi-Timeframe Framework
+// ==========================================
+grp_mtf = "Phase 1: MTF Framework"
+htf_tf = input.timeframe("240", "Macro Timeframe (HTF)", group=grp_mtf)
+
+// ==========================================
+// Phase 2: Market State & Key Zones
+// ==========================================
+grp_structure = "Phase 2: Market Structure"
+show_structure = input.bool(true, "Show BOS / CHoCH", group=grp_structure)
+show_sd_zones = input.bool(true, "Show Supply/Demand Zones", group=grp_structure)
+swing_lookback = input.int(5, "Swing Pivot Lookback", minval=2, group=grp_structure)
+
+// ==========================================
+// Phase 3: Price Action Signals
+// ==========================================
+grp_pa = "Phase 3: Price Action"
+show_pa_signals = input.bool(true, "Show Candlestick Patterns", group=grp_pa)
+mom_multiplier = input.float(2.0, "Momentum Size Multiplier", minval=1.1, group=grp_pa, tooltip="Candle size relative to previous average")
+
+// ==========================================
+// Phase 4: Order Flow Validation
+// ==========================================
+grp_of = "Phase 4: Order Flow"
+show_of_tools = input.bool(true, "Show Order Flow Metrics", group=grp_of)
+imb_ratio = input.float(3.0, "Imbalance Ratio (3:1)", minval=1.5, group=grp_of)
+cvd_lookback = input.int(20, "CVD Divergence Lookback", group=grp_of)
+lower_tf = input.timeframe("1", "Footprint Analysis TF", group=grp_of)
+
+// ==========================================
+// Phase 5: Risk Management
+// ==========================================
+grp_risk = "Phase 5: Risk Management"
+risk_percent = input.float(1.0, "Risk Per Trade (%)", minval=0.1, maxval=5.0, step=0.1, group=grp_risk)
+account_size = input.float(10000.0, "Account Balance", minval=100.0, group=grp_risk)
+show_dashboard = input.bool(true, "Show Strategy Dashboard", group=grp_risk)
+
+grp_visuals = "Visual Optimization"
+show_ltf_lines = input.bool(false, "Show Local Lines on LTF (< 1H)", group=grp_visuals, tooltip="Disable to keep execution charts clean")
+
+// --- Color Palette ---
+color_bull = color.new(color.aqua, 0)
+color_bear = color.new(color.red, 0)
+color_zone_bull = color.new(color.aqua, 95)
+color_zone_bear = color.new(color.red, 95)
+color_poc = color.new(color.yellow, 0)
+
+// Helper: explicit na typing
+float f_na = float(na)
+int i_na = int(na)
+
+// Timeframe Filter: Check if chart is LTF (Intraday < 60)
+bool is_htf_display = not timeframe.isintraday or timeframe.multiplier >= 60 or show_ltf_lines
+
+// ==========================================
+// Phase 1 & 2: Structural Implementation
+// ==========================================
+
+// HTF Context (Macro Bias & Zones)
+[htf_ph, htf_pl, htf_high, htf_low] = request.security(syminfo.tickerid, htf_tf, [ta.pivothigh(high, swing_lookback, swing_lookback), ta.pivotlow(low, swing_lookback, swing_lookback), high, low])
+
+var int htf_bias = 0 // 1: Bullish, -1: Bearish
+var float htf_zone_high = f_na
+var float htf_zone_low = f_na
+
+if not na(htf_ph) and ta.change(htf_ph) != 0
+    htf_bias := htf_ph > nz(htf_zone_high) ? 1 : htf_bias
+    htf_zone_high := htf_ph
+    if show_sd_zones
+        box.new(time, htf_ph * 1.0005, time + (60 * 60 * 1000 * 4), htf_ph * 0.9995, xloc=xloc.bar_time, bgcolor=color.new(color.red, 90), border_color=color.new(color.red, 50), extend=extend.right, text="HTF SUPPLY", text_size=size.tiny, text_color=color.white)
+
+if not na(htf_pl) and ta.change(htf_pl) != 0
+    htf_bias := htf_pl < nz(htf_zone_low) ? -1 : htf_bias
+    htf_zone_low := htf_pl
+    if show_sd_zones
+        box.new(time, htf_pl * 1.0005, time + (60 * 60 * 1000 * 4), htf_pl * 0.9995, xloc=xloc.bar_time, bgcolor=color.new(color.aqua, 90), border_color=color.new(color.aqua, 50), extend=extend.right, text="HTF DEMAND", text_size=size.tiny, text_color=color.white)
+
+// Local Structure (MTF/Execution)
+float ph = ta.pivothigh(high, swing_lookback, swing_lookback)
+float pl = ta.pivotlow(low, swing_lookback, swing_lookback)
+
+var float last_ph = f_na
+var float last_pl = f_na
+var bool is_bullish = true
+var float strong_level = f_na
+var float weak_level = f_na
+
+// Alignment Check: Local level aligns with HTF Zone (0.05% tolerance)
+bool ph_aligns = not na(last_ph) and not na(htf_zone_high) and math.abs(last_ph - htf_zone_high) / htf_zone_high < 0.0005
+bool pl_aligns = not na(last_pl) and not na(htf_zone_low) and math.abs(last_pl - htf_zone_low) / htf_zone_low < 0.0005
+
+// Detection Logic
+if barstate.isconfirmed
+    // Bullish Breakout
+    if high > last_ph and not na(last_ph)
+        if not is_bullish
+            label.new(bar_index, high, "CHoCH", style=label.style_label_down, color=color.orange, textcolor=color.white, size=size.small)
+            is_bullish := true
+        else if show_structure
+            label.new(bar_index, high, "BOS", style=label.style_label_down, color=color_bull, textcolor=color.white, size=size.small)
+
+        // Mark Strong Low (The low that caused the BOS)
+        strong_level := last_pl
+        weak_level := high // Target
+
+        // Render local zone only if on HTF or if it aligns with HTF level on LTF
+        if show_sd_zones and (is_htf_display or pl_aligns)
+            box.new(bar_index[swing_lookback * 2], last_ph, bar_index, last_pl, bgcolor=color.new(color_bull, 90), border_color=color.new(color_bull, 50), extend=extend.right)
+
+        last_ph := f_na // Reset broken level
+
+    // Bearish Breakout
+    if low < last_pl and not na(last_pl)
+        if is_bullish
+            label.new(bar_index, low, "CHoCH", style=label.style_label_up, color=color.orange, textcolor=color.white, size=size.small)
+            is_bullish := false
+        else if show_structure
+            label.new(bar_index, low, "BOS", style=label.style_label_up, color=color_bear, textcolor=color.white, size=size.small)
+
+        // Mark Strong High
+        strong_level := last_ph
+        weak_level := low // Target
+
+        // Render local zone only if on HTF or if it aligns with HTF level on LTF
+        if show_sd_zones and (is_htf_display or ph_aligns)
+            box.new(bar_index[swing_lookback * 2], last_ph, bar_index, last_pl, bgcolor=color.new(color_bear, 90), border_color=color.new(color_bear, 50), extend=extend.right)
+
+        last_pl := f_na // Reset broken level
+
+    // Update Pivots
+    if not na(ph)
+        last_ph := ph
+    if not na(pl)
+        last_pl := pl
+
+// Visualizing Strong/Weak Levels
+plot(show_structure and is_htf_display ? strong_level : f_na, "Strong Level", color=color.gray, style=plot.style_linebr, linewidth=2)
+plotshape(show_structure and is_htf_display and ta.change(strong_level) != 0, "Strong Marker", shape.circle, location.absolute, color.gray, size=size.tiny)
+
+
+// ==========================================
+// Phase 3: Price Action Implementation
+// ==========================================
+
+// Momentum Candle: Size > 2x average of previous 5 bars
+float body_size = math.abs(close - open)
+float avg_body = ta.sma(body_size[1], 5)
+bool is_momentum = body_size >= avg_body * mom_multiplier and close != open
+
+// Hammer & Shooting Star
+float total_size = high - low
+float lower_wick = math.min(open, close) - low
+float upper_wick = high - math.max(open, close)
+float body_only = math.abs(close - open)
+
+bool is_hammer = lower_wick >= body_only * 2 and upper_wick <= body_only * 0.5
+bool is_shooting_star = upper_wick >= body_only * 2 and lower_wick <= body_only * 0.5
+
+// Engulfing
+bool is_bull_engulf = close > open and close[1] < open[1] and close > open[1] and open < close[1]
+bool is_bear_engulf = close < open and close[1] > open[1] and close < open[1] and open > close[1]
+
+// Visual Markers for PA
+plotshape(show_pa_signals and is_momentum, "Momentum", shape.flag, location.abovebar, color.new(color.purple, 30), size=size.tiny)
+plotshape(show_pa_signals and is_hammer, "Hammer", shape.arrowup, location.belowbar, color_bull, size=size.small)
+plotshape(show_pa_signals and is_shooting_star, "Shooting Star", shape.arrowdown, location.abovebar, color_bear, size=size.small)
+plotshape(show_pa_signals and is_bull_engulf, "Bull Engulf", shape.triangleup, location.belowbar, color_bull, size=size.small)
+plotshape(show_pa_signals and is_bear_engulf, "Bear Engulf", shape.triangledown, location.abovebar, color_bear, size=size.small)
+
+// ==========================================
+// Phase 4: Order Flow Implementation
+// ==========================================
+
+// 1. CVD Logic (Simulated)
+float delta = (close - open) / (high - low + 1e-10) * volume
+var float cvd = 0.0
+cvd := nz(cvd[1]) + delta
+
+bool cvd_bull_div = low == ta.lowest(low, cvd_lookback) and cvd > ta.lowest(cvd, cvd_lookback)
+bool cvd_bear_div = high == ta.highest(high, cvd_lookback) and cvd < ta.highest(cvd, cvd_lookback)
+
+plotshape(show_of_tools and cvd_bull_div, "CVD Bull Div", shape.diamond, location.belowbar, color.green, size=size.tiny)
+plotshape(show_of_tools and cvd_bear_div, "CVD Bear Div", shape.diamond, location.abovebar, color.red, size=size.tiny)
+
+// 2. Simulated Footprint & Volume Profile via Lower Timeframe
+f_get_of_data() =>
+    [ltf_c, ltf_v, ltf_h, ltf_l] = request.security_lower_tf(syminfo.tickerid, lower_tf, [close, volume, high, low])
+
+    float poc = f_na
+    bool buy_imb = false
+    bool sell_imb = false
+
+    if array.size(ltf_c) > 0
+        // Simple POC: Price level with max volume in the bar
+        // For performance, we bin the bar into 10 sections
+        float b_hi = high
+        float b_lo = low
+        float step = (b_hi - b_lo) / 10
+        array<float> bins = array.new_float(11, 0.0)
+
+        if step > 0
+            for i = 0 to array.size(ltf_c) - 1
+                float raw_idx = (array.get(ltf_c, i) - b_lo) / step
+                if not na(raw_idx)
+                    int idx = math.max(0, math.min(10, int(raw_idx)))
+                    array.set(bins, idx, array.get(bins, idx) + array.get(ltf_v, i))
+
+        int max_idx = 0
+        float max_vol = 0.0
+        for i = 0 to 10
+            if array.get(bins, i) > max_vol
+                max_vol := array.get(bins, i)
+                max_idx := i
+        poc := b_lo + (max_idx * step)
+
+        // Imbalance: diagonal check (Ask vs Bid approximation)
+        // Since we don't have true bid/ask, we use (close-low)/(high-low) as buy proxy
+        float total_buy = 0.0
+        float total_sell = 0.0
+        for i = 0 to array.size(ltf_c) - 1
+            float ratio = (array.get(ltf_c, i) - array.get(ltf_l, i)) / (array.get(ltf_h, i) - array.get(ltf_l, i) + 1e-10)
+            total_buy += array.get(ltf_v, i) * ratio
+            total_sell += array.get(ltf_v, i) * (1 - ratio)
+
+        buy_imb := total_buy > total_sell * imb_ratio
+        sell_imb := total_sell > total_buy * imb_ratio
+
+    [poc, buy_imb, sell_imb]
+
+[bar_poc, has_buy_imb, has_sell_imb] = f_get_of_data()
+
+plot(show_of_tools and is_htf_display ? bar_poc : f_na, "Bar POC", color=color_poc, style=plot.style_circles, linewidth=1)
+plotshape(show_of_tools and has_buy_imb, "Buy Imbalance", shape.square, location.belowbar, color.new(color.aqua, 50), size=size.tiny)
+plotshape(show_of_tools and has_sell_imb, "Sell Imbalance", shape.square, location.abovebar, color.new(color.red, 50), size=size.tiny)
+
+// ==========================================
+// Phase 5: Risk Management & Dashboard
+// ==========================================
+
+// Position Sizing Calculation
+float risk_amount = account_size * (risk_percent / 100)
+float sl_dist = math.abs(close - strong_level)
+float sl_ticks = sl_dist / syminfo.mintick
+float pos_size = not na(strong_level) and sl_dist > 0 ? risk_amount / (sl_dist * syminfo.pointvalue) : 0.0
+
+// Target Calculations (Phase 2 & 5)
+float tp1_price = is_bullish ? close + (sl_dist * 2) : close - (sl_dist * 2)
+float tp2_price = weak_level
+
+// Confluence Logic
+int confluence_score = 0
+confluence_score := confluence_score + (htf_bias == (is_bullish ? 1 : -1) ? 1 : 0)
+confluence_score := confluence_score + (is_momentum ? 1 : 0)
+confluence_score := confluence_score + (cvd_bull_div or cvd_bear_div ? 1 : 0)
+confluence_score := confluence_score + (has_buy_imb or has_sell_imb ? 1 : 0)
+
+// Dashboard UI
+var table dash = table.new(position.top_right, 2, 9, bgcolor=color.new(color.black, 85), border_width=1, border_color=color.gray)
+
+if barstate.islast and show_dashboard
+    table.cell(dash, 0, 0, "Market Metric", text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 1, 0, "Value / Status", text_color=color.white)
+
+    table.cell(dash, 0, 1, "Macro Bias", text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 1, 1, htf_bias == 1 ? "BULLISH" : htf_bias == -1 ? "BEARISH" : "NEUTRAL", text_color=htf_bias == 1 ? color.aqua : htf_bias == -1 ? color.red : color.gray)
+
+    table.cell(dash, 0, 2, "Local Trend", text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 1, 2, is_bullish ? "BULLISH" : "BEARISH", text_color=is_bullish ? color.aqua : color.red)
+
+    table.cell(dash, 0, 3, "Confluence Score", text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 1, 3, str.tostring(confluence_score) + " / 4", text_color=confluence_score >= 3 ? color.green : color.yellow)
+
+    table.cell(dash, 0, 4, "Risk Amount ($)", text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 1, 4, str.tostring(risk_amount, "#.##"), text_color=color.white)
+
+    table.cell(dash, 0, 5, "Stop Loss (Ticks)", text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 1, 5, str.tostring(sl_ticks, "#"), text_color=color.red)
+
+    table.cell(dash, 0, 6, "Rec. Pos Size", text_color=color.white, text_halign=text.align_left)
+    table.cell(dash, 1, 6, str.tostring(pos_size, "#.###"), text_color=color.green)
+
+    // Optional: Add TP targets to dashboard
+    if not na(strong_level) and is_htf_display
+        table.cell(dash, 0, 7, "TP1 (1:2 RR)", text_color=color.white, text_halign=text.align_left)
+        table.cell(dash, 1, 7, str.tostring(tp1_price, "#.#####"), text_color=color.aqua)
+        table.cell(dash, 0, 8, "TP2 (Weak H/L)", text_color=color.white, text_halign=text.align_left)
+        table.cell(dash, 1, 8, str.tostring(tp2_price, "#.#####"), text_color=color.yellow)
