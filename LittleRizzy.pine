@@ -1,5 +1,5 @@
 //@version=6
-indicator("Little Rizzy Strategy", overlay=true, max_lines_back=500, max_labels_back=500, max_bars_back=5000)
+indicator("Little Rizzy Strategy", overlay=true, max_bars_back=5000)
 
 // --- Inputs ---
 bb_length = input.int(20, "BB Length", minval=1)
