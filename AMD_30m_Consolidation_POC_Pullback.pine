@@ -1,0 +1,104 @@
+//@version=6
+indicator("AMD 30m Consolidation POC Pullback", overlay=true, max_lines_count=500, max_boxes_count=500)
+
+// --- Inputs ---
+int lookbackBars = input.int(30, title="Consolidation Lookback (1m Bars)")
+float breakoutMult = input.float(1.2, title="Breakout Volume Multiplier")
+
+// --- Arrays for Fixed Range Volume Profile Calculation ---
+var float[] priceLevels = array.new<float>(0)
+var float[] volumeBins = array.new<float>(0)
+
+// --- Find High/Low of the 30-minute Range ---
+float rangeHigh = ta.highest(high[1], lookbackBars)
+float rangeLow = ta.lowest(low[1], lookbackBars)
+float rangeMiddle = (rangeHigh + rangeLow) / 2
+
+// --- Dynamic Fixed Range Volume Profile (POC) Loop ---
+float pocPrice = na
+if bar_index > lookbackBars
+    array.clear(priceLevels)
+    array.clear(volumeBins)
+
+    // Create 10 price zones (bins) across the 30-minute range
+    float binSize = (rangeHigh - rangeLow) / 10
+    if binSize > 0
+        for i = 0 to 9
+            array.push(priceLevels, rangeLow + (i * binSize))
+            array.push(volumeBins, 0.0)
+
+        // Distribute volume into bins based on where 1m candles closed
+        for j = 1 to lookbackBars
+            float cPrice = close[j]
+            float vVol = volume[j]
+            for k = 0 to 9
+                float levelStart = array.get(priceLevels, k)
+                bool isInBin = false
+                if k < 9
+                    isInBin := cPrice >= levelStart and cPrice < (levelStart + binSize)
+                else
+                    isInBin := cPrice >= levelStart and cPrice <= (levelStart + binSize)
+
+                if isInBin
+                    array.set(volumeBins, k, array.get(volumeBins, k) + vVol)
+
+        // Find the bin with the highest volume (Point of Control)
+        int maxBinIdx = array.indexof(volumeBins, array.max(volumeBins))
+        if maxBinIdx != -1
+            pocPrice := array.get(priceLevels, maxBinIdx) + (binSize / 2)
+
+// --- Breakout and Pullback Logic ---
+var bool breakoutBull = false
+var bool breakoutBear = false
+var float activePOC = na
+
+// 1. Detect Breakout (Do NOT enter here)
+bool isBreakingUp = close > rangeHigh and volume > ta.sma(volume, lookbackBars) * breakoutMult
+bool isBreakingDown = close < rangeLow and volume > ta.sma(volume, lookbackBars) * breakoutMult
+
+if isBreakingUp and not breakoutBull
+    breakoutBull := true
+    breakoutBear := false
+    activePOC := pocPrice
+if isBreakingDown and not breakoutBear
+    breakoutBull := false
+    breakoutBear := true
+    activePOC := pocPrice
+
+// Reset tracking if price completely invalidates the setup
+if (breakoutBull and close < rangeLow) or (breakoutBear and close > rangeHigh)
+    breakoutBull := false
+    breakoutBear := false
+    activePOC := na
+
+// 2. Detect the Pullback to the POC for Continuation Entry
+bool longEntry = breakoutBull and not na(activePOC) and ta.crossunder(low, activePOC) and close >= activePOC
+bool shortEntry = breakoutBear and not na(activePOC) and ta.crossover(high, activePOC) and close <= activePOC
+
+// Reset breakout tracking state after an entry trigger
+if longEntry or shortEntry
+    breakoutBull := false
+    breakoutBear := false
+
+// --- Visualizing the Setup ---
+// Shaded Consolidation Box
+var box rangeBox = box(na)
+if bar_index % lookbackBars == 0
+    box.delete(rangeBox)
+    rangeBox := box.new(left=bar_index - lookbackBars, top=rangeHigh, right=bar_index, bottom=rangeLow,
+                        bgcolor=color.new(color.blue, 92), border_color=color.blue, border_style=line.style_dashed)
+
+// Real-time POC Line
+var line pocLine = line(na)
+if not na(activePOC)
+    line.delete(pocLine)
+    pocLine := line.new(x1=bar_index - lookbackBars, y1=activePOC, x2=bar_index, y2=activePOC,
+                        color=color.orange, width=2)
+else if not na(pocPrice)
+    line.delete(pocLine)
+    pocLine := line.new(x1=bar_index - lookbackBars, y1=pocPrice, x2=bar_index, y2=pocPrice,
+                        color=color.new(color.orange, 50), width=1)
+
+// Plot Entry Signals
+plotshape(longEntry, title="POC Pullback Buy (Continuation)", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.normal)
+plotshape(shortEntry, title="POC Pullback Sell (Continuation)", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.normal)
