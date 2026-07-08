@@ -1,0 +1,179 @@
+//@version=6
+indicator("Little Rizzy Strategy", overlay=true, max_lines_back=500, max_labels_back=500, max_bars_back=5000)
+
+// --- Inputs ---
+bb_length = input.int(20, "BB Length", minval=1)
+bb_mult = input.float(2.0, "BB StdDev", minval=0.1, step=0.1)
+pivot_len = input.int(3, "Pivot Strength", minval=1)
+src = input.source(close, "Source")
+
+// --- Bollinger Bands Calculation ---
+basis = ta.sma(src, bb_length)
+dev = bb_mult * ta.stdev(src, bb_length)
+upper = basis + dev
+lower = basis - dev
+
+// --- Plots ---
+plot(basis, "Basis", color=color.gray)
+p_upper = plot(upper, "Upper BB", color=color.blue)
+p_lower = plot(lower, "Lower BB", color=color.blue)
+fill(p_upper, p_lower, color=color.new(color.blue, 95), title="BB Background")
+
+// --- "Out of Reality" Visualization ---
+is_out_of_reality_up = close > upper
+is_out_of_reality_down = close < lower
+
+bgcolor(is_out_of_reality_up ? color.new(color.red, 90) : na, title="Overextended Up")
+bgcolor(is_out_of_reality_down ? color.new(color.green, 90) : na, title="Overextended Down")
+
+// --- Little Rizzy Logic ---
+
+// Function to find lowest low in a range
+get_lowest_low(start_idx, end_idx) =>
+    float lowest = 10e10
+    int lowest_idx = na
+    if start_idx < end_idx
+        for i = start_idx to end_idx
+            val = low[bar_index - i]
+            if val < lowest
+                lowest := val
+                lowest_idx := i
+    [lowest, lowest_idx]
+
+// Function to find highest high in a range
+get_highest_high(start_idx, end_idx) =>
+    float highest = -10e10
+    int highest_idx = na
+    if start_idx < end_idx
+        for i = start_idx to end_idx
+            val = high[bar_index - i]
+            if val > highest
+                highest := val
+                highest_idx := i
+    [highest, highest_idx]
+
+// Detect Pivots
+ph = ta.pivothigh(high, pivot_len, pivot_len)
+pl = ta.pivotlow(low, pivot_len, pivot_len)
+
+// State for active patterns
+var line  active_bear_tl = na
+var float active_bear_target = na
+var line  active_bull_tl = na
+var float active_bull_target = na
+
+// Counters for patterns
+var int bear_pattern_count = 0
+var int bull_pattern_count = 0
+
+// Reset counters if price crosses basis (mean reversion)
+if ta.cross(close, basis)
+    bear_pattern_count := 0
+    bull_pattern_count := 0
+
+// --- Bearish Pattern (Bottom Project) ---
+if not na(ph)
+    float ph_b_price = ph
+    int   ph_b_index = bar_index - pivot_len
+
+    float ph_a_price = na
+    int   ph_a_index = na
+    found_a = false
+
+    for i = 1 to 200
+        if not na(ph[i])
+            if ph[i] > ph_b_price
+                ph_a_price := ph[i]
+                ph_a_index := bar_index - i - pivot_len
+                found_a := true
+                break
+
+    if found_a
+        [l_price, l_index] = get_lowest_low(ph_a_index, ph_b_index)
+
+        if not na(l_index)
+            slope = (ph_b_price - ph_a_price) / (ph_b_index - ph_a_index)
+            tl_val_at_l = ph_a_price + slope * (l_index - ph_a_index)
+            dist = tl_val_at_l - l_price
+
+            if dist > 0
+                target = l_price - dist
+                bear_pattern_count += 1
+
+                // Visualization
+                active_bear_tl := line.new(ph_a_index, ph_a_price, ph_b_index, ph_b_price, extend=extend.right, color=color.new(color.red, 30), width=2)
+                active_bear_target := target
+
+                line.new(l_index, l_price, l_index, tl_val_at_l, color=color.gray, style=line.style_dotted)
+                line.new(l_index, l_price, l_index, target, color=color.green, width=2, style=line.style_dashed)
+
+                sl = target - dist
+                tp = l_price
+                txt = "Bearish Rizzy #" + str.tostring(bear_pattern_count) + "\nTarget/Entry: " + str.tostring(target, format.mintick) + "\nSL: " + str.tostring(sl, format.mintick) + "\nTP: " + str.tostring(tp, format.mintick)
+                lbl_color = bear_pattern_count >= 4 ? color.orange : color.green
+                label.new(bar_index, target, txt, style=label.style_label_up, color=lbl_color, textcolor=color.white)
+
+                // Draw SL/TP lines for the latest pattern
+                line.new(bar_index, sl, bar_index + 15, sl, color=color.new(color.red, 50), style=line.style_solid, width=1)
+                line.new(bar_index, tp, bar_index + 15, tp, color=color.new(color.blue, 50), style=line.style_solid, width=1)
+
+// Invalidation for Bearish Pattern: Price closes above the trendline
+if not na(active_bear_tl)
+    tl_val = line.get_price(active_bear_tl, bar_index)
+    if close > tl_val
+        label.new(bar_index, high, "Rizzy Invalidated (TL Break)", style=label.style_label_down, color=color.gray, size=size.small)
+        active_bear_tl := na
+        active_bear_target := na
+
+// --- Bullish Pattern (Top Project) ---
+if not na(pl)
+    float pl_b_price = pl
+    int   pl_b_index = bar_index - pivot_len
+
+    float pl_a_price = na
+    int   pl_a_index = na
+    found_a_pl = false
+
+    for i = 1 to 200
+        if not na(pl[i])
+            if pl[i] < pl_b_price
+                pl_a_price := pl[i]
+                pl_a_index := bar_index - i - pivot_len
+                found_a_pl := true
+                break
+
+    if found_a_pl
+        [h_price, h_index] = get_highest_high(pl_a_index, pl_b_index)
+
+        if not na(h_index)
+            slope = (pl_b_price - pl_a_price) / (pl_b_index - pl_a_index)
+            tl_val_at_h = pl_a_price + slope * (h_index - pl_a_index)
+            dist = h_price - tl_val_at_h
+
+            if dist > 0
+                target = h_price + dist
+                bull_pattern_count += 1
+
+                active_bull_tl := line.new(pl_a_index, pl_a_price, pl_b_index, pl_b_price, extend=extend.right, color=color.new(color.green, 30), width=2)
+                active_bull_target := target
+
+                line.new(h_index, h_price, h_index, tl_val_at_h, color=color.gray, style=line.style_dotted)
+                line.new(h_index, h_price, h_index, target, color=color.red, width=2, style=line.style_dashed)
+
+                sl = target + dist
+                tp = h_price
+                txt = "Bullish Rizzy #" + str.tostring(bull_pattern_count) + "\nTarget/Entry: " + str.tostring(target, format.mintick) + "\nSL: " + str.tostring(sl, format.mintick) + "\nTP: " + str.tostring(tp, format.mintick)
+                lbl_color = bull_pattern_count >= 4 ? color.orange : color.red
+                label.new(bar_index, target, txt, style=label.style_label_down, color=lbl_color, textcolor=color.white)
+
+                // Draw SL/TP lines
+                line.new(bar_index, sl, bar_index + 15, sl, color=color.new(color.red, 50), style=line.style_solid, width=1)
+                line.new(bar_index, tp, bar_index + 15, tp, color=color.new(color.blue, 50), style=line.style_solid, width=1)
+
+// Invalidation for Bullish Pattern: Price closes below the trendline
+if not na(active_bull_tl)
+    tl_val = line.get_price(active_bull_tl, bar_index)
+    if close < tl_val
+        label.new(bar_index, low, "Rizzy Invalidated (TL Break)", style=label.style_label_up, color=color.gray, size=size.small)
+        active_bull_tl := na
+        active_bull_target := na
