@@ -15,16 +15,12 @@ lower = basis - dev
 
 // --- Plots ---
 plot(basis, "Basis", color=color.gray)
-p_upper = plot(upper, "Upper BB", color=color.blue)
-p_lower = plot(lower, "Lower BB", color=color.blue)
-fill(p_upper, p_lower, color=color.new(color.blue, 95), title="BB Background")
+plot(upper, "Upper BB", color=color.blue)
+plot(lower, "Lower BB", color=color.blue)
 
 // --- "Out of Reality" Visualization ---
 is_out_of_reality_up = close > upper
 is_out_of_reality_down = close < lower
-
-bgcolor(is_out_of_reality_up ? color.new(color.red, 90) : na, title="Overextended Up")
-bgcolor(is_out_of_reality_down ? color.new(color.green, 90) : na, title="Overextended Down")
 
 // --- Little Rizzy Logic ---
 
@@ -109,7 +105,7 @@ if not na(ph)
 
                 sl = target - dist
                 tp = l_price
-                txt = "Bearish Rizzy #" + str.tostring(bear_pattern_count) + "\nTarget/Entry: " + str.tostring(target, format.mintick) + "\nSL: " + str.tostring(sl, format.mintick) + "\nTP: " + str.tostring(tp, format.mintick)
+                txt = "BUY Entry: " + str.tostring(target, format.mintick) + "\nSL: " + str.tostring(sl, format.mintick) + "\nTP: " + str.tostring(tp, format.mintick)
                 lbl_color = bear_pattern_count >= 4 ? color.orange : color.green
                 label.new(bar_index, target, txt, style=label.style_label_up, color=lbl_color, textcolor=color.white)
 
@@ -162,7 +158,7 @@ if not na(pl)
 
                 sl = target + dist
                 tp = h_price
-                txt = "Bullish Rizzy #" + str.tostring(bull_pattern_count) + "\nTarget/Entry: " + str.tostring(target, format.mintick) + "\nSL: " + str.tostring(sl, format.mintick) + "\nTP: " + str.tostring(tp, format.mintick)
+                txt = "SELL Entry: " + str.tostring(target, format.mintick) + "\nSL: " + str.tostring(sl, format.mintick) + "\nTP: " + str.tostring(tp, format.mintick)
                 lbl_color = bull_pattern_count >= 4 ? color.orange : color.red
                 label.new(bar_index, target, txt, style=label.style_label_down, color=lbl_color, textcolor=color.white)
 
