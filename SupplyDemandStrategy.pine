@@ -1,0 +1,170 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+strategy("Supply and Demand: Four Core Formations", overlay=true, margin_long=100, margin_short=100, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// --- Inputs ---
+i_emaPeriod = input.int(200, "EMA Trend Period", minval=1)
+i_useMtf    = input.bool(true, "Use MTF Trend Filter")
+i_mtfTime   = input.timeframe("240", "HTF Timeframe")
+i_rrRatio   = input.float(6.0, "Reward-to-Risk Ratio", minval=0.1, step=0.1)
+i_maxBases  = input.int(6, "Max Basing Candles", minval=1, maxval=10)
+i_zoneLimit = input.int(50, "Max Active Zones", minval=1)
+
+// --- Global Variables & Constants ---
+var box[] demandBoxes = array.new_box()
+var box[] supplyBoxes = array.new_box()
+
+// --- Candle Classification ---
+float bodySize = math.abs(close - open)
+float candleRange = high - low
+float avgBody = ta.sma(bodySize, 20)
+float atr = ta.atr(14)
+float avgAtr = ta.sma(atr, 20)
+
+// "Isolate Consolidation Baselines: identify tight structures where ATR shrinks"
+bool isAtrShrinking = atr < avgAtr
+
+// "Quantify the Conditions: body at least 2.5 times larger than the average of the last 20 candles"
+bool isBase = candleRange > 0 and (bodySize / candleRange) <= 0.5 and isAtrShrinking
+bool isDecisive = candleRange > 0 and (bodySize / candleRange) > 0.5
+bool isExplosive = isDecisive and bodySize > (avgBody * 2.5)
+bool isStrong = isDecisive and bodySize > (avgBody * 3.5)
+
+// --- Formation Detection ---
+// We need to look back to find sequences: Leg-In -> 1 to i_maxBases Base Candles -> Explosive Leg-Out
+// For simplicity and efficiency, we'll check this on the Leg-Out candle.
+
+bool isRally = close > open and isExplosive
+bool isDrop = close < open and isExplosive
+
+// Detection state machine / logic
+int countBases = 0
+for i = 1 to i_maxBases
+    if isBase[i]
+        countBases += 1
+    else
+        break
+
+bool validFormation = countBases >= 1 and countBases <= i_maxBases
+bool legInExists = isDecisive[countBases + 1]
+
+bool isRBD = isDrop  and legInExists and close[countBases + 1] > open[countBases + 1] and validFormation
+bool isDBD = isDrop  and legInExists and close[countBases + 1] < open[countBases + 1] and validFormation
+bool isRBR = isRally and legInExists and close[countBases + 1] > open[countBases + 1] and validFormation
+bool isDBR = isRally and legInExists and close[countBases + 1] < open[countBases + 1] and validFormation
+
+bool isSupply = isRBD or isDBD
+bool isDemand = isRBR or isDBR
+
+// --- Zone Refinement ---
+// "Draw your execution zones exclusively around that single refined candle [the final indecision candle] rather than the entire multi-candle chart base"
+// The final indecision candle is at index 1 relative to the Leg-Out bar (index 0).
+
+float zoneProximal = 0.0
+float zoneDistal = 0.0
+
+if isSupply
+    // For Supply: Proximal is the lowest body, Distal is the highest wick of the refined candle
+    zoneProximal := math.min(open[1], close[1])
+    zoneDistal   := high[1]
+if isDemand
+    // For Demand: Proximal is the highest body, Distal is the lowest wick of the refined candle
+    zoneProximal := math.max(open[1], close[1])
+    zoneDistal   := low[1]
+
+// --- Visualization & Invalidation ---
+// "Implement Dynamic Color Coding: Use distinct colors (e.g., light green for active demand, light red for active supply)"
+color demandColor = color.new(color.green, 80)
+color supplyColor = color.new(color.red, 80)
+
+if isDemand
+    string demandType = (isStrong ? "STRONG " : "") + (isRBR ? "RBR" : "DBR") + " (" + str.tostring(zoneProximal, "#.#####") + ")"
+    box newBox = box.new(left=bar_index[1], top=zoneProximal, right=bar_index, bottom=zoneDistal,
+      bgcolor=demandColor, border_color=color.green, border_width=isStrong ? 2 : 1, extend=extend.right,
+      text=demandType, text_color=color.green, text_size=size.small, text_halign=text.align_right)
+    array.push(demandBoxes, newBox)
+
+if isSupply
+    string supplyType = (isStrong ? "STRONG " : "") + (isRBD ? "RBD" : "DBD") + " (" + str.tostring(zoneProximal, "#.#####") + ")"
+    box newBox = box.new(left=bar_index[1], top=zoneDistal, right=bar_index, bottom=zoneProximal,
+      bgcolor=supplyColor, border_color=color.red, border_width=isStrong ? 2 : 1, extend=extend.right,
+      text=supplyType, text_color=color.red, text_size=size.small, text_halign=text.align_right)
+    array.push(supplyBoxes, newBox)
+
+// "Auto-Delete Mitigated Zones: Code your script to automatically delete or gray out a zone the moment price tracks backward and touches it."
+processZones(box[] boxes, bool isDemandType) =>
+    if array.size(boxes) > 0
+        for i = array.size(boxes) - 1 to 0
+            box b = array.get(boxes, i)
+            float proximal = isDemandType ? box.get_top(b) : box.get_bottom(b)
+
+            bool mitigated = false
+            if isDemandType
+                if low <= proximal
+                    mitigated := true
+                    alert("Demand Zone Tapped: Price touched " + str.tostring(proximal), alert.freq_once_per_bar)
+            else
+                if high >= proximal
+                    mitigated := true
+                    alert("Supply Zone Tapped: Price touched " + str.tostring(proximal), alert.freq_once_per_bar)
+
+            if mitigated
+                box.delete(b)
+                array.remove(boxes, i)
+            else if array.size(boxes) > i_zoneLimit
+                box.delete(array.get(boxes, 0))
+                array.remove(boxes, 0)
+
+processZones(demandBoxes, true)
+processZones(supplyBoxes, false)
+
+// --- Trend Filtering & Entry Logic ---
+float ema = ta.ema(close, i_emaPeriod)
+float htfEma = request.security(syminfo.tickerid, i_mtfTime, ta.ema(close, i_emaPeriod))
+
+bool isUptrend = close > ema and (not i_useMtf or close > htfEma)
+bool isDowntrend = close < ema and (not i_useMtf or close < htfEma)
+
+// Entry variables
+var float longEntryPrice = na
+var float longStopPrice = na
+var float longTpPrice = na
+
+var float shortEntryPrice = na
+var float shortStopPrice = na
+var float shortTpPrice = na
+
+// Capture entry data when formation appears and trend matches
+if isDemand and isUptrend
+    longEntryPrice := zoneProximal
+    longStopPrice := zoneDistal
+    longTpPrice := longEntryPrice + (longEntryPrice - longStopPrice) * i_rrRatio
+
+    // Set limit order
+    strategy.entry("Long", strategy.long, limit=longEntryPrice, comment="Demand Entry")
+    strategy.exit("Exit Long", "Long", stop=longStopPrice, limit=longTpPrice, comment="RR " + str.tostring(i_rrRatio))
+
+    // Alerts
+    alert("Demand Zone Formed: Potential Long at " + str.tostring(longEntryPrice), alert.freq_once_per_bar)
+
+if isSupply and isDowntrend
+    shortEntryPrice := zoneProximal
+    shortStopPrice := zoneDistal
+    shortTpPrice := shortEntryPrice - (shortStopPrice - shortEntryPrice) * i_rrRatio
+
+    // Set limit order
+    strategy.entry("Short", strategy.short, limit=shortEntryPrice, comment="Supply Entry")
+    strategy.exit("Exit Short", "Short", stop=shortStopPrice, limit=shortTpPrice, comment="RR " + str.tostring(i_rrRatio))
+
+    // Alerts
+    alert("Supply Zone Formed: Potential Short at " + str.tostring(shortEntryPrice), alert.freq_once_per_bar)
+
+// --- Logic ---
+
+plot(ema, color=color.gray, title="Trend EMA")
+
+// Formation Shapes
+plotshape(isDemand, title="Demand Formation", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+plotshape(isSupply, title="Supply Formation", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
