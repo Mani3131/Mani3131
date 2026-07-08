@@ -124,7 +124,7 @@ plot(pre_low, "Banking Level Low (Target)", color.green, style=plot.style_linebr
 
 // Plot Anchor SL
 plot(is_ten_min_window or strategy.position_size != 0 ? anchor_high : na, "Anchor Window High (SL)", color.maroon, style=plot.style_linebr, linewidth=1)
-plot(is_ten_min_window or strategy.position_size != 0 ? anchor_low : na, "Anchor Window Low (SL)", color.darkgreen, style=plot.style_linebr, linewidth=1)
+plot(is_ten_min_window or strategy.position_size != 0 ? anchor_low : na, "Anchor Window Low (SL)", color.green, style=plot.style_linebr, linewidth=1)
 
 // Entry Labels
 if ta.change(setup_triggered) and setup_triggered
