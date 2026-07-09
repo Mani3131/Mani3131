@@ -228,14 +228,7 @@ if not na(ind_high)
 
 
 // --- DASHBOARD TABLE ---
-var table dash_table = table.new(
-     position = dash_pos == "top_right" ? position.top_right :
-                dash_pos == "top_left" ? position.top_left :
-                dash_pos == "bottom_right" ? position.bottom_right : position.bottom_left,
-     columns = 2, rows = 6,
-     bgcolor = color.new(color.black, 15),
-     border_color = color.gray, border_width = 1
- )
+var table dash_table = table.new(position = dash_pos == "top_right" ? position.top_right : dash_pos == "top_left" ? position.top_left : dash_pos == "bottom_right" ? position.bottom_right : position.bottom_left, columns = 2, rows = 6, bgcolor = color.new(color.black, 15), border_color = color.gray, border_width = 1)
 
 // Helper to determine last pattern text
 var string last_pat_name = "None"
