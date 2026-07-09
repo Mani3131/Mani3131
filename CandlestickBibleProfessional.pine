@@ -44,7 +44,7 @@ is_bearish_trend = close < trend_ma
 is_trending = not use_adx_filter or adx_val > adx_threshold
 
 // Plot Trend MA
-plot(trend_ma, "Trend MA", color = is_bullish_trend ? color.new(color.green, 50) : color.new(color.red, 50), width = 2)
+plot(trend_ma, "Trend MA", color = is_bullish_trend ? color.new(color.green, 50) : color.new(color.red, 50), linewidth = 2)
 
 // --- STEP 2: KEY LEVELS (SUPPORT & RESISTANCE) ---
 var float[] res_levels = array.new_float()
