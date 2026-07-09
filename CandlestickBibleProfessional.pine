@@ -292,12 +292,12 @@ plotshape(potential_continuation_bearish and is_bearish_trend, "Bear Continuatio
 
 plotshape(potential_indecision and (at_support or at_resistance), "Indecision Level Setup", shape.diamond, location.abovebar, color.new(color.yellow, 40), size=size.tiny)
 
-// Confirmed entry signals (clean arrows, removing the obtrusive text banners)
-plotshape(buy_signal, "BUY Entry (Reversal Confirmed)", shape.arrowup, location.belowbar, color.green, size=size.small)
-plotshape(sell_signal, "SELL Entry (Reversal Confirmed)", shape.arrowdown, location.abovebar, color.red, size=size.small)
+// Confirmed entry signals (highly visible but non-obtrusive text signals, without background banners)
+plotshape(buy_signal, "BUY Entry (Reversal Confirmed)", shape.triangleup, location.belowbar, color.green, text="BUY", textcolor=color.green, size=size.small)
+plotshape(sell_signal, "SELL Entry (Reversal Confirmed)", shape.triangledown, location.abovebar, color.red, text="SELL", textcolor=color.red, size=size.small)
 
-plotshape(ind_buy_signal, "BUY Entry (Indecision Breakout Confirmed)", shape.arrowup, location.belowbar, color.green, size=size.small)
-plotshape(ind_sell_signal, "SELL Entry (Indecision Breakout Confirmed)", shape.arrowdown, location.abovebar, color.red, size=size.small)
+plotshape(ind_buy_signal, "BUY Entry (Indecision Breakout Confirmed)", shape.triangleup, location.belowbar, color.green, text="IND BUY", textcolor=color.green, size=size.small)
+plotshape(ind_sell_signal, "SELL Entry (Indecision Breakout Confirmed)", shape.triangledown, location.abovebar, color.red, text="IND SELL", textcolor=color.red, size=size.small)
 
 // --- ALERTS ---
 alertcondition(buy_signal, "Confirmed Reversal Buy Signal", "Strong Candle-Over-Candle Bullish Reversal Confirmation Achieved!")
