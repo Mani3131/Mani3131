@@ -292,12 +292,12 @@ plotshape(potential_continuation_bearish and is_bearish_trend, "Bear Continuatio
 
 plotshape(potential_indecision and (at_support or at_resistance), "Indecision Level Setup", shape.diamond, location.abovebar, color.new(color.yellow, 40), size=size.tiny)
 
-// Confirmed entry signals (rendered as pure text directly on chart, with absolutely no background labels or shapes)
-plotshape(buy_signal, "BUY Entry (Reversal Confirmed)", style = shape.none, location = location.belowbar, text = "BUY", textcolor = color.green, size = size.small)
-plotshape(sell_signal, "SELL Entry (Reversal Confirmed)", style = shape.none, location = location.abovebar, text = "SELL", textcolor = color.red, size = size.small)
+// Confirmed entry signals (rendered as pure text directly on chart, using a fully transparent shape color with visible text)
+plotshape(buy_signal, "BUY Entry (Reversal Confirmed)", style = shape.triangleup, location = location.belowbar, color = color.new(color.green, 100), text = "BUY", textcolor = color.green, size = size.small)
+plotshape(sell_signal, "SELL Entry (Reversal Confirmed)", style = shape.triangledown, location = location.abovebar, color = color.new(color.red, 100), text = "SELL", textcolor = color.red, size = size.small)
 
-plotshape(ind_buy_signal, "BUY Entry (Indecision Breakout Confirmed)", style = shape.none, location = location.belowbar, text = "IND BUY", textcolor = color.green, size = size.small)
-plotshape(ind_sell_signal, "SELL Entry (Indecision Breakout Confirmed)", style = shape.none, location = location.abovebar, text = "IND SELL", textcolor = color.red, size = size.small)
+plotshape(ind_buy_signal, "BUY Entry (Indecision Breakout Confirmed)", style = shape.triangleup, location = location.belowbar, color = color.new(color.green, 100), text = "IND BUY", textcolor = color.green, size = size.small)
+plotshape(ind_sell_signal, "SELL Entry (Indecision Breakout Confirmed)", style = shape.triangledown, location = location.abovebar, color = color.new(color.red, 100), text = "IND SELL", textcolor = color.red, size = size.small)
 
 // --- ALERTS ---
 alertcondition(buy_signal, "Confirmed Reversal Buy Signal", "Strong Candle-Over-Candle Bullish Reversal Confirmation Achieved!")
