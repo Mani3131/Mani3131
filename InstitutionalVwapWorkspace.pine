@@ -9,9 +9,10 @@ var string G_BANDS = "Standard Deviation Bands"
 var string G_COLOR = "Regime Styling"
 
 // Core Setup
-modeInput       = input.string("Session", "VWAP Mode", options=["Session", "Anchored"], group=G_MODE, tooltip="Session resets daily. Anchored starts exactly at your specified time event.")
-anchorTimeInput = input.time(timestamp("2026-01-01T00:00:00"), "Anchor Time (For Anchored Mode)", group=G_MODE, tooltip="The exact starting point for your manual anchor (e.g., News release, session open, high/low swing).")
-src             = input.source(hlc3, "Source", group=G_MODE, tooltip="The source series for VWAP calculation.")
+modeInput         = input.string("Session", "VWAP Mode", options=["Session", "Anchored"], group=G_MODE, tooltip="Session resets daily/weekly/monthly based on chart timeframe. Anchored starts exactly at your specified time event.")
+anchorTimeInput   = input.time(timestamp("2024-01-01T00:00:00"), "Anchor Time (For Anchored Mode)", group=G_MODE, tooltip="The exact starting point for your manual anchor (e.g., News release, session open, high/low swing).")
+src               = input.source(hlc3, "Source", group=G_MODE, tooltip="The source series for VWAP calculation.")
+volumeFallback    = input.bool(true, "Allow Volume Fallback", group=G_MODE, tooltip="Fallback to a volume value of 1.0 if the ticker does not provide volume data (e.g., Forex, Indices, or Crypto CFDs). This prevents the indicator from becoming invisible.")
 
 // Band Settings
 showBands   = input.bool(true, "Show Deviation Bands", group=G_BANDS)
@@ -28,40 +29,57 @@ flatThreshold = input.float(0.05, "Flatness Threshold (%)", minval=0.01, step=0.
 // LOGIC & MATH ENGINE
 // ==========================================
 
+// 1. Dynamic Session Resetting to prevent collapse on daily/weekly charts
+// If intraday, reset daily ("D"). If daily, reset weekly ("W"). If weekly, reset monthly ("M").
+string resetAnchor = timeframe.isintraday ? "D" : (timeframe.isdaily ? "W" : "M")
+
 // Determine when calculations reset based on mode
 bool isReset = false
 if modeInput == "Session"
-    isReset := not na(ta.change(time("D"))) ? ta.change(time("D")) != 0 : true
+    isReset := not na(ta.change(time(resetAnchor))) ? ta.change(time(resetAnchor)) != 0 : true
 else
-    // Checks the exact bar where time crosses or equals anchor time
+    // For Anchored mode, reset exactly on the bar of the anchor time, or first bar after crossing it
     bool timeCross = (time >= anchorTimeInput and (na(time[1]) or time[1] < anchorTimeInput))
     bool timeMatch = (not na(ta.change(time)) ? ta.change(time) != 0 : false) and time == anchorTimeInput
     isReset := timeCross or timeMatch
 
-// Safely handle potential na values in source or volume to prevent propagation
+// Track if we have reached/passed the anchor time in Anchored mode
+var bool anchorStarted = false
+if modeInput == "Anchored"
+    if isReset
+        anchorStarted := true
+else
+    anchorStarted := true
+
+// Safely handle potential na / zero volume cases to allow trading indicator to display on Forex, Indices, CFDs, etc.
+float rawVol = nz(volume)
+float volVal = rawVol
+if volumeFallback and rawVol == 0.0
+    volVal := 1.0
+
 float srcVal = nz(src, close)
-float volVal = nz(volume)
 
 // Cumulative Variables initialization
 var float sumSrcVol = 0.0
 var float sumVol    = 0.0
 var float sumSrcSrcVol = 0.0
 
-if isReset
-    sumSrcVol    := srcVal * volVal
-    sumVol       := volVal
-    sumSrcSrcVol := srcVal * srcVal * volVal
-else
-    sumSrcVol    += srcVal * volVal
-    sumVol       += volVal
-    sumSrcSrcVol += srcVal * srcVal * volVal
+if anchorStarted
+    if isReset
+        sumSrcVol    := srcVal * volVal
+        sumVol       := volVal
+        sumSrcSrcVol := srcVal * srcVal * volVal
+    else
+        sumSrcVol    += srcVal * volVal
+        sumVol       += volVal
+        sumSrcSrcVol += srcVal * srcVal * volVal
 
 // Mathematical VWAP calculation
-float vwapValue = sumVol > 0 ? sumSrcVol / sumVol : na
+float vwapValue = (anchorStarted and sumVol > 0.0) ? sumSrcVol / sumVol : na
 
 // Volume-Weighted Standard Deviation calculation
-float variance = sumVol > 0 ? (sumSrcSrcVol / sumVol) - math.pow(vwapValue, 2) : 0.0
-float stDev    = variance > 0 ? math.sqrt(variance) : 0.0
+float variance = (anchorStarted and sumVol > 0.0) ? (sumSrcSrcVol / sumVol) - math.pow(vwapValue, 2) : 0.0
+float stDev    = variance > 0.0 ? math.sqrt(variance) : 0.0
 
 // Compute Top and Bottom Deviation Bands
 float upperBand1 = vwapValue + (stDev * devMult1)
@@ -76,7 +94,7 @@ float lowerBand2 = vwapValue - (stDev * devMult2)
 // 1. Check for Cumulative Memory Flattening
 // Measures percentage change of the VWAP line over a 20-bar lookback
 float vwapChange = ta.change(vwapValue, 20)
-float vwapSlopePct = vwapValue > 0 ? (vwapChange / vwapValue) * 100 : 0.0
+float vwapSlopePct = vwapValue > 0.0 ? (vwapChange / vwapValue) * 100.0 : 0.0
 bool isLineFlat = not na(vwapSlopePct) ? math.abs(vwapSlopePct) < flatThreshold : false
 
 // 2. Trend Identification
