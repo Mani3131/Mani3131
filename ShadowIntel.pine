@@ -1,0 +1,138 @@
+//@version=6
+indicator("Shadow Intel Structure + FVG Expansion Workspace", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
+
+// ==========================================
+// INPUTS & CONFIGURATION
+// ==========================================
+var string G_STRUC = "Market Structure Core"
+var string G_VOL   = "Volume Filter Engine"
+var string G_FVG   = "Fair Value Gap (FVG) Settings"
+var string G_STYLE = "Visual Framework"
+
+// Structure Inputs
+swingLookback   = input.int(4, "Swing Pivot Lookback", minval=2, group=G_STRUC)
+
+// Volume Verification Inputs
+useVolumeFilter = input.bool(true, "Require Institutional Volume", group=G_VOL)
+volMaLength     = input.int(20, "Volume MA Length", minval=5, group=G_VOL)
+volMultiplier   = input.float(1.2, "Volume Threshold Multiplier", minval=1.0, step=0.1, group=G_VOL)
+
+// FVG Configuration
+showFVG         = input.bool(true, "Auto-Plot FVGs on Breaks", group=G_FVG)
+fvgBoxThreshold = input.int(30, "Max Live FVG Boxes", minval=5, maxval=100, group=G_FVG)
+fvgExtendLength = input.int(25, "Initial FVG Extension (Bars)", minval=5, group=G_FVG)
+
+// Styling Inputs
+colorBullStruc  = input.color(color.teal, "Bullish Elements Color", group=G_STYLE)
+colorBearStruc  = input.color(color.maroon, "Bearish Elements Color", group=G_STYLE)
+labelTextColor   = input.color(color.white, "Label Text Color", group=G_STYLE)
+
+// ==========================================
+// QUANT ENGINE: STRUCTURAL PIVOTS
+// ==========================================
+float pivotCeiling = ta.pivothigh(high, swingLookback, swingLookback)
+float pivotFloor   = ta.pivotlow(low, swingLookback, swingLookback)
+
+var float activeCeiling = float(na)
+var float activeFloor   = float(na)
+var int   ceilingBarIndex = int(na)
+var int   floorBarIndex   = int(na)
+
+if not na(pivotCeiling)
+    activeCeiling   := pivotCeiling
+    ceilingBarIndex := bar_index - swingLookback
+
+if not na(pivotFloor)
+    activeFloor   := pivotFloor
+    floorBarIndex := bar_index - swingLookback
+
+// ==========================================
+// QUANT ENGINE: EXPANSION & VOLUME VERIFICATION
+// ==========================================
+float avgVolume = ta.sma(volume, volMaLength)
+bool isInstitutionalVolume = not useVolumeFilter or (volume > (avgVolume * volMultiplier))
+
+bool isValidBullBreak = false
+bool isValidBearBreak = false
+
+if not na(activeCeiling) and close > activeCeiling and isInstitutionalVolume
+    isValidBullBreak := true
+    activeCeiling    := float(na)
+
+if not na(activeFloor) and close < activeFloor and isInstitutionalVolume
+    isValidBearBreak := true
+    activeFloor    := float(na)
+
+// ==========================================
+// DYNAMIC FVG DETECTION & TRACKING ENGINE
+// ==========================================
+var box[] bullFVGBoxes = array.new<box>()
+var box[] bearFVGBoxes = array.new<box>()
+
+// Bullish FVG Tracking (Happens on the bar AFTER a structural breakout confirmation)
+if showFVG and (isValidBullBreak or isValidBullBreak[1])
+    // Standard FVG condition: Low of current bar is above High of 2 bars ago
+    if low > high[2]
+        box bFVG = box.new(left=bar_index - 2, top=low, right=bar_index + fvgExtendLength, bottom=high[2],
+                          bgcolor=color.new(colorBullStruc, 93), border_color=color.new(colorBullStruc, 60),
+                          border_style=line.style_dotted)
+        array.push(bullFVGBoxes, bFVG)
+
+// Bearish FVG Tracking
+if showFVG and (isValidBearBreak or isValidBearBreak[1])
+    // Standard FVG condition: High of current bar is below Low of 2 bars ago
+    if high < low[2]
+        box rFVG = box.new(left=bar_index - 2, top=low[2], right=bar_index + fvgExtendLength, bottom=high,
+                          bgcolor=color.new(colorBearStruc, 93), border_color=color.new(colorBearStruc, 60),
+                          border_style=line.style_dotted)
+        array.push(bearFVGBoxes, rFVG)
+
+// ==========================================
+// REAL-TIME FVG MITIGATION ENGINE
+// ==========================================
+
+// Mitigate Bullish FVGs (Closed when price moves back down and fills the gap completely)
+if array.size(bullFVGBoxes) > 0
+    box[] activeBullBoxes = array.new<box>()
+    for i = 0 to array.size(bullFVGBoxes) - 1
+        box currentBox = array.get(bullFVGBoxes, i)
+        float fvgBottomLimit = box.get_bottom(currentBox)
+        if low <= fvgBottomLimit
+            box.delete(currentBox)
+        else
+            box.set_right(currentBox, bar_index)
+            array.push(activeBullBoxes, currentBox)
+    bullFVGBoxes := activeBullBoxes
+
+// Mitigate Bearish FVGs (Closed when price moves back up and fills the gap completely)
+if array.size(bearFVGBoxes) > 0
+    box[] activeBearBoxes = array.new<box>()
+    for i = 0 to array.size(bearFVGBoxes) - 1
+        box currentBox = array.get(bearFVGBoxes, i)
+        float fvgTopLimit = box.get_top(currentBox)
+        if high >= fvgTopLimit
+            box.delete(currentBox)
+        else
+            box.set_right(currentBox, bar_index)
+            array.push(activeBearBoxes, currentBox)
+    bearFVGBoxes := activeBearBoxes
+
+// Manage Memory Buffer Limits
+if array.size(bullFVGBoxes) > fvgBoxThreshold
+    box.delete(array.shift(bullFVGBoxes))
+if array.size(bearFVGBoxes) > fvgBoxThreshold
+    box.delete(array.shift(bearFVGBoxes))
+
+// ==========================================
+// VISUALIZATION & OUTPUTS
+// ==========================================
+if isValidBullBreak
+    line.new(x1=ceilingBarIndex, y1=close, x2=bar_index, y2=close, color=colorBullStruc, width=2, style=line.style_solid)
+    label.new(x=bar_index, y=high, text="VALID BOS (+CHoCH)", color=colorBullStruc, textcolor=labelTextColor, style=label.style_label_down, size=size.small)
+
+if isValidBearBreak
+    line.new(x1=floorBarIndex, y1=close, x2=bar_index, y2=close, color=colorBearStruc, width=2, style=line.style_solid)
+    label.new(x=bar_index, y=low, text="VALID BOS (-CHoCH)", color=colorBearStruc, textcolor=labelTextColor, style=label.style_label_up, size=size.small)
+
+plot(activeCeiling, "Tracked Ceiling Target", color=color.new(colorBearStruc, 60), linewidth=1, style=plot.style_stepline, offset=-swingLookback)
+plot(activeFloor, "Tracked Floor Target", color=color.new(colorBullStruc, 60), linewidth=1, style=plot.style_stepline, offset=-swingLookback)
