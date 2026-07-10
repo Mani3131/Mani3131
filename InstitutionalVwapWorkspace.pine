@@ -1,0 +1,172 @@
+//@version=6
+indicator("Institutional VWAP Workspace & Regime Filter", overlay=true, max_lines_count=500)
+
+// ==========================================
+// INPUTS & CONFIGURATION
+// ==========================================
+var string G_MODE   = "VWAP Mode Settings"
+var string G_BANDS  = "Standard Deviation Bands"
+var string G_COLOR  = "Regime Styling"
+var string G_SIGNAL = "Buy / Sell Signals"
+
+// Core Setup
+modeInput         = input.string("Session", "VWAP Mode", options=["Session", "Anchored"], group=G_MODE, tooltip="Session resets daily/weekly/monthly based on chart timeframe. Anchored starts exactly at your specified time event.")
+anchorTimeInput   = input.time(timestamp("2024-01-01T00:00:00"), "Anchor Time (For Anchored Mode)", group=G_MODE, tooltip="The exact starting point for your manual anchor (e.g., News release, session open, high/low swing).")
+src               = input.source(hlc3, "Source", group=G_MODE, tooltip="The source series for VWAP calculation.")
+volumeFallback    = input.bool(true, "Allow Volume Fallback", group=G_MODE, tooltip="Fallback to a volume value of 1.0 if the ticker does not provide volume data (e.g., Forex, Indices, or Crypto CFDs). This prevents the indicator from becoming invisible.")
+
+// Band Settings
+showBands   = input.bool(true, "Show Deviation Bands", group=G_BANDS)
+devMult1    = input.float(1.0, "Band 1 Multiplier", minval=0.1, step=0.1, group=G_BANDS)
+devMult2    = input.float(2.0, "Band 2 Multiplier", minval=0.1, step=0.1, group=G_BANDS)
+
+// Styling Inputs (Using standard color constants or robust custom RGB definitions for high performance)
+colorBull   = input.color(color.rgb(16, 185, 129), "Bullish Trend Color", group=G_COLOR)
+colorBear   = input.color(color.rgb(244, 63, 94), "Bearish Trend Color", group=G_COLOR)
+colorFlat   = input.color(color.gray, "Flat/Chop Regime Color", group=G_COLOR)
+flatThreshold = input.float(0.05, "Flatness Threshold (%)", minval=0.01, step=0.01, group=G_COLOR, tooltip="Sensitivity for detecting a dead/flattened VWAP line later in the session.")
+
+// Signal Settings
+showSignals = input.bool(true, "Show Buy & Sell Signals", group=G_SIGNAL, tooltip="Display buy and sell signal icons on the chart.")
+signalMode  = input.string("Both", "Signal Engine Mode", options=["Trend Shifts Only", "Band Rejections Only", "Both"], group=G_SIGNAL, tooltip="Trend Shifts Only triggers when price crosses the VWAP. Band Rejections triggers when price rejects deviation bands during an active trend bias. Both displays both signal types.")
+
+// ==========================================
+// LOGIC & MATH ENGINE
+// ==========================================
+
+// 1. Dynamic Session Resetting to prevent collapse on daily/weekly charts
+// If intraday, reset daily ("D"). If daily, reset weekly ("W"). If weekly, reset monthly ("M").
+string resetAnchor = timeframe.isintraday ? "D" : (timeframe.isdaily ? "W" : "M")
+
+// Determine when calculations reset based on mode
+bool isReset = false
+if modeInput == "Session"
+    isReset := not na(ta.change(time(resetAnchor))) ? ta.change(time(resetAnchor)) != 0 : true
+else
+    // For Anchored mode, reset exactly on the bar of the anchor time, or first bar after crossing it
+    bool timeCross = (time >= anchorTimeInput and (na(time[1]) or time[1] < anchorTimeInput))
+    bool timeMatch = (not na(ta.change(time)) ? ta.change(time) != 0 : false) and time == anchorTimeInput
+    isReset := timeCross or timeMatch
+
+// Track if we have reached/passed the anchor time in Anchored mode
+var bool anchorStarted = false
+if modeInput == "Anchored"
+    if isReset
+        anchorStarted := true
+else
+    anchorStarted := true
+
+// Safely handle potential na / zero volume cases to allow trading indicator to display on Forex, Indices, CFDs, etc.
+float rawVol = nz(volume)
+float volVal = rawVol
+if volumeFallback and rawVol == 0.0
+    volVal := 1.0
+
+float srcVal = nz(src, close)
+
+// Cumulative Variables initialization
+var float sumSrcVol = 0.0
+var float sumVol    = 0.0
+var float sumSrcSrcVol = 0.0
+
+if anchorStarted
+    if isReset
+        sumSrcVol    := srcVal * volVal
+        sumVol       := volVal
+        sumSrcSrcVol := srcVal * srcVal * volVal
+    else
+        sumSrcVol    += srcVal * volVal
+        sumVol       += volVal
+        sumSrcSrcVol += srcVal * srcVal * volVal
+
+// Mathematical VWAP calculation
+float vwapValue = (anchorStarted and sumVol > 0.0) ? sumSrcVol / sumVol : na
+
+// Volume-Weighted Standard Deviation calculation
+float variance = (anchorStarted and sumVol > 0.0) ? (sumSrcSrcVol / sumVol) - math.pow(vwapValue, 2) : 0.0
+float stDev    = variance > 0.0 ? math.sqrt(variance) : 0.0
+
+// Compute Top and Bottom Deviation Bands
+float upperBand1 = vwapValue + (stDev * devMult1)
+float lowerBand1 = vwapValue - (stDev * devMult1)
+float upperBand2 = vwapValue + (stDev * devMult2)
+float lowerBand2 = vwapValue - (stDev * devMult2)
+
+// ==========================================
+// REGIME STATE ENGINE (Anti-Retail Traps)
+// ==========================================
+
+// 1. Check for Cumulative Memory Flattening
+// Measures percentage change of the VWAP line over a 20-bar lookback
+float vwapChange = ta.change(vwapValue, 20)
+float vwapSlopePct = vwapValue > 0.0 ? (vwapChange / vwapValue) * 100.0 : 0.0
+bool isLineFlat = not na(vwapSlopePct) ? math.abs(vwapSlopePct) < flatThreshold : false
+
+// 2. Trend Identification
+bool isBullish = close > vwapValue and not isLineFlat
+bool isBearish = close < vwapValue and not isLineFlat
+
+// Assign adaptive colors based on active market regime
+color vwapColor = isLineFlat ? colorFlat : (isBullish ? colorBull : colorBear)
+
+// ==========================================
+// SIGNAL ENGINE (Institutional Signals)
+// ==========================================
+
+// Type 1: Trend Shift Signals (Crossover / Crossunder of VWAP)
+bool trendShiftBuy  = ta.crossover(close, vwapValue) and not isLineFlat
+bool trendShiftSell = ta.crossunder(close, vwapValue) and not isLineFlat
+
+// Type 2: Band Rejections (Bounce signals off lower bands during uptrends, or upper bands during downtrends)
+// We define a band rejection when low taps near a band and price closes up, or high taps near a band and price closes down.
+float tolerance = stDev * 0.15
+
+bool lowerBandTap = (low <= lowerBand1 + tolerance and low >= lowerBand1 - tolerance) or (low <= lowerBand2 + tolerance and low >= lowerBand2 - tolerance)
+bool upperBandTap = (high >= upperBand1 - tolerance and high <= upperBand1 + tolerance) or (high >= upperBand2 - tolerance and high <= upperBand2 + tolerance)
+
+bool bandRejectBuy  = lowerBandTap and close > open and isBullish
+bool bandRejectSell = upperBandTap and close < open and isBearish
+
+// Consolidate triggers based on settings
+bool buySignal  = false
+bool sellSignal = false
+
+if showSignals
+    if signalMode == "Trend Shifts Only"
+        buySignal  := trendShiftBuy
+        sellSignal := trendShiftSell
+    else if signalMode == "Band Rejections Only"
+        buySignal  := bandRejectBuy
+        sellSignal := bandRejectSell
+    else // Both
+        buySignal  := trendShiftBuy or bandRejectBuy
+        sellSignal := trendShiftSell or bandRejectSell
+
+// Prevent dual signals on the exact same bar
+if buySignal and sellSignal
+    buySignal  := false
+    sellSignal := false
+
+// ==========================================
+// VISUALIZATION & PLOTS
+// ==========================================
+
+// Main VWAP Line
+plot(vwapValue, "Institutional VWAP", color=vwapColor, linewidth=3)
+
+// Deviation Bands (Hide/Show toggle)
+p_up2 = plot(showBands ? upperBand2 : na, "Outer Upper Band (+2 StdDev)", color=color.new(colorBull, 50), linewidth=1, linestyle=plot.linestyle_dashed)
+p_up1 = plot(showBands ? upperBand1 : na, "Inner Upper Band (+1 StdDev)", color=color.new(colorBull, 70), linewidth=1)
+p_lo1 = plot(showBands ? lowerBand1 : na, "Inner Lower Band (-1 StdDev)", color=color.new(colorBear, 70), linewidth=1)
+p_lo2 = plot(showBands ? lowerBand2 : na, "Outer Lower Band (-2 StdDev)", color=color.new(colorBear, 50), linewidth=1, linestyle=plot.linestyle_dashed)
+
+// Shading the Balance Zone (Chop/Value area) to remind you not to take casual entries
+fill(p_up1, p_lo1, color=isLineFlat ? color.new(colorFlat, 95) : color.new(vwapColor, 95), title="Balance Area Fill")
+
+// Plot shapes for Buy and Sell signals
+plotshape(buySignal, title="Buy Signal", style=shape.triangleup, location=location.belowbar, color=colorBull, size=size.normal, text="BUY", textcolor=colorBull)
+plotshape(sellSignal, title="Sell Signal", style=shape.triangledown, location=location.abovebar, color=colorBear, size=size.normal, text="SELL", textcolor=colorBear)
+
+// Alerts Configuration
+alertcondition(buySignal, title="Institutional Buy Signal", message="Institutional Buy Triggered on VWAP Workspace!")
+alertcondition(sellSignal, title="Institutional Sell Signal", message="Institutional Sell Triggered on VWAP Workspace!")
