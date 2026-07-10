@@ -94,10 +94,10 @@ color vwapColor = isLineFlat ? colorFlat : (isBullish ? colorBull : colorBear)
 plot(vwapValue, "Institutional VWAP", color=vwapColor, linewidth=3)
 
 // Deviation Bands (Hide/Show toggle)
-p_up2 = plot(showBands ? upperBand2 : na, "Outer Upper Band (+2 StdDev)", color=color.new(colorBull, 50), linewidth=1, style=plot.style_dashed)
+p_up2 = plot(showBands ? upperBand2 : na, "Outer Upper Band (+2 StdDev)", color=color.new(colorBull, 50), linewidth=1, linestyle=plot.linestyle_dashed)
 p_up1 = plot(showBands ? upperBand1 : na, "Inner Upper Band (+1 StdDev)", color=color.new(colorBull, 70), linewidth=1)
 p_lo1 = plot(showBands ? lowerBand1 : na, "Inner Lower Band (-1 StdDev)", color=color.new(colorBear, 70), linewidth=1)
-p_lo2 = plot(showBands ? lowerBand2 : na, "Outer Lower Band (-2 StdDev)", color=color.new(colorBear, 50), linewidth=1, style=plot.style_dashed)
+p_lo2 = plot(showBands ? lowerBand2 : na, "Outer Lower Band (-2 StdDev)", color=color.new(colorBear, 50), linewidth=1, linestyle=plot.linestyle_dashed)
 
 // Shading the Balance Zone (Chop/Value area) to remind you not to take casual entries
 fill(p_up1, p_lo1, color=isLineFlat ? color.new(colorFlat, 95) : color.new(vwapColor, 95), title="Balance Area Fill")
