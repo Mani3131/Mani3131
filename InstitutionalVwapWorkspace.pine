@@ -1,0 +1,103 @@
+//@version=6
+indicator("Institutional VWAP Workspace & Regime Filter", overlay=true, max_lines_count=500)
+
+// ==========================================
+// INPUTS & CONFIGURATION
+// ==========================================
+var string G_MODE  = "VWAP Mode Settings"
+var string G_BANDS = "Standard Deviation Bands"
+var string G_COLOR = "Regime Styling"
+
+// Core Setup
+modeInput       = input.string("Session", "VWAP Mode", options=["Session", "Anchored"], group=G_MODE, tooltip="Session resets daily. Anchored starts exactly at your specified time event.")
+anchorTimeInput = input.time(timestamp("2026-01-01T00:00:00"), "Anchor Time (For Anchored Mode)", group=G_MODE, tooltip="The exact starting point for your manual anchor (e.g., News release, session open, high/low swing).")
+src             = input.source(hlc3, "Source", group=G_MODE, tooltip="The source series for VWAP calculation.")
+
+// Band Settings
+showBands   = input.bool(true, "Show Deviation Bands", group=G_BANDS)
+devMult1    = input.float(1.0, "Band 1 Multiplier", minval=0.1, step=0.1, group=G_BANDS)
+devMult2    = input.float(2.0, "Band 2 Multiplier", minval=0.1, step=0.1, group=G_BANDS)
+
+// Styling Inputs (Using standard color constants or robust custom RGB definitions for high performance)
+colorBull   = input.color(color.rgb(16, 185, 129), "Bullish Trend Color", group=G_COLOR)
+colorBear   = input.color(color.rgb(244, 63, 94), "Bearish Trend Color", group=G_COLOR)
+colorFlat   = input.color(color.gray, "Flat/Chop Regime Color", group=G_COLOR)
+flatThreshold = input.float(0.05, "Flatness Threshold (%)", minval=0.01, step=0.01, group=G_COLOR, tooltip="Sensitivity for detecting a dead/flattened VWAP line later in the session.")
+
+// ==========================================
+// LOGIC & MATH ENGINE
+// ==========================================
+
+// Determine when calculations reset based on mode
+bool isReset = false
+if modeInput == "Session"
+    isReset := not na(ta.change(time("D"))) ? ta.change(time("D")) != 0 : true
+else
+    // Checks the exact bar where time crosses or equals anchor time
+    bool timeCross = (time >= anchorTimeInput and (na(time[1]) or time[1] < anchorTimeInput))
+    bool timeMatch = (not na(ta.change(time)) ? ta.change(time) != 0 : false) and time == anchorTimeInput
+    isReset := timeCross or timeMatch
+
+// Safely handle potential na values in source or volume to prevent propagation
+float srcVal = nz(src, close)
+float volVal = nz(volume)
+
+// Cumulative Variables initialization
+var float sumSrcVol = 0.0
+var float sumVol    = 0.0
+var float sumSrcSrcVol = 0.0
+
+if isReset
+    sumSrcVol    := srcVal * volVal
+    sumVol       := volVal
+    sumSrcSrcVol := srcVal * srcVal * volVal
+else
+    sumSrcVol    += srcVal * volVal
+    sumVol       += volVal
+    sumSrcSrcVol += srcVal * srcVal * volVal
+
+// Mathematical VWAP calculation
+float vwapValue = sumVol > 0 ? sumSrcVol / sumVol : na
+
+// Volume-Weighted Standard Deviation calculation
+float variance = sumVol > 0 ? (sumSrcSrcVol / sumVol) - math.pow(vwapValue, 2) : 0.0
+float stDev    = variance > 0 ? math.sqrt(variance) : 0.0
+
+// Compute Top and Bottom Deviation Bands
+float upperBand1 = vwapValue + (stDev * devMult1)
+float lowerBand1 = vwapValue - (stDev * devMult1)
+float upperBand2 = vwapValue + (stDev * devMult2)
+float lowerBand2 = vwapValue - (stDev * devMult2)
+
+// ==========================================
+// REGIME STATE ENGINE (Anti-Retail Traps)
+// ==========================================
+
+// 1. Check for Cumulative Memory Flattening
+// Measures percentage change of the VWAP line over a 20-bar lookback
+float vwapChange = ta.change(vwapValue, 20)
+float vwapSlopePct = vwapValue > 0 ? (vwapChange / vwapValue) * 100 : 0.0
+bool isLineFlat = not na(vwapSlopePct) ? math.abs(vwapSlopePct) < flatThreshold : false
+
+// 2. Trend Identification
+bool isBullish = close > vwapValue and not isLineFlat
+bool isBearish = close < vwapValue and not isLineFlat
+
+// Assign adaptive colors based on active market regime
+color vwapColor = isLineFlat ? colorFlat : (isBullish ? colorBull : colorBear)
+
+// ==========================================
+// VISUALIZATION & PLOTS
+// ==========================================
+
+// Main VWAP Line
+plot(vwapValue, "Institutional VWAP", color=vwapColor, linewidth=3)
+
+// Deviation Bands (Hide/Show toggle)
+p_up2 = plot(showBands ? upperBand2 : na, "Outer Upper Band (+2 StdDev)", color=color.new(colorBull, 50), linewidth=1, style=plot.style_dashed)
+p_up1 = plot(showBands ? upperBand1 : na, "Inner Upper Band (+1 StdDev)", color=color.new(colorBull, 70), linewidth=1)
+p_lo1 = plot(showBands ? lowerBand1 : na, "Inner Lower Band (-1 StdDev)", color=color.new(colorBear, 70), linewidth=1)
+p_lo2 = plot(showBands ? lowerBand2 : na, "Outer Lower Band (-2 StdDev)", color=color.new(colorBear, 50), linewidth=1, style=plot.style_dashed)
+
+// Shading the Balance Zone (Chop/Value area) to remind you not to take casual entries
+fill(p_up1, p_lo1, color=isLineFlat ? color.new(colorFlat, 95) : color.new(vwapColor, 95), title="Balance Area Fill")
