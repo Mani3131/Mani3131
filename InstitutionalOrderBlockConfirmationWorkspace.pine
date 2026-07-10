@@ -1,0 +1,146 @@
+//@version=6
+indicator("Institutional Order Block & Confirmation Workspace", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500, max_bars_back=5000)
+
+// ==========================================
+// INPUTS & CONFIGURATION
+// ==========================================
+var string G_STRUC = "Market Structure Settings"
+var string G_OB    = "Order Block Configuration"
+var string G_STYLE = "Visual Styling"
+
+// Structure Inputs
+swingLookback   = input.int(5, "Swing Pivot Lookback", minval=2, group=G_STRUC, tooltip="Bars needed to confirm a swing peak/trough.")
+useVolumeFilter = input.bool(true, "Require High Volume Breaks", group=G_STRUC)
+
+// Order Block Inputs
+obBoxThreshold  = input.int(50, "Max Live Boxes on Chart", minval=10, maxval=100, group=G_OB)
+extendObLength  = input.int(30, "Default Block Projection (Bars)", minval=5, group=G_OB)
+
+// Styling Inputs (Using color.rgb instead of non-existent color.emerald/color.rose)
+colorBullStruc  = input.color(color.rgb(16, 185, 129), "Bullish Elements Color", group=G_STYLE)
+colorBearStruc  = input.color(color.rgb(244, 63, 94), "Bearish Elements Color", group=G_STYLE)
+labelTextColor   = input.color(color.white, "Label Text Color", group=G_STYLE)
+
+// ==========================================
+// PIVOT ENGINE & TRACKING
+// ==========================================
+float swingHigh = ta.pivothigh(high, swingLookback, swingLookback)
+float swingLow  = ta.pivotlow(low, swingLookback, swingLookback)
+
+var float activeHighZone = float(na)
+var float activeLowZone  = float(na)
+var int   highBarIndex   = int(na)
+var int   lowBarIndex    = int(na)
+
+if not na(swingHigh)
+    activeHighZone := swingHigh
+    highBarIndex   := bar_index - swingLookback
+
+if not na(swingLow)
+    activeLowZone  := swingLow
+    lowBarIndex    := bar_index - swingLookback
+
+// Volume Fallback to prevent silent failures on assets without volume
+float volAverage = not na(volume) and volume > 0 ? ta.sma(volume, 20) : na
+bool isInstoVol  = not useVolumeFilter or na(volume) or volume == 0 or (not na(volAverage) and volume > volAverage)
+
+// ==========================================
+// STRUCTURAL REVERSAL ENGINE & OB CAPTURE
+// ==========================================
+bool isBullishBreak = false
+bool isBearishBreak = false
+
+// Arrays to actively track live Order Block visualization elements
+var box[] bullOBBoxes = array.new<box>()
+var box[] bearOBBoxes = array.new<box>()
+
+// Bullish Reversal Trigger
+if not na(activeHighZone) and close > activeHighZone and isInstoVol and not na(highBarIndex)
+    isBullishBreak := true
+
+    // Find the down-closed candle (Order Block) that started the structural push
+    int obIndex = swingLookback
+    int maxLoopLimit = math.min(bar_index, bar_index - highBarIndex)
+    if maxLoopLimit >= swingLookback
+        for i = swingLookback to maxLoopLimit
+            if i < bar_index
+                if open[i] > close[i]
+                    obIndex := i
+                    break
+
+    // Draw and project the Bullish Order Block Zone
+    box bullBox = box.new(left=bar_index - obIndex, top=high[obIndex], right=bar_index + extendObLength, bottom=low[obIndex],
+                          bgcolor=color.new(colorBullStruc, 92), border_color=color.new(colorBullStruc, 40),
+                          border_style=line.style_solid)
+    array.push(bullOBBoxes, bullBox)
+    activeHighZone := float(na)
+
+// Bearish Reversal Trigger
+if not na(activeLowZone) and close < activeLowZone and isInstoVol and not na(lowBarIndex)
+    isBearishBreak := true
+
+    // Find the up-closed candle (Order Block) that started the structural dump
+    int obIndex = swingLookback
+    int maxLoopLimit = math.min(bar_index, bar_index - lowBarIndex)
+    if maxLoopLimit >= swingLookback
+        for i = swingLookback to maxLoopLimit
+            if i < bar_index
+                if open[i] < close[i]
+                    obIndex := i
+                    break
+
+    // Draw and project the Bearish Order Block Zone
+    box bearBox = box.new(left=bar_index - obIndex, top=high[obIndex], right=bar_index + extendObLength, bottom=low[obIndex],
+                          bgcolor=color.new(colorBearStruc, 92), border_color=color.new(colorBearStruc, 40),
+                          border_style=line.style_solid)
+    array.push(bearOBBoxes, bearBox)
+    activeLowZone := float(na)
+
+// ==========================================
+// DYNAMIC MITIGATION ENGINE (Real-Time Clean Up)
+// ==========================================
+
+// Clean up mitigated Bullish Order Blocks (Price invalidates them by breaking below)
+int bullSize = array.size(bullOBBoxes)
+if bullSize > 0
+    for i = 0 to bullSize - 1
+        int idx = bullSize - 1 - i
+        box currentBox = array.get(bullOBBoxes, idx)
+        float boxBottom = box.get_bottom(currentBox)
+        if close < boxBottom
+            box.delete(currentBox)
+            array.remove(bullOBBoxes, idx)
+        else
+            box.set_right(currentBox, bar_index)
+
+// Clean up mitigated Bearish Order Blocks (Price invalidates them by breaking above)
+int bearSize = array.size(bearOBBoxes)
+if bearSize > 0
+    for i = 0 to bearSize - 1
+        int idx = bearSize - 1 - i
+        box currentBox = array.get(bearOBBoxes, idx)
+        float boxTop = box.get_top(currentBox)
+        if close > boxTop
+            box.delete(currentBox)
+            array.remove(bearOBBoxes, idx)
+        else
+            box.set_right(currentBox, bar_index)
+
+// Array memory limit controls
+if array.size(bullOBBoxes) > obBoxThreshold
+    box.delete(array.shift(bullOBBoxes))
+if array.size(bearOBBoxes) > obBoxThreshold
+    box.delete(array.shift(bearOBBoxes))
+
+// ==========================================
+// VISUALIZATION & ALERT SIGNALS
+// ==========================================
+if isBullishBreak
+    label.new(x=bar_index, y=high, text="+CHoCH/BOS", color=colorBullStruc, textcolor=labelTextColor, style=label.style_label_down, size=size.small)
+
+if isBearishBreak
+    label.new(x=bar_index, y=low, text="-CHoCH/BOS", color=colorBearStruc, textcolor=labelTextColor, style=label.style_label_up, size=size.small)
+
+// Strategy Alert Hooks for TradingView Terminal Notifications
+alertcondition(isBullishBreak, title="Bullish Structure Confirmation", message="Bullish CHoCH/BOS Verified. Institutional Order Block Formed.")
+alertcondition(isBearishBreak, title="Bearish Structure Confirmation", message="Bearish CHoCH/BOS Verified. Institutional Order Block Formed.")
