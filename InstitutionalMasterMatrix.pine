@@ -1,0 +1,139 @@
+//@version=6
+indicator("Institutional Master Matrix [Big Boss Optimized]", overlay=true, max_boxes_count=50, max_lines_count=100)
+
+// ==========================================
+// 1. INPUT CONFIGURATION & FILTERS
+// ==========================================
+g_global       = "Global Settings"
+timeZoneInput  = input.string("UTC+3", title="Institutional Timezone", group=g_global, tooltip="Nairobi/Kenyan Time Context")
+isDistSeason   = input.bool(true, title="Enforce Seasonal Filter (July-Sept)", group=g_global)
+
+g_4am          = "Module A: 4 AM Matrix Grid"
+sessionInput4A = input.session("0400-0500", title="4 AM Reference Session", group=g_4am)
+volatility     = input.float(0.3435, title="Implied Volatility Factor", step=0.0001, group=g_4am)
+boundaryMult   = input.float(0.58, title="Daily Boundary Multiplier", step=0.01, group=g_4am)
+
+g_5pm          = "Module B: 5 PM Execution Trap"
+setupSession5P = input.session("1630-1640", title="5 PM Setup Window (4:30-4:40)", group=g_5pm)
+coreSession5P  = input.session("1700-1710", title="5 PM Execution Block (5:00-5:10)", group=g_5pm)
+
+// Optimized Dynamic Session Tracking Evaluation State
+mVal = month(time, timeZoneInput)
+seasonalActive = not isDistSeason or (mVal == 7 or mVal == 8 or mVal == 9)
+t_4am   = time(timeframe.period, sessionInput4A, timeZoneInput)
+t_setup = time(timeframe.period, setupSession5P, timeZoneInput)
+t_core  = time(timeframe.period, coreSession5P, timeZoneInput)
+
+inSession4A = not na(t_4am)
+inSetup5P   = not na(t_setup) and seasonalActive
+inCore5P    = not na(t_core) and seasonalActive
+
+// State Transition Calculations Optimization
+sessionStart4A = inSession4A and na(t_4am[1])
+sessionEnd4A   = na(t_4am) and not na(t_4am[1])
+setupStart5P   = inSetup5P and na(t_setup[1])
+coreStart5P    = inCore5P and na(t_core[1])
+coreEnd5P      = na(t_core) and not na(t_core[1])
+
+// ==========================================
+// 2. MATHEMATICAL CALC ENGINE
+// ==========================================
+var float fAmOpen  = na
+var float fAmHigh  = na
+var float fAmLow   = na
+var float fAmClose = na
+
+var float rangeR   = na
+var float zPrice   = na
+var float dayHigh  = na
+var float dayLow   = na
+
+// Efficient State Machine Extraction
+if sessionStart4A
+    fAmOpen  := open
+    fAmHigh  := high
+    fAmLow   := low
+    fAmClose := close
+else if inSession4A
+    fAmHigh  := math.max(high, fAmHigh)
+    fAmLow   := math.min(low, fAmLow)
+    fAmClose := close
+
+if sessionEnd4A
+    rangeR   := fAmHigh - fAmLow
+    estRange = rangeR * volatility
+    zPrice   := (fAmClose >= fAmOpen) ? (fAmOpen + estRange) : (fAmOpen - estRange)
+
+    boundaryBuffer = rangeR * boundaryMult
+    dayHigh := zPrice + boundaryBuffer
+    dayLow  := zPrice - boundaryBuffer
+
+// ==========================================
+// 3. 5 PM RISK STRUCTURE AUTOMATION
+// ==========================================
+var float setupHigh = na
+var float setupLow  = na
+var float coreHigh  = na
+var float coreLow   = na
+var int   coreStartIdx = na
+
+if setupStart5P
+    setupHigh := high
+    setupLow  := low
+else if inSetup5P
+    setupHigh := math.max(high, setupHigh)
+    setupLow  := math.min(low, setupLow)
+
+if coreStart5P
+    coreHigh := high
+    coreLow  := low
+    coreStartIdx := bar_index
+else if inCore5P
+    coreHigh := math.max(high, coreHigh)
+    coreLow  := math.min(low, coreLow)
+
+// Automation Rendering Box Elements Engine
+if coreEnd5P and not na(coreHigh) and not na(coreLow)
+    box.new(left=coreStartIdx, top=coreHigh, right=bar_index, bottom=coreLow,
+           bgcolor=color.new(color.orange, 94), border_color=color.new(color.orange, 40),
+           border_style=line.style_dashed, text="Institutional Order Block")
+
+// Intraday Data Pipeline Cleanup Code
+if ta.change(time("D", timeZoneInput)) != 0
+    rangeR   := na
+    zPrice   := na
+    dayHigh  := na
+    dayLow   := na
+    setupHigh:= na
+    setupLow := na
+    coreHigh := na
+    coreLow  := na
+
+// ==========================================
+// 4. PLOTTING & REAL-TIME ALERTS ENGINE
+// ==========================================
+// Core Reference Grid Plots
+plotOpen  = plot((inSession4A or (time > t_4am and not na(fAmOpen) and ta.change(time("D", timeZoneInput)) == 0)) ? fAmOpen : na, title="4AM Candle Open", color=color.new(color.gray, 50), style=plot.style_stepline)
+plotZ     = plot(not na(zPrice) ? zPrice : na, title="Z Price Level", color=color.new(color.orange, 0), linewidth=2, style=plot.style_stepline)
+plotHigh  = plot(not na(dayHigh) ? dayHigh : na, title="Max Extension High", color=color.new(color.green, 15), linewidth=2, style=plot.style_stepline)
+plotLow   = plot(not na(dayLow) ? dayLow : na, title="Max Extension Low", color=color.new(color.red, 15), linewidth=2, style=plot.style_stepline)
+
+fill(plotOpen, plotZ, color=color.new(color.orange, 96), title="Buffer Matrix Shading Area")
+
+// Active Window Background Illuminators
+bgcolor(inSetup5P ? color.new(color.blue, 95) : na, title="4:30 - 4:40 Watch Matrix")
+bgcolor(inCore5P ? color.new(color.orange, 94) : na, title="5:00 - 5:10 Active Zone")
+
+// State Machine Condition Signals for Alerting Systems
+alertZPriceCross = inCore5P and ta.cross(close, zPrice)
+alertMaxHighHit  = ta.crossover(high, dayHigh)
+alertMaxLowHit   = ta.crossunder(low, dayLow)
+
+if alertZPriceCross
+    alert("Algorithm Signal: Active Execution Window Candle Intersected Z-Price Level!", alert.freq_once_per_bar)
+
+if alertMaxHighHit
+    alert("Algorithm Warning: Daily Maximum High Broken! Super Buy Expansion Initiated.", alert.freq_once_per_bar)
+
+if alertMaxLowHit
+    alert("Algorithm Warning: Daily Maximum Low Broken! Super Sell Expansion Initiated.", alert.freq_once_per_bar)
