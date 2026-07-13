@@ -96,7 +96,7 @@ else if inCore5P
 if coreEnd5P and not na(coreHigh) and not na(coreLow)
     box.new(left=coreStartIdx, top=coreHigh, right=bar_index, bottom=coreLow,
            bgcolor=color.new(color.orange, 94), border_color=color.new(color.orange, 40),
-           border_style=line.style_dashed, title="Institutional Order Block")
+           border_style=line.style_dashed, text="Institutional Order Block")
 
 // Intraday Data Pipeline Cleanup Code
 if ta.change(time("D", timeZoneInput)) != 0
