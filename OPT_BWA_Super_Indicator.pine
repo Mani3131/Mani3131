@@ -1,0 +1,97 @@
+//@version=6
+indicator("OPT + BWA Super Indicator (v6)", overlay=true, max_lines_count=500)
+
+// Helper function to resolve the target adjacent higher timeframe dynamically and robustly
+getNextTimeframe() =>
+    string tf = "D"
+    if timeframe.isintraday
+        if timeframe.multiplier < 5
+            tf := "5"
+        else if timeframe.multiplier < 15
+            tf := "15"
+        else if timeframe.multiplier < 30
+            tf := "30"
+        else if timeframe.multiplier < 60
+            tf := "60"
+        else if timeframe.multiplier < 240
+            tf := "240"
+        else
+            tf := "D"
+    else if timeframe.isdaily
+        tf := "W"
+    else if timeframe.isweekly
+        tf := "M"
+    else if timeframe.ismonthly
+        tf := "3M"
+    tf
+
+string higherTF = getNextTimeframe()
+
+// 1. Local Pattern Identification
+// Resistance: Green candle followed by a Red candle
+bool is_local_res = (close[1] > open[1]) and (close < open)
+// Support: Red candle followed by a Green candle
+bool is_local_sup = (close[1] < open[1]) and (close > open)
+
+// 2. High Timeframe Validation (OPT Check)
+bool higher_res = request.security(syminfo.tickerid, higherTF, (close[1] > open[1]) and (close < open), barmerge.gaps_off, barmerge.lookahead_off)
+bool higher_sup = request.security(syminfo.tickerid, higherTF, (close[1] < open[1]) and (close > open), barmerge.gaps_off, barmerge.lookahead_off)
+
+// Structural Disappearance Criteria
+bool is_opt_res = is_local_res and not higher_res
+bool is_opt_sup = is_local_sup and not higher_sup
+
+// Persistent variables tracking structural levels
+var line opt_res_line = na
+var line opt_sup_line = na
+var float last_res_val = na
+var float last_sup_val = na
+
+// 3. BWA Execution Logic
+// Bullish Break Tracking (Candle body breaks past line and closes green)
+// We evaluate breakouts using the existing level before updating to any new level on this bar
+bool b_buy = ta.crossover(close, last_res_val) and (close > open)
+var bool wait_buy = false
+
+// Action Confirmation (The immediate next candle closes green)
+bool buy_action = wait_buy[1] and (close > open) and not b_buy
+
+// Reset wait state if we were waiting (since confirmation must happen on the immediate next candle)
+if wait_buy[1]
+    wait_buy := false
+
+// Set wait state if a breakout occurred
+if b_buy
+    wait_buy := true
+
+// Bearish Break Tracking (Candle body breaks below line and closes red)
+bool b_sell = ta.crossunder(close, last_sup_val) and (close < open)
+var bool wait_sell = false
+
+// Action Confirmation (The immediate next candle closes red)
+bool sell_action = wait_sell[1] and (close < open) and not b_sell
+
+// Reset wait state if we were waiting (since confirmation must happen on the immediate next candle)
+if wait_sell[1]
+    wait_sell := false
+
+// Set wait state if a breakout occurred
+if b_sell
+    wait_sell := true
+
+// 4. Draw and update structural OPT levels (Done after breakout evaluation to prevent self-triggering)
+if is_opt_res
+    opt_res_line := line.new(bar_index - 1, high[1], bar_index, high[1], color=color.green, width=2)
+    last_res_val := high[1]
+if not na(opt_res_line)
+    line.set_x2(opt_res_line, bar_index)
+
+if is_opt_sup
+    opt_sup_line := line.new(bar_index - 1, low[1], bar_index, low[1], color=color.red, width=2)
+    last_sup_val := low[1]
+if not na(opt_sup_line)
+    line.set_x2(opt_sup_line, bar_index)
+
+// 5. Plot Signal Shapes
+plotshape(buy_action, title="BWA BUY", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text="BWA BUY")
+plotshape(sell_action, title="BWA SELL", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text="BWA SELL")
