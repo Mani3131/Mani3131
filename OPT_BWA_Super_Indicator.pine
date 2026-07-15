@@ -37,7 +37,7 @@ bool is_local_sup = (close[1] < open[1]) and (close > open)
 bool higher_res = request.security(syminfo.tickerid, higherTF, (close[1] > open[1]) and (close < open), barmerge.gaps_off, barmerge.lookahead_off)
 bool higher_sup = request.security(syminfo.tickerid, higherTF, (close[1] < open[1]) and (close > open), barmerge.gaps_off, barmerge.lookahead_off)
 
-// Structural Disappearance Criteria
+// Structural Disappearance Criteria (OPT Levels)
 bool is_opt_res = is_local_res and not higher_res
 bool is_opt_sup = is_local_sup and not higher_sup
 
@@ -92,6 +92,11 @@ if is_opt_sup
 if not na(opt_sup_line)
     line.set_x2(opt_sup_line, bar_index)
 
-// 5. Plot Signal Shapes
-plotshape(buy_action, title="BWA BUY", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text="BWA BUY")
-plotshape(sell_action, title="BWA SELL", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text="BWA SELL")
+// 5. Plot Signal Shapes and OPT Levels
+// OPT Levels
+plotshape(is_opt_res, title="OPT RESISTANCE", style=shape.labeldown, location=location.abovebar, color=color.new(color.green, 20), size=size.small, text="OPT RES", textcolor=color.white)
+plotshape(is_opt_sup, title="OPT SUPPORT", style=shape.labelup, location=location.belowbar, color=color.new(color.red, 20), size=size.small, text="OPT SUP", textcolor=color.white)
+
+// BWA Executions
+plotshape(buy_action, title="BWA BUY", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text="BWA BUY", textcolor=color.white)
+plotshape(sell_action, title="BWA SELL", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text="BWA SELL", textcolor=color.white)
