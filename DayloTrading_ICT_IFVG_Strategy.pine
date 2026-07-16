@@ -136,8 +136,8 @@ if is_bullish_fvg
          text="Bullish FVG",
          text_size=size.small,
          text_color=color.white,
-         text_valign=text.align_middle,
-         text_halign=text.align_center
+         text_valign="middle",
+         text_halign="center"
      )
     FVG f_obj = FVG.new(low[0], high[2], (low[0] + high[2]) / 2.0, bar_index - 2, true, false, fvg_box)
     array.push(active_fvgs, f_obj)
@@ -162,8 +162,8 @@ if is_bearish_fvg
          text="Bearish FVG",
          text_size=size.small,
          text_color=color.white,
-         text_valign=text.align_middle,
-         text_halign=text.align_center
+         text_valign="middle",
+         text_halign="center"
      )
     FVG f_obj = FVG.new(low[2], high[0], (low[2] + high[0]) / 2.0, bar_index - 2, false, false, fvg_box)
     array.push(active_fvgs, f_obj)
