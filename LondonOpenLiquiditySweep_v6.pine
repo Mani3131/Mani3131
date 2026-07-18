@@ -1,0 +1,83 @@
+//@version=6
+indicator("London Open 1m Liquidity Sweep (EAT)", overlay=true, max_boxes_count=500, max_lines_count=500)
+
+// --- Inputs ---
+var string G_TIME = "Time Settings"
+timezone_input   = input.string("UTC+3", title="Timezone", group=G_TIME, tooltip="EAT is UTC+3")
+session_input    = input.session("1000-1001", title="London Open Candle (EAT)", group=G_TIME)
+window_input     = input.session("1003-1015", title="Execution Window (EAT)", group=G_TIME)
+
+var string G_VIS = "Visual Style"
+bull_color       = input.color(color.new(color.green, 85), title="Bullish Zone Color", group=G_VIS)
+bear_color       = input.color(color.new(color.red, 85), title="Bearish Zone Color", group=G_VIS)
+
+// --- Time Checks ---
+in_anchor_session = not na(time(timeframe.period, session_input, timezone_input))
+in_exec_window    = not na(time(timeframe.period, window_input, timezone_input))
+
+// --- State Variables ---
+var int anchor_bar_idx = na
+var float anchor_open  = na
+var float anchor_close = na
+var float anchor_high  = na
+var float anchor_low   = na
+
+var string market_trend = "None"
+var float liquidity_target = na
+var box zone_box = na
+
+// --- Global Calculations ---
+// Stateful functions like ta.atr() must be evaluated in the global scope on every bar
+atr_val = ta.atr(14)
+
+// --- Detect 10:00 AM EAT Candle ---
+if in_anchor_session and not in_anchor_session[1]
+    anchor_bar_idx   := bar_index
+    anchor_open      := open
+    anchor_close     := close
+    anchor_high      := high
+    anchor_low       := low
+    market_trend     := close > open ? "Bullish" : "Bearish"
+    liquidity_target := na
+
+// --- Detect 10:01 AM EAT Candle (Check Engulfing Reversal) ---
+if bar_index == anchor_bar_idx + 1
+    bool is_engulfing = false
+    if market_trend == "Bullish" and close < open and close <= anchor_open and open >= anchor_close
+        market_trend := "Bearish"
+        is_engulfing := true
+    else if market_trend == "Bearish" and close > open and close >= anchor_open and open <= anchor_close
+        market_trend := "Bullish"
+        is_engulfing := true
+
+    // Set final liquidity targets based on confirmed directional trend
+    if market_trend == "Bullish"
+        // Look for downside liquidity to buy the bounce
+        liquidity_target := is_engulfing ? low : anchor_low
+        zone_box := box.new(left=bar_index + 2, top=liquidity_target, right=bar_index + 14, bottom=liquidity_target - (atr_val * 0.5),
+         bgcolor=bull_color, border_color=color.green, border_style=line.style_dashed, text="Downside Liquidity")
+    else
+        // Look for upside liquidity to short the bounce
+        liquidity_target := is_engulfing ? high : anchor_high
+        zone_box := box.new(left=bar_index + 2, top=liquidity_target + (atr_val * 0.5), right=bar_index + 14, bottom=liquidity_target,
+         bgcolor=bear_color, border_color=color.red, border_style=line.style_dashed, text="Upside Liquidity")
+
+// --- Monitor Execution Window (10:03 - 10:15 EAT) ---
+if in_exec_window and not na(liquidity_target)
+    if market_trend == "Bullish"
+        // Check if price swept below the downside liquidity target
+        if low <= liquidity_target
+            label.new(bar_index, low, text="Sweep & Long Entry", style=label.style_label_up, color=color.green, textcolor=color.white)
+            liquidity_target := na // Deactivate zone after the sweep
+            box.set_right(zone_box, bar_index)
+    else
+        // Check if price swept above the upside liquidity target
+        if high >= liquidity_target
+            label.new(bar_index, high, text="Sweep & Short Entry", style=label.style_label_down, color=color.red, textcolor=color.white)
+            liquidity_target := na // Deactivate zone after the sweep
+            box.set_right(zone_box, bar_index)
+
+// Close open zone boxes at the end of the 15-minute window if no sweep occurs
+if not in_exec_window and in_exec_window[1] and not na(liquidity_target)
+    box.set_right(zone_box, bar_index)
+    liquidity_target := na
