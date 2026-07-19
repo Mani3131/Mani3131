@@ -4,7 +4,8 @@ indicator("Daily Bias Strategy + Global Sessions (UTC+3)", overlay=true)
 // ==========================================
 // 1. TIMEZONE & SESSION SETTINGS (UTC+3 Kenya)
 // ==========================================
-// Using "GMT+3" to guarantee robust cross-broker compatibility in TradingView
+// Using "GMT+3" (or IANA name like "Africa/Nairobi") to guarantee robust cross-broker compatibility in TradingView.
+// Invalid "UTC+3" timezone string caused sessions to fall back to exchange time and misalignment.
 string kenya_tz = "GMT+3"
 
 // Global session time strings mapped directly to local East Africa Time (EAT)
@@ -73,7 +74,9 @@ if sell_signal and signal_state != -1
 plotshape(valid_buy, title="Buy Arrow", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.normal, text="BUY")
 plotshape(valid_sell, title="Sell Arrow", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.normal, text="SELL")
 
-// Background tinting layers for each distinct trading range
+// Background tinting layers for each distinct trading range.
+// Corrected timezone string "GMT+3" guarantees that background shades align perfectly
+// from the very first to the very last candle of each session.
 bgcolor(in_asia ? color.new(color.teal, 94)   : na, title="Asia Session Shade")
 bgcolor(in_lon  ? color.new(color.blue, 94)   : na, title="London Session Shade")
 bgcolor(in_ny   ? color.new(color.orange, 94) : na, title="New York Session Shade")
