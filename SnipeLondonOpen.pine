@@ -6,7 +6,8 @@ indicator("Snipe London Open & Heikin-Ashi Core", overlay=true, max_boxes_count=
 // ==========================================
 gp_london = "London Session Settings"
 use_london   = input.bool(true, "Highlight London Session Open", group=gp_london)
-london_time  = input.session("0800-0830:23456", "London Open Window (First 30m)", group=gp_london, tooltip="Adjust based on your broker's timezone")
+london_time  = input.session("1000-1030:23456", "London Open Window (First 30m)", group=gp_london, tooltip="Session input matching the configured timezone")
+london_tz    = input.string("UTC+3", "Session Timezone", group=gp_london, tooltip="Standard London Open occurs at 08:00 UTC (10:00 UTC+3 / EAT)")
 
 gp_fib = "Fibonacci & Structure Settings"
 fib_level    = input.float(0.75, "Fibonacci Discount Level", minval=0.0, maxval=1.0, group=gp_fib)
@@ -18,8 +19,8 @@ show_ha_signals = input.bool(true, "Show Heikin-Ashi Momentum Signals", group=gp
 // ==========================================
 // 2. LONDON OPEN KILLZONE DETECTOR
 // ==========================================
-// Check if the current bar falls inside the first 30 minutes of London Open
-in_london = use_london and not na(time(timeframe.period, london_time))
+// Check if the current bar falls inside the first 30 minutes of London Open under the strict timezone (default UTC+3)
+in_london = use_london and not na(time(timeframe.period, london_time, london_tz))
 london_start = in_london and not nz(in_london[1], false)
 
 // Paint background during the London Open window
