@@ -1,0 +1,94 @@
+//@version=6
+indicator("Snipe London Open & Heikin-Ashi Core", overlay=true, max_boxes_count=500, max_lines_count=500)
+
+// ==========================================
+// 1. INPUTS & SETTINGS
+// ==========================================
+gp_london = "London Session Settings"
+use_london   = input.bool(true, "Highlight London Session Open", group=gp_london)
+london_time  = input.session("0800-0830:23456", "London Open Window (First 30m)", group=gp_london, tooltip="Adjust based on your broker's timezone")
+
+gp_fib = "Fibonacci & Structure Settings"
+fib_level    = input.float(0.75, "Fibonacci Discount Level", minval=0.0, maxval=1.0, group=gp_fib)
+lookback     = input.int(20, "Structure Lookback Period", minval=5, group=gp_fib)
+
+gp_ha = "Heikin-Ashi Settings"
+show_ha_signals = input.bool(true, "Show Heikin-Ashi Momentum Signals", group=gp_ha)
+
+// ==========================================
+// 2. LONDON OPEN KILLZONE DETECTOR
+// ==========================================
+// Check if the current bar falls inside the first 30 minutes of London Open
+in_london = use_london and not na(time(timeframe.period, london_time))
+london_start = in_london and not nz(in_london[1], false)
+
+// Paint background during the London Open window
+bgcolor(in_london ? color.new(color.blue, 92) : na, title="London Open Background")
+
+// ==========================================
+// 3. MARKET STRUCTURE & FIBONACCI DISCOUNTS
+// ==========================================
+// Stateful calculations must be in the global scope to maintain history and work correctly
+highest_high = ta.highest(high, lookback)
+lowest_low = ta.lowest(low, lookback)
+
+var float swing_high = float(na)
+var float swing_low = float(na)
+var line fib_line = na
+var int london_start_index = int(na)
+
+// Track when London start begins
+if london_start
+    london_start_index := bar_index
+
+loni = london_start
+
+if loni or in_london
+    // Assign values calculated at the global scope
+    swing_high := highest_high
+    swing_low := lowest_low
+
+    // Calculate the exact target Fibonacci price level
+    float fib_discount_price = swing_high - ((swing_high - swing_low) * fib_level)
+
+    // Manage drawing the premium/discount threshold anchor line
+    if na(fib_line)
+        fib_line := line.new(x1=london_start_index, y1=fib_discount_price, x2=bar_index, y2=fib_discount_price, color=color.pink, width=2, style=line.style_dashed)
+    else
+        line.set_xy1(fib_line, london_start_index, fib_discount_price)
+        line.set_xy2(fib_line, bar_index, fib_discount_price)
+else
+    // Delete line when the trading window passes
+    if not na(fib_line)
+        line.delete(fib_line)
+        fib_line := na
+
+// Detect a simplistic Change of Character (CHoCH) break above the swing high
+bool choch_bullish = ta.crossover(close, swing_high[1]) and in_london
+
+plotshape(choch_bullish, title="CHoCH Bullish Break", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text="CHoCH")
+
+// ==========================================
+// 4. HEIKIN-ASHI ENGINE & SMOOTHING SIGNALS
+// ==========================================
+// Calculate real Heikin-Ashi OHLC values programmatically
+var float ha_open = float(na)
+ha_close = (open + high + low + close) / 4.0
+ha_open := na(ha_open[1]) ? (open + close) / 2.0 : (ha_open[1] + ha_close[1]) / 2.0
+ha_high = math.max(high, math.max(ha_open, ha_close))
+ha_low = math.min(low, math.min(ha_open, ha_close))
+
+// Define core trends using wick rules
+ha_green_no_wick = (ha_close > ha_open) and (ha_low == ha_open) // Strong Uptrend
+ha_red_no_wick   = (ha_close < ha_open) and (ha_high == ha_open) // Strong Downtrend
+ha_doji          = math.abs(ha_close - ha_open) <= (ha_high - ha_low) * 0.1 // Indecision / Pause
+
+// Color bars based on Heikin-Ashi trends if enabled
+barcolor(show_ha_signals ? (ha_green_no_wick ? color.green : ha_red_no_wick ? color.red : ha_doji ? color.yellow : na) : na)
+
+// Plot reversal alerts when a Doji prints after a solid trend direction
+bool ha_buy_reversal  = ha_doji and (ha_close[1] < ha_open[1])
+bool ha_sell_reversal = ha_doji and (ha_close[1] > ha_open[1])
+
+plotshape(show_ha_signals and ha_buy_reversal, title="HA Buy Alert", style=shape.circle, location=location.belowbar, color=color.lime, size=size.tiny)
+plotshape(show_ha_signals and ha_sell_reversal, title="HA Sell Alert", style=shape.circle, location=location.abovebar, color=color.orange, size=size.tiny)
