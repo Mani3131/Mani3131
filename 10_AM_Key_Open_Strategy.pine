@@ -33,7 +33,7 @@ float slowEma = ta.ema(close, slowEmaLen)
 // Extract stateful tech analysis functions to the global outer scope to prevent state corruption/short-circuiting
 bool emaCrossover  = ta.crossover(fastEma, slowEma)
 bool emaCrossunder = ta.crossunder(fastEma, slowEma)
-bool dayChanged    = ta.change(time("D", "", utc3_tz))
+bool dayChanged    = ta.change(time("D", "", utc3_tz)) != 0
 
 // Track time data forced to GMT+3 timezone
 int currentHour   = hour(time, utc3_tz)
@@ -105,11 +105,11 @@ if shortCondition
     hasSweptHigh := false
 
 // Bracket management calculations (Bracket Targets & Stop Losses)
-float longStop   = strategy.position_avg_price * (1 - (stopLossPct / 100))
-float longTarget = strategy.position_avg_price * (1 + (takeProfitPct / 100))
+float longStop   = strategy.position_size > 0 ? strategy.position_avg_price * (1 - (stopLossPct / 100)) : na
+float longTarget = strategy.position_size > 0 ? strategy.position_avg_price * (1 + (takeProfitPct / 100)) : na
 
-float shortStop   = strategy.position_avg_price * (1 + (stopLossPct / 100))
-float shortTarget = strategy.position_avg_price * (1 - (takeProfitPct / 100))
+float shortStop   = strategy.position_size < 0 ? strategy.position_avg_price * (1 + (stopLossPct / 100)) : na
+float shortTarget = strategy.position_size < 0 ? strategy.position_avg_price * (1 - (takeProfitPct / 100)) : na
 
 // Structural trade execution exits (evaluated globally for maximum broker-sync safety)
 strategy.exit("Exit Long", from_entry="Long Entry", stop=longStop, limit=longTarget)
