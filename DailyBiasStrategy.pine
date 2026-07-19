@@ -1,10 +1,10 @@
 //@version=6
-indicator("Daily Bias Strategy + Global Sessions (UTC+3)", overlay=true)
+indicator("Daily Bias Strategy + Global Sessions (UTC+3)", overlay=true, max_boxes_count=500)
 
 // ==========================================
 // 1. TIMEZONE & SESSION SETTINGS (UTC+3 Kenya)
 // ==========================================
-// Using "GMT+3" (or IANA name like "Africa/Nairobi") to guarantee robust cross-broker compatibility in TradingView.
+// Using "GMT+3" to guarantee robust cross-broker compatibility in TradingView.
 // Invalid "UTC+3" timezone string caused sessions to fall back to exchange time and misalignment.
 string kenya_tz = "GMT+3"
 
@@ -21,6 +21,9 @@ bool in_ny   = not na(time(timeframe.period, ny_time,   kenya_tz))
 // Execution filtering session window (When you prefer active signals to generate)
 string exec_window = input.session("1000-2000", title="Strategy Execution Window (EAT)")
 bool in_exec_session = not na(time(timeframe.period, exec_window, kenya_tz))
+
+// Session shade style configuration
+string shade_style = input.string("Bounded Box", title="Session Shade Style", options=["Bounded Box", "Full Height"])
 
 // ==========================================
 // 2. HIGHER TIME FRAME REFERENCE (PDH / PDL)
@@ -74,12 +77,75 @@ if sell_signal and signal_state != -1
 plotshape(valid_buy, title="Buy Arrow", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.normal, text="BUY")
 plotshape(valid_sell, title="Sell Arrow", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.normal, text="SELL")
 
-// Background tinting layers for each distinct trading range.
-// Corrected timezone string "GMT+3" guarantees that background shades align perfectly
-// from the very first to the very last candle of each session.
-bgcolor(in_asia ? color.new(color.teal, 94)   : na, title="Asia Session Shade")
-bgcolor(in_lon  ? color.new(color.blue, 94)   : na, title="London Session Shade")
-bgcolor(in_ny   ? color.new(color.orange, 94) : na, title="New York Session Shade")
+// High-Precision Session Box drawings (used when Bounded Box style is selected)
+var box asia_box = na
+var box lon_box  = na
+var box ny_box   = na
+
+// Keep track of high/low within each session dynamically
+var float asia_high = na
+var float asia_low  = na
+var float lon_high  = na
+var float lon_low   = na
+var float ny_high   = na
+var float ny_low    = na
+
+// State transitions for sessions
+bool asia_start = in_asia and not in_asia[1]
+bool lon_start  = in_lon  and not in_lon[1]
+bool ny_start   = in_ny   and not in_ny[1]
+
+bool is_bounded = (shade_style == "Bounded Box")
+
+// Asia Session Box Management
+if is_bounded
+    if asia_start
+        asia_high := high
+        asia_low  := low
+        asia_box := box.new(left=bar_index, top=asia_high, right=bar_index, bottom=asia_low,
+                            bgcolor=color.new(color.teal, 94), border_color=color.teal, border_style=line.style_dashed,
+                            extend=extend.none)
+    else if in_asia and not na(asia_box)
+        asia_high := math.max(asia_high, high)
+        asia_low  := math.min(asia_low, low)
+        box.set_right(asia_box, bar_index)
+        box.set_top(asia_box, asia_high)
+        box.set_bottom(asia_box, asia_low)
+
+// London Session Box Management
+if is_bounded
+    if lon_start
+        lon_high := high
+        lon_low  := low
+        lon_box := box.new(left=bar_index, top=lon_high, right=bar_index, bottom=lon_low,
+                           bgcolor=color.new(color.blue, 94), border_color=color.blue, border_style=line.style_dashed,
+                           extend=extend.none)
+    else if in_lon and not na(lon_box)
+        lon_high := math.max(lon_high, high)
+        lon_low  := math.min(lon_low, low)
+        box.set_right(lon_box, bar_index)
+        box.set_top(lon_box, lon_high)
+        box.set_bottom(lon_box, lon_low)
+
+// New York Session Box Management
+if is_bounded
+    if ny_start
+        ny_high := high
+        ny_low  := low
+        ny_box := box.new(left=bar_index, top=ny_high, right=bar_index, bottom=ny_low,
+                      bgcolor=color.new(color.orange, 94), border_color=color.orange, border_style=line.style_dashed,
+                      extend=extend.none)
+    else if in_ny and not na(ny_box)
+        ny_high := math.max(ny_high, high)
+        ny_low  := math.min(ny_low, low)
+        box.set_right(ny_box, bar_index)
+        box.set_top(ny_box, ny_high)
+        box.set_bottom(ny_box, ny_low)
+
+// Full Height shading fallback option
+bgcolor(not is_bounded and in_asia ? color.new(color.teal, 94)   : na, title="Asia Session Shade")
+bgcolor(not is_bounded and in_lon  ? color.new(color.blue, 94)   : na, title="London Session Shade")
+bgcolor(not is_bounded and in_ny   ? color.new(color.orange, 94) : na, title="New York Session Shade")
 
 // ==========================================
 // 5. AUTOMATED ALERTS
