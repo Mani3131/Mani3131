@@ -1,0 +1,129 @@
+//@version=6
+strategy("10 AM Key Open Strategy (UTC+3 Timeframe)", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, commission_type=strategy.commission.percent, commission_value=0.03)
+
+// ==========================================
+// 1. INPUT PARAMETERS & USER SETTINGS
+// ==========================================
+var string G_TIME  = "Session Settings (UTC+3 Adjusted)"
+var string G_RISK  = "Risk Management"
+var string G_CONF  = "Confirmation Filters"
+
+// Timezone tracking configuration hardcoded to UTC+3 (GMT+3)
+utc3_tz = "GMT+3"
+
+// Time window bounds converted to UTC+3 equivalents
+int openHour   = input.int(17, "Key Open Hour (UTC+3)", minval=0, maxval=23, group=G_TIME, tooltip="17:00 UTC+3 matches 10:00 AM New York EST")
+int openMinute = input.int(0, "Key Open Minute", minval=0, maxval=59, group=G_TIME)
+
+// Confirmation indicator filters
+int fastEmaLen = input.int(9, "Fast EMA Length", minval=1, group=G_CONF)
+int slowEmaLen = input.int(21, "Slow EMA Length", minval=1, group=G_CONF)
+
+// Position risk options
+float stopLossPct  = input.float(0.5, "Stop Loss (%)", minval=0.05, step=0.05, group=G_RISK)
+float takeProfitPct = input.float(1.5, "Take Profit (%)", minval=0.05, step=0.05, group=G_RISK)
+
+// ==========================================
+// 2. LOGIC AND TECHNICAL CALCULATIONS
+// ==========================================
+// Dynamic moving averages for local market confirmation
+float fastEma = ta.ema(close, fastEmaLen)
+float slowEma = ta.ema(close, slowEmaLen)
+
+// Extract stateful tech analysis functions to the global outer scope to prevent state corruption/short-circuiting
+bool emaCrossover  = ta.crossover(fastEma, slowEma)
+bool emaCrossunder = ta.crossunder(fastEma, slowEma)
+bool dayChanged    = ta.change(time("D", "", utc3_tz)) != 0
+
+// Track time data forced to GMT+3 timezone
+int currentHour   = hour(time, utc3_tz)
+int currentMinute = minute(time, utc3_tz)
+
+// Total minutes from midnight calculations to support fully dynamic windows
+int current_total_minutes  = currentHour * 60 + currentMinute
+int key_open_total_minutes = openHour * 60 + openMinute
+
+// Initialize persistent open-price tracking variables with explicit type casting
+var float keyOpenPrice = float(na)
+var float morningHigh  = float(na)
+var float morningLow   = float(na)
+var bool  hasSweptLow  = false
+var bool  hasSweptHigh = false
+
+// Reset structural benchmarks at midnight / start of new day
+if dayChanged
+    keyOpenPrice := float(na)
+    morningHigh  := float(na)
+    morningLow   := float(na)
+    hasSweptLow  := false
+    hasSweptHigh := false
+
+// Capture high and low boundary data during the 30-minute manipulation window preceding key open
+// E.g., if open is 17:00, window is 16:30 to 17:00 (inclusive)
+int diff_minutes_to_open = (key_open_total_minutes - current_total_minutes + 1440) % 1440
+bool is_manipulation_window = (diff_minutes_to_open >= 0 and diff_minutes_to_open <= 30)
+
+if is_manipulation_window
+    morningHigh := na(morningHigh) ? high : math.max(morningHigh, high)
+    morningLow  := na(morningLow) ? low : math.min(morningLow, low)
+
+// Capture and lock the precise opening price anchor at the designated open hour and minute
+bool is_key_open_bar = (currentHour == openHour and currentMinute == openMinute)
+if is_key_open_bar
+    keyOpenPrice := open
+
+// Calculate time elapsed since the key open to manage session window dynamically
+int elapsed_minutes = (current_total_minutes - key_open_total_minutes + 1440) % 1440
+
+// Track if active price liquidates or sweeps the morning ranges after the key open anchor forms
+// Sweeps are monitored strictly after the key open bar within the 6-hour US session window
+bool is_active_session = not na(keyOpenPrice) and (elapsed_minutes >= 0 and elapsed_minutes < 360)
+
+if is_active_session and not is_key_open_bar
+    if low < morningLow
+        hasSweptLow := true
+    if high > morningHigh
+        hasSweptHigh := true
+
+// ==========================================
+// 3. EXECUTION LOGIC (ORDER MANAGEMENT)
+// ==========================================
+// Long Conditions: Swept local low boundaries + Fast EMA crosses above Slow EMA
+bool longCondition = is_active_session and hasSweptLow and emaCrossover and (strategy.position_size == 0)
+
+// Short Conditions: Swept local high boundaries + Fast EMA crosses below Slow EMA
+bool shortCondition = is_active_session and hasSweptHigh and emaCrossunder and (strategy.position_size == 0)
+
+// Market entry orders
+if longCondition
+    strategy.entry("Long Entry", strategy.long)
+    // Clear validation flags once order initializes
+    hasSweptLow := false
+
+if shortCondition
+    strategy.entry("Short Entry", strategy.short)
+    hasSweptHigh := false
+
+// Bracket management calculations (Bracket Targets & Stop Losses)
+float longStop   = strategy.position_size > 0 ? strategy.position_avg_price * (1 - (stopLossPct / 100)) : na
+float longTarget = strategy.position_size > 0 ? strategy.position_avg_price * (1 + (takeProfitPct / 100)) : na
+
+float shortStop   = strategy.position_size < 0 ? strategy.position_avg_price * (1 + (stopLossPct / 100)) : na
+float shortTarget = strategy.position_size < 0 ? strategy.position_avg_price * (1 - (takeProfitPct / 100)) : na
+
+// Structural trade execution exits (evaluated globally for maximum broker-sync safety)
+strategy.exit("Exit Long", from_entry="Long Entry", stop=longStop, limit=longTarget)
+strategy.exit("Exit Short", from_entry="Short Entry", stop=shortStop, limit=shortTarget)
+
+// ==========================================
+// 4. CHART VISUALIZATIONS & PLOTS
+// ==========================================
+// Plots EMAs for visual trade confirmation
+plot(fastEma, color=color.blue, title="Fast EMA")
+plot(slowEma, color=color.orange, title="Slow EMA")
+
+// Persistent plotting of the crucial opening horizontal price level
+plot(keyOpenPrice, color=color.yellow, style=plot.style_linebr, linewidth=2, title="Key Open Level")
+
+// Highlights background areas during the critical evaluation window
+bgcolor(is_key_open_bar ? color.new(color.yellow, 80) : na, title="Key Open Marker Trigger")
