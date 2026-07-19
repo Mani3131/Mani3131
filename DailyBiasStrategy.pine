@@ -104,7 +104,8 @@ if is_bounded
         asia_low  := low
         asia_box := box.new(left=bar_index, top=asia_high, right=bar_index, bottom=asia_low,
                             bgcolor=color.new(color.teal, 94), border_color=color.teal, border_style=line.style_dashed,
-                            extend=extend.none)
+                            extend=extend.none, text="Asia", text_color=color.teal, text_size=size.small,
+                            text_valign="top", text_halign="center")
     else if in_asia and not na(asia_box)
         asia_high := math.max(asia_high, high)
         asia_low  := math.min(asia_low, low)
@@ -119,7 +120,8 @@ if is_bounded
         lon_low  := low
         lon_box := box.new(left=bar_index, top=lon_high, right=bar_index, bottom=lon_low,
                            bgcolor=color.new(color.blue, 94), border_color=color.blue, border_style=line.style_dashed,
-                           extend=extend.none)
+                           extend=extend.none, text="London", text_color=color.blue, text_size=size.small,
+                           text_valign="top", text_halign="center")
     else if in_lon and not na(lon_box)
         lon_high := math.max(lon_high, high)
         lon_low  := math.min(lon_low, low)
@@ -134,7 +136,8 @@ if is_bounded
         ny_low  := low
         ny_box := box.new(left=bar_index, top=ny_high, right=bar_index, bottom=ny_low,
                       bgcolor=color.new(color.orange, 94), border_color=color.orange, border_style=line.style_dashed,
-                      extend=extend.none)
+                      extend=extend.none, text="New York", text_color=color.orange, text_size=size.small,
+                      text_valign="top", text_halign="center")
     else if in_ny and not na(ny_box)
         ny_high := math.max(ny_high, high)
         ny_low  := math.min(ny_low, low)
