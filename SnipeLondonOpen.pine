@@ -53,8 +53,9 @@ if loni or in_london
     float fib_discount_price = swing_high - ((swing_high - swing_low) * fib_level)
 
     // Manage drawing the premium/discount threshold anchor line
+    // Use color.fuchsia instead of the invalid color.pink to prevent compiler errors
     if na(fib_line)
-        fib_line := line.new(x1=london_start_index, y1=fib_discount_price, x2=bar_index, y2=fib_discount_price, color=color.pink, width=2, style=line.style_dashed)
+        fib_line := line.new(x1=london_start_index, y1=fib_discount_price, x2=bar_index, y2=fib_discount_price, color=color.fuchsia, width=2, style=line.style_dashed)
     else
         line.set_xy1(fib_line, london_start_index, fib_discount_price)
         line.set_xy2(fib_line, bar_index, fib_discount_price)
