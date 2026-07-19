@@ -21,7 +21,9 @@ show_ha_signals = input.bool(true, "Show Heikin-Ashi Momentum Signals", group=gp
 // ==========================================
 // Check if the current bar falls inside the first 30 minutes of London Open under the strict timezone (default UTC+3)
 in_london = use_london and not na(time(timeframe.period, london_time, london_tz))
-london_start = in_london and not nz(in_london[1], false)
+// In Pine Script v6, booleans cannot be na, and nz() / na() do not accept boolean arguments.
+// On historical/starting bars, booleans default to false.
+london_start = in_london and not in_london[1]
 
 // Paint background during the London Open window
 bgcolor(in_london ? color.new(color.blue, 92) : na, title="London Open Background")
