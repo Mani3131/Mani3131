@@ -1,0 +1,101 @@
+//@version=6
+indicator("Invalidation Strategy Tracker v6 - Pro", overlay=true, max_labels_count=500)
+
+// --- Inputs ---
+int leftBars      = input.int(5, title="Pivot Left Bars", minval=1, group="Market Structure")
+int rightBars     = input.int(5, title="Pivot Right Bars", minval=1, group="Market Structure")
+float rrRatio     = input.float(2.0, title="Risk-to-Reward Ratio", minval=0.1, group="Risk Management")
+
+// --- Trend Filter Inputs ---
+bool useEmaFilter = input.bool(true, title="Enable EMA Trend Filter", group="Trend Filter")
+int emaLength     = input.int(200, title="EMA Filter Length", minval=1, group="Trend Filter")
+
+// --- Style Inputs ---
+color bullColor   = input.color(color.green, title="Bullish Color", group="Visuals")
+color bearColor   = input.color(color.red, title="Bearish Color", group="Visuals")
+
+// --- Variables ---
+var float lastHighPivot = float(na)
+var float lastLowPivot  = float(na)
+var float invalidationLevel = float(na)
+var int bias = 0 // 1 = Bullish, -1 = Bearish
+
+// --- Technical Filters ---
+float filterEma = ta.ema(close, emaLength)
+bool isBullTrend = not useEmaFilter or (close > filterEma)
+bool isBearTrend = not useEmaFilter or (close < filterEma)
+
+// --- Pivot Detection ---
+float pivotH = ta.pivothigh(high, leftBars, rightBars)
+float pivotL = ta.pivotlow(low, leftBars, rightBars)
+
+if not na(pivotH)
+    lastHighPivot := pivotH
+if not na(pivotL)
+    lastLowPivot := pivotL
+
+// --- Alert Conditions States ---
+bool alertEntryBull = false
+bool alertEntryBear = false
+bool alertInvalidated = false
+
+// --- Stateful Evaluations (Global Scope) ---
+bool isHighPivotCrossed     = ta.crossover(close, lastHighPivot)
+bool isLowPivotCrossed      = ta.crossunder(close, lastLowPivot)
+bool isInvalidationCrossedL = ta.crossunder(close, invalidationLevel)
+bool isInvalidationCrossedS = ta.crossover(close, invalidationLevel)
+
+// --- Market Structure & Invalidation Logic ---
+// Bullish Breakout (Filtered by EMA)
+if isHighPivotCrossed and bias <= 0 and isBullTrend
+    bias := 1
+    invalidationLevel := lastLowPivot
+    alertEntryBull := true
+
+    label.new(bar_index, low, "BULLISH SETUP\nInv: " + str.tostring(invalidationLevel, "#.##"),
+              color=bullColor, textcolor=color.white, style=label.style_label_up)
+
+// Bearish Breakdown (Filtered by EMA)
+if isLowPivotCrossed and bias >= 0 and isBearTrend
+    bias := -1
+    invalidationLevel := lastHighPivot
+    alertEntryBear := true
+
+    label.new(bar_index, high, "BEARISH SETUP\nInv: " + str.tostring(invalidationLevel, "#.##"),
+              color=bearColor, textcolor=color.white, style=label.style_label_down)
+
+// --- Invalidation Breach Detection ---
+if bias == 1 and isInvalidationCrossedL
+    alertInvalidated := true
+    bias := 0
+    label.new(bar_index, close, "INVALIDATED\nExit Long",
+              color=color.orange, textcolor=color.black, style=label.style_label_center)
+else if bias == -1 and isInvalidationCrossedS
+    alertInvalidated := true
+    bias := 0
+    label.new(bar_index, close, "INVALIDATED\nExit Short",
+              color=color.orange, textcolor=color.black, style=label.style_label_center)
+
+// --- Dynamic Targets ---
+float targetLevel = float(na)
+if bias == 1 and not na(invalidationLevel)
+    float risk = close - invalidationLevel
+    targetLevel := close + (risk * rrRatio)
+else if bias == -1 and not na(invalidationLevel)
+    float risk = invalidationLevel - close
+    targetLevel := close - (risk * rrRatio)
+
+// --- Plotting ---
+plot(useEmaFilter ? filterEma : na, title="EMA Filter Line", color=color.gray, style=plot.style_line, linewidth=1)
+plot(bias != 0 ? invalidationLevel : na, title="Invalidation Level", color=bias == 1 ? bullColor : bearColor, style=plot.style_linebr, linewidth=2)
+plot(bias != 0 ? targetLevel : na, title="Take Profit Target", color=color.blue, style=plot.style_linebr, linewidth=1, trackprice=true)
+
+// --- v6 Algorithmic Alerts (Webhooks / SMS) ---
+if alertEntryBull
+    alert("🟢 Bullish Entry Alert! Symbol: " + syminfo.ticker + " | Entry: " + str.tostring(close) + " | Invalidation Point: " + str.tostring(invalidationLevel), alert.freq_once_per_bar_close)
+
+if alertEntryBear
+    alert("🔴 Bearish Entry Alert! Symbol: " + syminfo.ticker + " | Entry: " + str.tostring(close) + " | Invalidation Point: " + str.tostring(invalidationLevel), alert.freq_once_per_bar_close)
+
+if alertInvalidated
+    alert("⚠️ TRADE INVALIDATED! Close position immediately on " + syminfo.ticker, alert.freq_once_per_bar_close)
