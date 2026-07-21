@@ -1,0 +1,139 @@
+//@version=6
+strategy("Gold High-Speed Zones Strategy (v6)", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, margin_long=100, margin_short=100)
+
+// ==========================================
+// 1. INPUTS & CONFIGURATION
+// ==========================================
+gp_zones = "High-Speed Zones Configuration"
+show_year  = input.bool(true, "Show Previous Year High/Low", group=gp_zones)
+show_month = input.bool(true, "Show Previous Month High/Low", group=gp_zones)
+show_week  = input.bool(true, "Show Previous Week High/Low", group=gp_zones)
+show_day   = input.bool(true, "Show Previous Day High/Low", group=gp_zones)
+show_4h    = input.bool(true, "Show Previous 4H High/Low", group=gp_zones)
+
+gp_risk = "Trade Management (10-Min Rule Config)"
+stop_pip_buffer = input.float(30.0, "Stop Loss Buffer (Pips/Ticks above 10m anchor)", minval=0.0, group=gp_risk, tooltip="Extra breathing room added above/below the 10-minute structural boundary")
+rr_ratio        = input.float(2.0, "Risk-to-Reward Ratio (1:X)", minval=0.5, group=gp_risk)
+
+// ==========================================
+// 2. FETCH HIGH-SPEED ZONE DATA (Non-Repainting)
+// ==========================================
+// Using barmerge.lookahead_off to avoid future-leak during backtesting
+prev_year_h  = request.security(syminfo.tickerid, "12M", high[1], lookahead=barmerge.lookahead_off)
+prev_year_l  = request.security(syminfo.tickerid, "12M", low[1], lookahead=barmerge.lookahead_off)
+
+prev_month_h = request.security(syminfo.tickerid, "1M", high[1], lookahead=barmerge.lookahead_off)
+prev_month_l = request.security(syminfo.tickerid, "1M", low[1], lookahead=barmerge.lookahead_off)
+
+prev_week_h  = request.security(syminfo.tickerid, "1W", high[1], lookahead=barmerge.lookahead_off)
+prev_week_l  = request.security(syminfo.tickerid, "1W", low[1], lookahead=barmerge.lookahead_off)
+
+prev_day_h   = request.security(syminfo.tickerid, "1D", high[1], lookahead=barmerge.lookahead_off)
+prev_day_l   = request.security(syminfo.tickerid, "1D", low[1], lookahead=barmerge.lookahead_off)
+
+prev_4h_h    = request.security(syminfo.tickerid, "240", high[1], lookahead=barmerge.lookahead_off)
+prev_4h_l    = request.security(syminfo.tickerid, "240", low[1], lookahead=barmerge.lookahead_off)
+
+// ==========================================
+// 3. TRACKING 10-MINUTE OPENING MANIPULATION BOUNDARIES
+// ==========================================
+// Detect a new 4H session opening bar to anchor our 10-minute framework
+new_4h_session = nz(ta.change(time("240")), 0) != 0
+
+var float session_10m_high = na
+var float session_10m_low  = na
+var int bars_since_4h_start = 0
+
+if new_4h_session
+    bars_since_4h_start := 0
+    session_10m_high := high
+    session_10m_low := low
+else
+    bars_since_4h_start += 1
+    // Update the high/low only inside the first 10 minutes (approx. 10 bars on 1m chart, 2 bars on 5m chart)
+    int bars_limit = timeframe.isminutes and timeframe.multiplier == 1 ? 10 : (timeframe.isminutes and timeframe.multiplier == 5 ? 2 : 1)
+    if bars_since_4h_start < bars_limit
+        session_10m_high := math.max(high, session_10m_high)
+        session_10m_low := math.min(low, session_10m_low)
+
+// ==========================================
+// 4. STRATEGY ENTRY LOGIC (Speed Alteration Breakout)
+// ==========================================
+// Pre-calculate technical analysis functions globally on every bar to ensure historical state remains consistent (no short-circuiting)
+co_year  = ta.crossover(high, prev_year_h)
+co_month = ta.crossover(high, prev_month_h)
+co_week  = ta.crossover(high, prev_week_h)
+co_day   = ta.crossover(high, prev_day_h)
+co_4h    = ta.crossover(high, prev_4h_h)
+
+cu_year  = ta.crossunder(low, prev_year_l)
+cu_month = ta.crossunder(low, prev_month_l)
+cu_week  = ta.crossunder(low, prev_week_l)
+cu_day   = ta.crossunder(low, prev_day_l)
+cu_4h    = ta.crossunder(low, prev_4h_l)
+
+// Determine proximity/taps on high-speed zones
+tapped_high_zone = (show_year and co_year) or
+                   (show_month and co_month) or
+                   (show_week and co_week) or
+                   (show_day and co_day) or
+                   (show_4h and co_4h)
+
+tapped_low_zone  = (show_year and cu_year) or
+                   (show_month and cu_month) or
+                   (show_week and cu_week) or
+                   (show_day and cu_day) or
+                   (show_4h and cu_4h)
+
+// Pre-calculate crossover/crossunder on session anchors globally on every bar
+co_session_high = ta.crossover(close, session_10m_high)
+cu_session_low  = ta.crossunder(close, session_10m_low)
+
+// Entries trigger if price breaks past the 10-minute structural boundary after tapping a High-Speed Zone
+buy_signal  = tapped_low_zone or (co_session_high and close > session_10m_high)
+sell_signal = tapped_high_zone or (cu_session_low and close < session_10m_low)
+
+// Execution safeguards
+var float trade_sl = na
+var float trade_tp = na
+
+if strategy.position_size == 0
+    if buy_signal and not na(session_10m_low)
+        // Stop Loss placed slightly below the 10-minute session low
+        trade_sl := session_10m_low - (stop_pip_buffer * syminfo.mintick)
+        float risk = close - trade_sl
+        trade_tp := close + (risk * rr_ratio)
+        strategy.entry("High-Speed Buy", strategy.long)
+
+    else if sell_signal and not na(session_10m_high)
+        // Stop Loss placed slightly above the 10-minute session high
+        trade_sl := session_10m_high + (stop_pip_buffer * syminfo.mintick)
+        float risk = trade_sl - close
+        trade_tp := close - (risk * rr_ratio)
+        strategy.entry("High-Speed Sell", strategy.short)
+
+// Set exit conditions globally when positions are active
+if strategy.position_size > 0
+    strategy.exit("Exit Buy", "High-Speed Buy", stop=trade_sl, limit=trade_tp)
+else if strategy.position_size < 0
+    strategy.exit("Exit Sell", "High-Speed Sell", stop=trade_sl, limit=trade_tp)
+
+// ==========================================
+// 5. VISUALIZATION & CHART PLOTS
+// ==========================================
+plot(show_year ? prev_year_h : na, "Yearly High Speed Zone (Resistance)", color=color.new(color.purple, 30), style=plot.style_stepline, linewidth=2)
+plot(show_year ? prev_year_l : na, "Yearly High Speed Zone (Support)", color=color.new(color.purple, 30), style=plot.style_stepline, linewidth=2)
+
+plot(show_month ? prev_month_h : na, "Monthly High Speed Zone", color=color.new(color.blue, 40), style=plot.style_stepline)
+plot(show_month ? prev_month_l : na, "Monthly High Speed Zone", color=color.new(color.blue, 40), style=plot.style_stepline)
+
+plot(show_week ? prev_week_h : na, "Weekly High Speed Zone", color=color.new(color.orange, 50), style=plot.style_stepline)
+plot(show_week ? prev_week_l : na, "Weekly High Speed Zone", color=color.new(color.orange, 50), style=plot.style_stepline)
+
+// Styled daily levels as normal plot lines with high transparency since plot.style_dashed is not supported in Pine Script v6 plot()
+plot(show_day ? prev_day_h : na, "Daily High Speed Zone", color=color.new(color.red, 60), style=plot.style_line)
+plot(show_day ? prev_day_l : na, "Daily High Speed Zone", color=color.new(color.green, 60), style=plot.style_line)
+
+// Plot the intraday 10-minute manipulation anchors
+plot(strategy.position_size != 0 ? na : session_10m_high, "10m Session High Anchor", color=color.red, style=plot.style_circles)
+plot(strategy.position_size != 0 ? na : session_10m_low, "10m Session Low Anchor", color=color.green, style=plot.style_circles)
