@@ -31,9 +31,9 @@ in_london   = use_lon and not na(time(timeframe.period, lon_time, "GMT+3"))
 in_newyork  = use_ny and not na(time(timeframe.period, ny_time, "GMT+3"))
 in_session  = in_london or in_newyork
 
-// Track session alterations safely without numeric typecasting issues or warnings
-in_session_prev = not na(in_session[1]) ? in_session[1] : false
-new_session_open = in_session and not in_session_prev
+// Track session alterations safely using an integer helper to avoid CE10123 on boolean na() or nz()
+in_session_int = in_session ? 1 : 0
+new_session_open = in_session and nz(in_session_int[1], 0) == 0
 
 // ==========================================
 // 3. FETCH HIGH-SPEED ZONE DATA (Non-Repainting)
