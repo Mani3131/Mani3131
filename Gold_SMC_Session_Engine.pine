@@ -1,0 +1,115 @@
+//@version=6
+indicator("Gold SMC Session Engine (UTC+3) - v6", overlay=true, max_boxes_count=500, max_labels_count=500)
+
+// ==========================================
+// INPUTS & INPUT CONFIGURATION (UTC+3)
+// ==========================================
+var string G_SESS = "Session Settings (UTC+3)"
+asiaSession   = input.session("0300-0700", "Asia Session Range", group=G_SESS)
+londonSession = input.session("0900-1200", "London Execution Window", group=G_SESS)
+timezoneInput = "GMT+3" // Fixed to UTC+3 as requested
+
+var string G_SMC  = "SMC Structure Settings"
+leftLen       = input.int(5, "Pivot Left Hand Strength", minval=1, group=G_SMC)
+rightLen      = input.int(2, "Pivot Right Hand Strength (Confirmation)", minval=1, group=G_SMC)
+
+var string G_COL  = "Visual Customizations"
+colorAsia     = input.color(color.new(color.blue, 90), "Asia Box Fill", group=G_COL)
+colorAsiaLine = input.color(color.blue, "Asia Box Outline", group=G_COL)
+colorOBBull   = input.color(color.new(color.green, 85), "Bullish OB Fill", group=G_COL)
+colorOBBear   = input.color(color.new(color.red, 85), "Bearish OB Fill", group=G_COL)
+
+// ==========================================
+// SESSION SELECTION LOGIC
+// ==========================================
+inAsia   = not na(time(timeframe.period, asiaSession, timezoneInput))
+inLondon = not na(time(timeframe.period, londonSession, timezoneInput))
+
+var float asiaHigh = na
+var float asiaLow  = na
+var int asiaStartBar = na
+
+// Detect Session States safely using integer helpers to avoid boolean history referencing issues (CE10123)
+inAsia_int = inAsia ? 1 : 0
+asiaLeadingEdge = inAsia and nz(inAsia_int[1], 0) == 0
+asiaTrailingEdge = not inAsia and nz(inAsia_int[1], 0) == 1
+
+if asiaLeadingEdge
+    asiaHigh := high
+    asiaLow := low
+    asiaStartBar := bar_index
+else if inAsia
+    asiaHigh := math.max(high, nz(asiaHigh, high))
+    asiaLow := math.min(low, nz(asiaLow, low))
+
+// Dynamic Asia Boxing
+var box boxAsia = na
+if asiaLeadingEdge
+    boxAsia := box.new(left=bar_index, top=asiaHigh, right=bar_index, bottom=asiaLow,
+                       bgcolor=colorAsia, border_color=colorAsiaLine, border_style=line.style_dashed)
+if inAsia and not na(boxAsia)
+    box.set_top(boxAsia, asiaHigh)
+    box.set_bottom(boxAsia, asiaLow)
+    box.set_right(boxAsia, bar_index)
+
+// ==========================================
+// STRUCTURAL CHOCH ENGINE
+// ==========================================
+pHi = ta.pivothigh(high, leftLen, rightLen)
+pLo = ta.pivotlow(low, leftLen, rightLen)
+
+var float activePivotHigh = na
+var float activePivotLow  = na
+
+// 1. Calculate crossover/crossunder breakout signals using the existing persistent levels BEFORE they are updated on this bar
+// This prevents immediate self-triggering upon structural level formation.
+// Calculated globally to ensure historical correctness of stateful functions.
+crossOverActiveHigh = ta.crossover(close, activePivotHigh)
+crossUnderActiveLow = ta.crossunder(close, activePivotLow)
+
+// 2. Now update the persistent levels
+if not na(pHi)
+    activePivotHigh := pHi
+if not na(pLo)
+    activePivotLow := pLo
+
+// Flags for tracking intra-session sweeps
+var bool asiaHighSwept = false
+var bool asiaLowSwept  = false
+
+if asiaLeadingEdge
+    asiaHighSwept := false
+    asiaLowSwept := false
+
+if inLondon
+    if high > asiaHigh
+        asiaHighSwept := true
+    if low < asiaLow
+        asiaLowSwept := true
+
+// CHoCH Triggers - safely using globally-calculated crossover/crossunder state variables
+bool bullishCHoCH = inLondon and asiaLowSwept and crossOverActiveHigh
+bool bearishCHoCH = inLondon and asiaHighSwept and crossUnderActiveLow
+
+// ==========================================
+// RECTANGLE PLOTTING: ORDER BLOCKS & TP LEVELS
+// ==========================================
+if bullishCHoCH
+    label.new(x=bar_index, y=high, text="+CHoCH (Bullish)", color=color.green, textcolor=color.white, style=label.style_label_down)
+    // Draw Entry Order Block Zone (from previous swing low area)
+    box.new(left=bar_index - rightLen, top=activePivotHigh, right=bar_index+10, bottom=nz(low[rightLen], low),
+            bgcolor=colorOBBull, border_color=color.green, extend=extend.none)
+    // Project TP levels (5R Trailing Strategy)
+    line.new(x1=bar_index, y1=close + (close - nz(low[rightLen], low))*5, x2=bar_index+20, y2=close + (close - nz(low[rightLen], low))*5, color=color.orange, style=line.style_solid, width=2)
+
+if bearishCHoCH
+    label.new(x=bar_index, y=low, text="-CHoCH (Bearish)", color=color.red, textcolor=color.white, style=label.style_label_up)
+    // Draw Entry Order Block Zone
+    box.new(left=bar_index - rightLen, top=nz(high[rightLen], high), right=bar_index+10, bottom=activePivotLow,
+            bgcolor=colorOBBear, border_color=color.red, extend=extend.none)
+    // Project TP levels (5R Trailing Strategy)
+    line.new(x1=bar_index, y1=close - (nz(high[rightLen], high) - close)*5, x2=bar_index+20, y2=close - (nz(high[rightLen], high) - close)*5, color=color.orange, style=line.style_solid, width=2)
+
+// Visual Anchors for Session Range Extensions
+plot(not inAsia ? asiaHigh : na, title="Asia High Boundary", color=color.blue, style=plot.style_linebr)
+plot(not inAsia ? asiaLow : na, title="Asia Low Boundary", color=color.blue, style=plot.style_linebr)
