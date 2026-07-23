@@ -1,0 +1,151 @@
+//@version=6
+strategy("Gold High-Speed Session Breakout - UTC+3 (v6)", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, margin_long=100, margin_short=100)
+
+// ==========================================
+// 1. INPUTS & CONFIGURATION
+// ==========================================
+gp_sess  = "Session Selector (Locked to UTC+3)"
+use_lon  = input.bool(true, "Trade London Session", group=gp_sess)
+// 08:00 UTC translates to 11:00 in UTC+3
+lon_time = input.session("1100-1900", "London Session Hours (UTC+3)", group=gp_sess)
+
+use_ny   = input.bool(true, "Trade New York Session", group=gp_sess)
+// 13:00 UTC translates to 16:00 in UTC+3
+ny_time  = input.session("1600-0000", "New York Session Hours (UTC+3)", group=gp_sess)
+
+gp_zones = "High-Speed Zones Configuration"
+show_year  = input.bool(true, "Show Previous Year High/Low", group=gp_zones)
+show_month = input.bool(true, "Show Previous Month High/Low", group=gp_zones)
+show_week  = input.bool(true, "Show Previous Week High/Low", group=gp_zones)
+show_day   = input.bool(true, "Show Previous Day High/Low", group=gp_zones)
+
+gp_risk = "Trade Management (10-Min Rule Config)"
+stop_pip_buffer = input.float(30.0, "Stop Loss Buffer (Pips/Ticks above 10m anchor)", minval=0.0, group=gp_risk)
+rr_ratio        = input.float(2.0, "Risk-to-Reward Ratio (1:X)", minval=0.5, group=gp_risk)
+
+// ==========================================
+// 2. SESSION TIMING ENGINE (Forced UTC+3)
+// ==========================================
+// Appending ":GMT+3" hardcodes the evaluation timezone into the calculation engine
+in_london   = use_lon and not na(time(timeframe.period, lon_time, "GMT+3"))
+in_newyork  = use_ny and not na(time(timeframe.period, ny_time, "GMT+3"))
+in_session  = in_london or in_newyork
+
+// Track session alterations safely using an integer helper to avoid CE10123 on boolean na() or nz()
+in_session_int = in_session ? 1 : 0
+new_session_open = in_session and nz(in_session_int[1], 0) == 0
+
+// ==========================================
+// 3. FETCH HIGH-SPEED ZONE DATA (Non-Repainting)
+// ==========================================
+prev_year_h  = request.security(syminfo.tickerid, "12M", high[1], lookahead=barmerge.lookahead_off)
+prev_year_l  = request.security(syminfo.tickerid, "12M", low[1], lookahead=barmerge.lookahead_off)
+
+prev_month_h = request.security(syminfo.tickerid, "1M", high[1], lookahead=barmerge.lookahead_off)
+prev_month_l = request.security(syminfo.tickerid, "1M", low[1], lookahead=barmerge.lookahead_off)
+
+prev_week_h  = request.security(syminfo.tickerid, "1W", high[1], lookahead=barmerge.lookahead_off)
+prev_week_l  = request.security(syminfo.tickerid, "1W", low[1], lookahead=barmerge.lookahead_off)
+
+prev_day_h   = request.security(syminfo.tickerid, "1D", high[1], lookahead=barmerge.lookahead_off)
+prev_day_l   = request.security(syminfo.tickerid, "1D", low[1], lookahead=barmerge.lookahead_off)
+
+// ==========================================
+// 4. CAPTURING THE FIRST 10 MINUTES OF THE SESSION
+// ==========================================
+var float session_10m_high = na
+var float session_10m_low  = na
+var int bars_since_open    = 0
+
+if new_session_open
+    bars_since_open  := 0
+    session_10m_high := high
+    session_10m_low  := low
+else if in_session
+    bars_since_open += 1
+    // Auto-adjust candle counter depending on execution charts (1m vs 5m)
+    int bars_limit = timeframe.isminutes and timeframe.multiplier == 1 ? 10 : (timeframe.isminutes and timeframe.multiplier == 5 ? 2 : 1)
+    if bars_since_open < bars_limit
+        session_10m_high := math.max(high, session_10m_high)
+        session_10m_low  := math.min(low, session_10m_low)
+
+// Wipe structural values out of memory once session closes out
+if not in_session
+    session_10m_high := na
+    session_10m_low  := na
+
+// ==========================================
+// 5. STRATEGY ENTRY LOGIC
+// ==========================================
+// Pre-calculate crossover/crossunder results globally on every bar to ensure historical state remains consistent (avoid short-circuit bugs)
+co_year  = ta.crossover(high, prev_year_h)
+co_month = ta.crossover(high, prev_month_h)
+co_week  = ta.crossover(high, prev_week_h)
+co_day   = ta.crossover(high, prev_day_h)
+
+cu_year  = ta.crossunder(low, prev_year_l)
+cu_month = ta.crossunder(low, prev_month_l)
+cu_week  = ta.crossunder(low, prev_week_l)
+cu_day   = ta.crossunder(low, prev_day_l)
+
+co_session_high = ta.crossover(close, session_10m_high)
+cu_session_low  = ta.crossunder(close, session_10m_low)
+
+tapped_high_zone = (show_year and co_year) or
+                   (show_month and co_month) or
+                   (show_week and co_week) or
+                   (show_day and co_day)
+
+tapped_low_zone  = (show_year and cu_year) or
+                   (show_month and cu_month) or
+                   (show_week and cu_week) or
+                   (show_day and cu_day)
+
+buy_signal  = in_session and (tapped_low_zone or (co_session_high and close > session_10m_high))
+sell_signal = in_session and (tapped_high_zone or (cu_session_low and close < session_10m_low))
+
+var float trade_sl = na
+var float trade_tp = na
+
+if strategy.position_size == 0 and in_session
+    if buy_signal and not na(session_10m_low)
+        trade_sl := session_10m_low - (stop_pip_buffer * syminfo.mintick)
+        float risk = close - trade_sl
+        trade_tp := close + (risk * rr_ratio)
+        strategy.entry("UTC+3 Buy", strategy.long)
+
+    else if sell_signal and not na(session_10m_high)
+        trade_sl := session_10m_high + (stop_pip_buffer * syminfo.mintick)
+        float risk = trade_sl - close
+        trade_tp := close - (risk * rr_ratio)
+        strategy.entry("UTC+3 Sell", strategy.short)
+
+// Set exit conditions globally when positions are active to allow proper strategy order routing
+if strategy.position_size > 0
+    strategy.exit("Exit Buy", "UTC+3 Buy", stop=trade_sl, limit=trade_tp)
+else if strategy.position_size < 0
+    strategy.exit("Exit Sell", "UTC+3 Sell", stop=trade_sl, limit=trade_tp)
+
+if not in_session and strategy.position_size != 0
+    strategy.close_all("Session Over - Liquidation")
+
+// ==========================================
+// 6. VISUALIZATION & CHART BACKGROUNDS
+// ==========================================
+bgcolor(in_london and not in_newyork ? color.new(color.blue, 96) : na)
+bgcolor(in_newyork and not in_london ? color.new(color.green, 96) : na)
+bgcolor(in_london and in_newyork ? color.new(color.orange, 94) : na)
+
+plot(show_year ? prev_year_h : na, "Yearly High Speed Zone", color=color.new(color.purple, 30), style=plot.style_stepline, linewidth=2)
+plot(show_year ? prev_year_l : na, "Yearly High Speed Zone", color=color.new(color.purple, 30), style=plot.style_stepline, linewidth=2)
+plot(show_month ? prev_month_h : na, "Monthly High Speed Zone", color=color.new(color.blue, 40), style=plot.style_stepline)
+plot(show_month ? prev_month_l : na, "Monthly High Speed Zone", color=color.new(color.blue, 40), style=plot.style_stepline)
+plot(show_week ? prev_week_h : na, "Weekly High Speed Zone", color=color.new(color.orange, 50), style=plot.style_stepline)
+plot(show_week ? prev_week_l : na, "Weekly High Speed Zone", color=color.new(color.orange, 50), style=plot.style_stepline)
+
+// plot.style_dashed is unsupported in Pine Script v6 plot(); use plot.style_line with lighter/semi-transparent color instead
+plot(show_day ? prev_day_h : na, "Daily High Speed Zone", color=color.new(color.red, 60), style=plot.style_line)
+plot(show_day ? prev_day_l : na, "Daily High Speed Zone", color=color.new(color.green, 60), style=plot.style_line)
+
+plot(session_10m_high, "Session 10m High Anchor", color=color.red, style=plot.style_linebr, linewidth=2)
+plot(session_10m_low, "Session 10m Low Anchor", color=color.green, style=plot.style_linebr, linewidth=2)
