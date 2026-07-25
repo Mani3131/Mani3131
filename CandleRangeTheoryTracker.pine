@@ -56,7 +56,7 @@ if bullishSweep
 
     // Label the liquidity sweep action on Candle 2
     label.new(
-         x=time[1], y=low[1], text="SSL Sweep", xloc=xloc.bar_time,
+         x=time[1], y=low[1], text="SSL", xloc=xloc.bar_time,
          color=color.green, textcolor=color.white, style=label.style_label_up, size=size.small
          )
 
@@ -65,7 +65,7 @@ if bullishSweep
         risk = close[1] - low[1]
         targetPrice = close[1] + risk
         line.new(x1=time[1], y1=targetPrice, x2=time, y2=targetPrice, xloc=xloc.bar_time, color=color.lime, width=2, style=line.style_solid)
-        label.new(x=time, y=targetPrice, text="1:1 TP Target", xloc=xloc.bar_time, color=color.new(color.lime, 30), textcolor=color.black, style=label.style_label_left, size=size.small)
+        label.new(x=time, y=targetPrice, text="1:1 TP", xloc=xloc.bar_time, color=color.new(color.lime, 30), textcolor=color.black, style=label.style_label_left, size=size.small)
 
 if bearishSweep
     // Draw the Reference Candle Range Box (Candle 1 Footprint)
@@ -77,7 +77,7 @@ if bearishSweep
 
     // Label the liquidity sweep action on Candle 2
     label.new(
-         x=time[1], y=high[1], text="BSL Sweep", xloc=xloc.bar_time,
+         x=time[1], y=high[1], text="BSL", xloc=xloc.bar_time,
          color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small
          )
 
@@ -86,4 +86,4 @@ if bearishSweep
         risk = high[1] - close[1]
         targetPrice = close[1] - risk
         line.new(x1=time[1], y1=targetPrice, x2=time, y2=targetPrice, xloc=xloc.bar_time, color=color.orange, width=2, style=line.style_solid)
-        label.new(x=time, y=targetPrice, text="1:1 TP Target", xloc=xloc.bar_time, color=color.new(color.orange, 30), textcolor=color.black, style=label.style_label_left, size=size.small)
+        label.new(x=time, y=targetPrice, text="1:1 TP", xloc=xloc.bar_time, color=color.new(color.orange, 30), textcolor=color.black, style=label.style_label_left, size=size.small)
