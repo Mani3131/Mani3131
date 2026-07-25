@@ -24,14 +24,13 @@ colorLineS   = color.new(color.red, 40)
 // ==========================================
 // SWING ANALYSIS & ZONE STRUCTS
 // ==========================================
-struct Zone {
+type Zone
     box    zoneBox
     line   originLine
     float  topPrice
     float  bottomPrice
     bool   isSupply
     bool   isMitigated
-}
 
 // Global persistent arrays tracking unmitigated zones
 var Zone[] activeZones = array.new<Zone>(0)
