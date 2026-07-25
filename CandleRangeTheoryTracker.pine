@@ -1,0 +1,89 @@
+//@version=6
+indicator("Candle Range Theory (CRT) Tracker", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=500)
+
+// ==========================================
+// 1. INPUTS & CONFIGURATION
+// ==========================================
+var string G_TIME  = "Time Settings (UTC+3)"
+useTimeFilter      = input.bool(true, "Filter by Time Session?", group=G_TIME)
+sessionInput       = input.session("1400-1600", "Session Time Window", group=G_TIME, tooltip="Format: HHMM-HHMM. e.g., 1400-1600 for pre-NY open activity.")
+
+var string G_STYLE = "Visual Styling"
+bullColor          = input.color(color.new(color.green, 85), "Bullish Sweep Box Fill", group=G_STYLE)
+bullLineColor      = input.color(color.green, "Bullish Box Border", group=G_STYLE)
+bearColor          = input.color(color.new(color.red, 85), "Bearish Sweep Box Fill", group=G_STYLE)
+bearLineColor      = input.color(color.red, "Bearish Box Border", group=G_STYLE)
+showTargets        = input.bool(true, "Show 1:1 Risk-to-Reward Targets?", group=G_STYLE)
+
+// ==========================================
+// 2. TIMEZONE & SESSION FILTERING (UTC+3)
+// ==========================================
+// Force the session check to compute using the UTC+3 timezone string
+inSession = not useTimeFilter or not na(time(timeframe.period, sessionInput + ":1234567", "GMT+3"))
+
+// ==========================================
+// 3. CORE CRT ENGINE & LIQUIDITY SWEEPS
+// ==========================================
+// In Pine Script history reference:
+// [1] represents Candle 2 (The potential Sweep Candle)
+// [2] represents Candle 1 (The Reference Candle defining the range)
+
+refHigh = high[2] // Candle 1 High (CR)
+refLow  = low[2]  // Candle 1 Low (CRL)
+
+// Bullish CRT Setup:
+// 1. Candle 2 went below Candle 1's Low (Swept SSL)
+// 2. Candle 2 closed back ABOVE Candle 1's Low (Closed inside the range)
+// 3. Fits the active session criteria
+bullishSweep = low[1] < refLow and close[1] > refLow and inSession[1]
+
+// Bearish CRT Setup:
+// 1. Candle 2 went above Candle 1's High (Swept BSL)
+// 2. Candle 2 closed back BELOW Candle 1's High (Closed inside the range)
+// 3. Fits the active session criteria
+bearishSweep = high[1] > refHigh and close[1] < refHigh and inSession[1]
+
+// ==========================================
+// 4. RENDERING ARCHITECTURE (BOXES & TARGETS)
+// ==========================================
+if bullishSweep
+    // Draw the Reference Candle Range Box (Candle 1 Footprint)
+    box.new(
+         left=time[2], top=refHigh, right=time[1], bottom=refLow,
+         xloc=xloc.bar_time, bgcolor=bullColor, border_color=bullLineColor,
+         border_style=line.style_dashed, text="Bullish CRT Range"
+         )
+
+    // Label the liquidity sweep action on Candle 2
+    label.new(
+         x=time[1], y=low[1], text="SSL Sweep", xloc=xloc.bar_time,
+         color=color.green, textcolor=color.white, style=label.style_label_up, size=size.small
+         )
+
+    // Project 1:1 Estimated Risk/Reward target from the close of the sweep
+    if showTargets
+        risk = close[1] - low[1]
+        targetPrice = close[1] + risk
+        line.new(x1=time[1], y1=targetPrice, x2=time, y2=targetPrice, xloc=xloc.bar_time, color=color.lime, width=2, style=line.style_solid)
+        label.new(x=time, y=targetPrice, text="1:1 TP Target", xloc=xloc.bar_time, color=color.new(color.lime, 30), textcolor=color.black, style=label.style_label_left, size=size.small)
+
+if bearishSweep
+    // Draw the Reference Candle Range Box (Candle 1 Footprint)
+    box.new(
+         left=time[2], top=refHigh, right=time[1], bottom=refLow,
+         xloc=xloc.bar_time, bgcolor=bearColor, border_color=bearLineColor,
+         border_style=line.style_dashed, text="Bearish CRT Range"
+         )
+
+    // Label the liquidity sweep action on Candle 2
+    label.new(
+         x=time[1], y=high[1], text="BSL Sweep", xloc=xloc.bar_time,
+         color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small
+         )
+
+    // Project 1:1 Estimated Risk/Reward target from the close of the sweep
+    if showTargets
+        risk = high[1] - close[1]
+        targetPrice = close[1] - risk
+        line.new(x1=time[1], y1=targetPrice, x2=time, y2=targetPrice, xloc=xloc.bar_time, color=color.orange, width=2, style=line.style_solid)
+        label.new(x=time, y=targetPrice, text="1:1 TP Target", xloc=xloc.bar_time, color=color.new(color.orange, 30), textcolor=color.black, style=label.style_label_left, size=size.small)
