@@ -1,0 +1,67 @@
+//@version=6
+indicator("SMC Asian Range & FVG Dashboard (UTC+3)", shorttitle="SMC Engine v6", overlay=true)
+
+// ==========================================
+// 1. INPUTS & TIMEZONE CONFIGURATION (UTC+3)
+// ==========================================
+var string G_TIME  = "Time Settings (UTC+3)"
+var string G_SMC   = "Smart Money Settings"
+
+// Configured session time for UTC+3 (Example: Asian Range 03:00 to 11:00 UTC+3)
+asianSession = input.session("0300-1100:23456", "Asian Session Hours", group=G_TIME)
+// Using GMT+3 instead of UTC+3 for robust cross-broker compatibility
+timezoneOffset = "GMT+3"
+
+// SMC Visual Toggles
+showAsiaBox = input.bool(true, "Show Asian Range Cloud", group=G_SMC)
+showFVG     = input.bool(true, "Highlight Fair Value Gaps (FVG)", group=G_SMC)
+fvgColorBull = input.color(color.new(color.green, 85), "Bullish FVG Color", group=G_SMC)
+fvgColorBear = input.color(color.new(color.red, 85), "Bearish FVG Color", group=G_SMC)
+
+// ==========================================
+// 2. KEY TIMING MECHANICS
+// ==========================================
+// Check if the current bar prints within the specified session inside UTC+3 bounds
+inSession = not na(time(timeframe.period, asianSession, timezoneOffset))
+
+// Safe boolean history tracking using integer helper to prevent na propagation on first bars
+inSessionInt = inSession ? 1 : 0
+sessionStart = inSession and nz(inSessionInt[1], 0) == 0
+
+// Track highs and lows dynamically inside the active session
+var float sessionHigh = na
+var float sessionLow  = na
+
+if sessionStart
+    sessionHigh := high
+    sessionLow  := low
+else if inSession
+    sessionHigh := math.max(high, sessionHigh)
+    sessionLow  := math.min(low, sessionLow)
+
+// ==========================================
+// 3. MECHANICAL FAIR VALUE GAP (FVG) DETECTION
+// ==========================================
+// Strict v6 rules with explicit boolean validations defined at global scope
+isBullishFVG = showFVG and bar_index > 2 and low[0] > high[2] and close[1] > open[1]
+isBearishFVG = showFVG and bar_index > 2 and high[0] < low[2] and close[1] < open[1]
+
+// ==========================================
+// 4. CHART RENDERING & CORES
+// ==========================================
+// Shading the background cloud for the GMT+3 Asian session
+bgcolor(showAsiaBox and inSession ? color.new(color.blue, 92) : na, title="Asian Session Shading")
+
+// Plot lines across the session boundaries to show structural targets
+plot(inSession ? sessionHigh : na, color=color.blue, style=plot.style_linebr, title="Asian Range High")
+plot(inSession ? sessionLow  : na, color=color.blue, style=plot.style_linebr, title="Asian Range Low")
+
+// Draw visual boxes for new active Fair Value Gaps
+if isBullishFVG
+    box.new(left=bar_index[2], top=low[0], right=bar_index, bottom=high[2],
+            bgcolor=fvgColorBull, border_color=color.new(color.green, 50))
+
+if isBearishFVG
+    // Corrected coordinate order: top must be higher than bottom (low[2] is higher than high[0])
+    box.new(left=bar_index[2], top=low[2], right=bar_index, bottom=high[0],
+            bgcolor=fvgColorBear, border_color=color.new(color.red, 50))
