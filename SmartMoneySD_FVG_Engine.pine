@@ -1,0 +1,142 @@
+//@version=6
+indicator("Smart Money Supply/Demand & FVG Engine [v6]", overlay=true, max_boxes_count=500, max_labels_count=500)
+
+// ==========================================
+// INPUTS & CONFIGURATION
+// ==========================================
+var string G_ZONE  = "Supply & Demand Settings"
+var string G_LTF   = "Lower Timeframe Confluences"
+
+pivotLeft    = input.int(5, "Pivot Left Bars", minval=1, group=G_ZONE, tooltip="Lookback bars to confirm swing points")
+pivotRight   = input.int(5, "Pivot Right Bars", minval=1, group=G_ZONE, tooltip="Lookforward bars to confirm swing points")
+mitigatePerc = input.float(30.0, "Mitigation Depth Target (%)", minval=0.0, maxval=100.0, group=G_ZONE)
+
+showFVG      = input.bool(true, "Detect Fair Value Gaps (FVG)", group=G_LTF)
+fvgColorBull = input.color(color.new(color.teal, 85), "Bullish FVG Color", group=G_LTF)
+fvgColorBear = input.color(color.new(color.maroon, 85), "Bearish FVG Color", group=G_LTF)
+
+// Color definitions for S/D zones
+colorDemand  = color.new(color.green, 85)
+colorSupply  = color.new(color.red, 85)
+colorLineD   = color.new(color.green, 40)
+colorLineS   = color.new(color.red, 40)
+
+// ==========================================
+// SWING ANALYSIS & ZONE STRUCTS
+// ==========================================
+struct Zone {
+    box    zoneBox
+    line   originLine
+    float  topPrice
+    float  bottomPrice
+    bool   isSupply
+    bool   isMitigated
+}
+
+// Global persistent arrays tracking unmitigated zones
+var Zone[] activeZones = array.new<Zone>(0)
+
+// Detect pivot points
+pH = ta.pivothigh(high, pivotLeft, pivotRight)
+pL = ta.pivotlow(low, pivotLeft, pivotRight)
+
+// Define structural candle criteria
+int pivotIndex = bar_index - pivotRight
+
+if not na(pL) and pivotIndex >= 0
+    // Demand Zone: Final down-close candle or block at the swing origin
+    float dTop    = math.max(open[pivotRight], close[pivotRight])
+    float dBottom = low[pivotRight]
+
+    box   dBox    = box.new(left=pivotIndex, top=dTop, right=bar_index, bottom=dBottom,
+                            bgcolor=colorDemand, border_color=colorLineD, border_style=line.style_dashed)
+    line  dLine   = line.new(x1=pivotIndex, y1=dTop, x2=bar_index, y2=dTop, color=colorLineD)
+
+    array.push(activeZones, Zone.new(dBox, dLine, dTop, dBottom, false, false))
+
+if not na(pH) and pivotIndex >= 0
+    // Supply Zone: Final up-close candle or block at the swing origin
+    float sTop    = high[pivotRight]
+    float sBottom = math.min(open[pivotRight], close[pivotRight])
+
+    box   sBox    = box.new(left=pivotIndex, top=sTop, right=bar_index, bottom=sBottom,
+                            bgcolor=colorSupply, border_color=colorLineS, border_style=line.style_dashed)
+    line  sLine   = line.new(x1=pivotIndex, y1=sBottom, x2=bar_index, y2=sBottom, color=colorLineS)
+
+    array.push(activeZones, Zone.new(sBox, sLine, sTop, sBottom, true, false))
+
+// ==========================================
+// RESTRUCTURE DYNAMIC ZONE EXTENSION & MITIGATION
+// ==========================================
+Zone[] tempZones = array.new<Zone>(0)
+
+if array.size(activeZones) > 0
+    for i = 0 to array.size(activeZones) - 1
+        Zone currentZone = array.get(activeZones, i)
+        bool keepZone = true
+
+        // 1. Check if price breaks fully past the invalidation level (close past the outer boundary of the zone)
+        if currentZone.isSupply
+            if close > currentZone.topPrice
+                box.delete(currentZone.zoneBox)
+                line.delete(currentZone.originLine)
+                keepZone := false
+        else
+            if close < currentZone.bottomPrice
+                box.delete(currentZone.zoneBox)
+                line.delete(currentZone.originLine)
+                keepZone := false
+
+        // 2. If the zone is still valid, handle extension and mitigation checks
+        if keepZone
+            if not currentZone.isMitigated
+                // Extend the boundary boxes forward to current bar
+                box.set_right(currentZone.zoneBox, bar_index)
+                line.set_x2(currentZone.originLine, bar_index)
+
+                float depthThreshold = 0.0
+
+                if currentZone.isSupply
+                    // Check if price penetrated up past mitigation threshold
+                    depthThreshold := currentZone.topPrice - ((currentZone.topPrice - currentZone.bottomPrice) * (mitigatePerc / 100.0))
+                    if high >= depthThreshold
+                        currentZone.isMitigated := true
+                        box.set_bgcolor(currentZone.zoneBox, color.new(color.gray, 95))
+                        box.set_border_color(currentZone.zoneBox, color.new(color.gray, 70))
+                        line.set_color(currentZone.originLine, color.new(color.gray, 70))
+                else
+                    // Check if price penetrated down past mitigation threshold
+                    depthThreshold := currentZone.bottomPrice + ((currentZone.topPrice - currentZone.bottomPrice) * (mitigatePerc / 100.0))
+                    if low <= depthThreshold
+                        currentZone.isMitigated := true
+                        box.set_bgcolor(currentZone.zoneBox, color.new(color.gray, 95))
+                        box.set_border_color(currentZone.zoneBox, color.new(color.gray, 70))
+                        line.set_color(currentZone.originLine, color.new(color.gray, 70))
+
+            // Push surviving/mitigated (but not invalidated) zones into tempZones
+            array.push(tempZones, currentZone)
+
+    // Reassign activeZones to tempZones to maintain updated state
+    activeZones := tempZones
+
+// ==========================================
+// MARKET STRUCTURE SHIFT & FVG DETECTION
+// ==========================================
+// Lower Timeframe Market Structure Shifts (MSS)
+bool mssBullish = ta.crossover(close, ta.highest(high, 10)[1])
+bool mssBearish = ta.crossunder(close, ta.lowest(low, 10)[1])
+
+plotshape(mssBullish, title="MSS Bullish", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text="MSS")
+plotshape(mssBearish, title="MSS Bearish", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text="MSS")
+
+// Fair Value Gaps (FVG) Identification
+if showFVG and bar_index > 2
+    // Bullish FVG (Gap between Bar 1 Low and Bar 3 High)
+    if low > high[2] and close[1] > high[2]
+        box.new(left=bar_index-2, top=low, right=bar_index, bottom=high[2],
+                bgcolor=fvgColorBull, border_color=color.new(color.teal, 70), border_style=line.style_dotted)
+
+    // Bearish FVG (Gap between Bar 1 High and Bar 3 Low)
+    if high < low[2] and close[1] < low[2]
+        box.new(left=bar_index-2, top=low[2], right=bar_index, bottom=high,
+                bgcolor=fvgColorBear, border_color=color.new(color.maroon, 70), border_style=line.style_dotted)
