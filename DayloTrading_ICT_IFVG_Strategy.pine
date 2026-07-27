@@ -1,0 +1,361 @@
+//@version=6
+strategy(
+     title="DayloTrading ICT FVG & IFVG Strategy (v6)",
+     shorttitle="Daylo ICT IFVG",
+     overlay=true,
+     initial_capital=10000,
+     default_qty_type=strategy.fixed,
+     default_qty_value=1,
+     process_orders_on_close=true,
+     max_bars_back=5000
+ )
+
+// =============================================================================
+// DayloTrading ICT Fair Value Gap (FVG) & Inversion Fair Value Gap (IFVG) Strategy
+// =============================================================================
+// This strategy implements the advanced ICT price-action framework used by @daylotrading.
+//
+// --- THE LOGIC ---
+// 1. Establish Higher Timeframe (HTF) Bias:
+//    Align lower-timeframe execution with the institutional direction using a configurable
+//    HTF Trend filter (EMA or Candle structure).
+// 2. Identify Standard Fair Value Gaps (FVGs):
+//    A 3-candle sequence displaying aggressive, unbalanced buying/selling pressure.
+// 3. Detect Inversion (IFVG) Shifts:
+//    When a standard FVG fails (candle body closes completely above a bearish FVG top boundary
+//    or below a bullish FVG bottom boundary), it flips/inverts to act as support/resistance.
+// 4. Retest Entry and Strict Risk Control:
+//    Enter on pullback/retrace to the IFVG (Consequent Encroachment midpoint or Zone Boundary).
+//    Apply strict Stop-Loss outside the extreme boundary, with target set at fixed risk-reward
+//    ratio or recent swing high/low pivots. Dynamic position sizing based on equity risk.
+// =============================================================================
+
+// --- User-Defined Types (UDT) ---
+type FVG
+    float top
+    float bottom
+    float midpoint
+    int start_idx
+    bool is_bullish
+    bool is_inverted
+    box visual_box
+
+// --- INPUTS ---
+
+// 1. Strategy & Risk Settings
+group_risk            = "Strategy & Risk Settings"
+i_risk_percent        = input.float(1.0, "Risk Percentage per Trade (%)", minval=0.1, maxval=10.0, group=group_risk, tooltip="Percentage of account equity to risk per trade.")
+i_use_dynamic_sizing  = input.bool(true, "Use Dynamic Position Sizing", group=group_risk, tooltip="If checked, quantity is calculated dynamically based on stop loss distance to satisfy the risk percentage.")
+i_fixed_qty           = input.float(1.0, "Fixed Trade Quantity", minval=0.001, group=group_risk, tooltip="Fallback lot/contract size if dynamic sizing is disabled.")
+i_entry_type          = input.string("Consequent Encroachment (50% Midpoint)", "Retest Entry Level", options=["Consequent Encroachment (50% Midpoint)", "Zone Boundary (Near Edge)"], group=group_risk)
+i_tp_mode             = input.string("Fixed RR", "Take Profit Target Mode", options=["Fixed RR", "Swing Points"], group=group_risk)
+i_rr                  = input.float(2.0, "Fixed Risk-to-Reward Ratio (R:R)", minval=0.1, group=group_risk, tooltip="Used if TP mode is Fixed RR.")
+i_swing_lookback      = input.int(20, "Swing Target Lookback", minval=5, group=group_risk, tooltip="Used if TP mode is Swing Points to find extreme highs/lows.")
+i_sl_buffer_ticks     = input.int(2, "Stop-Loss Buffer (Ticks)", minval=0, group=group_risk, tooltip="Tick buffer added to the invalidation boundary for SL placement.")
+
+// 2. FVG Identification Settings
+group_fvg             = "FVG Identification Settings"
+i_fvg_body_filter     = input.bool(true, "Require Expansion Candle (Close outside Candle 1 range)", group=group_fvg)
+i_min_gap_size        = input.float(0.0, "Min Gap Size (Ticks)", minval=0.0, group=group_fvg)
+i_max_fvgs            = input.int(15, "Max Active FVGs Displayed", minval=1, maxval=50, group=group_fvg)
+i_max_ifvgs           = input.int(15, "Max Active IFVGs Displayed", minval=1, maxval=50, group=group_fvg)
+i_show_mitigated      = input.bool(true, "Show Mitigated/Invalidated Zones", group=group_fvg, tooltip="If enabled, mitigated/invalidated zones are displayed as thin, highly transparent gray boxes instead of being deleted.")
+
+// 3. Higher Timeframe (HTF) Settings
+group_htf             = "Higher Timeframe (HTF) Bias Settings"
+i_htf                 = input.timeframe("60", "Higher Timeframe (HTF)", group=group_htf)
+i_bias_mode           = input.string("HTF Trend EMA", "HTF Bias Filter Mode", options=["HTF Trend EMA", "HTF Candle Structure", "None (Trade Both Directions)"], group=group_htf)
+i_htf_ema_len         = input.int(50, "HTF EMA Length", minval=1, group=group_htf)
+
+// 4. Color & Styling Settings
+group_colors          = "Color & Visual Settings"
+i_show_dashboard      = input.bool(true, "Display Dashboard Table", group=group_colors)
+i_bull_fvg_color      = input.color(color.new(color.green, 90), "Bullish FVG Background", group=group_colors)
+i_bull_fvg_border     = input.color(color.new(color.green, 70), "Bullish FVG Border", group=group_colors)
+i_bear_fvg_color      = input.color(color.new(color.red, 90), "Bearish FVG Background", group=group_colors)
+i_bear_fvg_border     = input.color(color.new(color.red, 70), "Bearish FVG Border", group=group_colors)
+
+i_bull_ifvg_color     = input.color(color.new(color.teal, 85), "Bullish IFVG Background (Support)", group=group_colors)
+i_bull_ifvg_border    = input.color(color.new(color.teal, 60), "Bullish IFVG Border", group=group_colors)
+i_bear_ifvg_color     = input.color(color.new(color.orange, 85), "Bearish IFVG Background (Resistance)", group=group_colors)
+i_bear_ifvg_border    = input.color(color.new(color.orange, 60), "Bearish IFVG Border", group=group_colors)
+
+
+// --- Global Scope State/Calculations (Avoids ta. function inside if/loop restrictions) ---
+float htf_close  = request.security(syminfo.tickerid, i_htf, close[1])
+float htf_open   = request.security(syminfo.tickerid, i_htf, open[1])
+float htf_ema    = request.security(syminfo.tickerid, i_htf, ta.ema(close, i_htf_ema_len)[1])
+
+bool htf_bullish_bias = htf_close > htf_ema
+bool htf_bearish_bias = htf_close < htf_ema
+
+bool htf_bullish_candle = htf_close > htf_open
+bool htf_bearish_candle = htf_close < htf_open
+
+bool is_bullish_bias = i_bias_mode == "HTF Trend EMA" ? htf_bullish_bias : (i_bias_mode == "HTF Candle Structure" ? htf_bullish_candle : true)
+bool is_bearish_bias = i_bias_mode == "HTF Trend EMA" ? htf_bearish_bias : (i_bias_mode == "HTF Candle Structure" ? htf_bearish_candle : true)
+
+float g_swing_high = ta.highest(high, i_swing_lookback)
+float g_swing_low  = ta.lowest(low, i_swing_lookback)
+
+
+// --- Persistent Arrays ---
+var FVG[] active_fvgs  = array.new<FVG>()
+var FVG[] active_ifvgs = array.new<FVG>()
+
+
+// --- 1. Identify Standard FVGs ---
+float min_gap = i_min_gap_size * syminfo.mintick
+
+// Bullish FVG check
+// Candle 1: high[2] | Candle 2: range[1] | Candle 3: low[0]
+bool is_bullish_fvg = (low[0] > high[2]) and ((low[0] - high[2]) >= min_gap)
+if is_bullish_fvg and i_fvg_body_filter
+    is_bullish_fvg := close[1] > high[2]
+
+// Bearish FVG check
+// Candle 1: low[2] | Candle 2: range[1] | Candle 3: high[0]
+bool is_bearish_fvg = (low[2] > high[0]) and ((low[2] - high[0]) >= min_gap)
+if is_bearish_fvg and i_fvg_body_filter
+    is_bearish_fvg := close[1] < low[2]
+
+
+// --- 2. Process and Store Standard FVGs ---
+if is_bullish_fvg
+    box fvg_box = box.new(
+         left=bar_index - 2,
+         top=low[0],
+         right=bar_index,
+         bottom=high[2],
+         border_color=i_bull_fvg_border,
+         border_width=1,
+         border_style=line.style_solid,
+         extend=extend.none,
+         xloc=xloc.bar_index,
+         bgcolor=i_bull_fvg_color,
+         text="Bullish FVG",
+         text_size=size.small,
+         text_color=color.white,
+         text_valign="center",
+         text_halign="center",
+         force_overlay=true
+     )
+    FVG f_obj = FVG.new(low[0], high[2], (low[0] + high[2]) / 2.0, bar_index - 2, true, false, fvg_box)
+    array.push(active_fvgs, f_obj)
+
+    // Check display limit
+    if array.size(active_fvgs) > i_max_fvgs
+        FVG oldest = array.shift(active_fvgs)
+        box.delete(oldest.visual_box)
+
+if is_bearish_fvg
+    box fvg_box = box.new(
+         left=bar_index - 2,
+         top=low[2],
+         right=bar_index,
+         bottom=high[0],
+         border_color=i_bear_fvg_border,
+         border_width=1,
+         border_style=line.style_solid,
+         extend=extend.none,
+         xloc=xloc.bar_index,
+         bgcolor=i_bear_fvg_color,
+         text="Bearish FVG",
+         text_size=size.small,
+         text_color=color.white,
+         text_valign="center",
+         text_halign="center",
+         force_overlay=true
+     )
+    FVG f_obj = FVG.new(low[2], high[0], (low[2] + high[0]) / 2.0, bar_index - 2, false, false, fvg_box)
+    array.push(active_fvgs, f_obj)
+
+    // Check display limit
+    if array.size(active_fvgs) > i_max_fvgs
+        FVG oldest = array.shift(active_fvgs)
+        box.delete(oldest.visual_box)
+
+
+// --- 3. Manage Inversion State Transitions (Filtering/Rebuilding Pattern) ---
+FVG[] remaining_fvgs = array.new<FVG>()
+
+if array.size(active_fvgs) > 0
+    for i = 0 to array.size(active_fvgs) - 1
+        FVG fvg_obj = array.get(active_fvgs, i)
+
+        bool flipped = false
+        if fvg_obj.is_bullish
+            // Check for candle body close below bottom boundary of standard Bullish FVG
+            if close < fvg_obj.bottom
+                // Flips to a Bearish IFVG!
+                fvg_obj.is_inverted := true
+                fvg_obj.is_bullish := false // now acting as bearish resistance
+
+                // Update visuals
+                box.set_bgcolor(fvg_obj.visual_box, i_bear_ifvg_color)
+                box.set_border_color(fvg_obj.visual_box, i_bear_ifvg_border)
+                box.set_border_style(fvg_obj.visual_box, line.style_dashed)
+                box.set_text(fvg_obj.visual_box, "Bearish IFVG")
+                box.set_right(fvg_obj.visual_box, bar_index)
+
+                // Push to active_ifvgs
+                array.push(active_ifvgs, fvg_obj)
+                flipped := true
+        else
+            // Check for candle body close above top boundary of standard Bearish FVG
+            if close > fvg_obj.top
+                // Flips to a Bullish IFVG!
+                fvg_obj.is_inverted := true
+                fvg_obj.is_bullish := true // now acting as bullish support
+
+                // Update visuals
+                box.set_bgcolor(fvg_obj.visual_box, i_bull_ifvg_color)
+                box.set_border_color(fvg_obj.visual_box, i_bull_ifvg_border)
+                box.set_border_style(fvg_obj.visual_box, line.style_dashed)
+                box.set_text(fvg_obj.visual_box, "Bullish IFVG")
+                box.set_right(fvg_obj.visual_box, bar_index)
+
+                // Push to active_ifvgs
+                array.push(active_ifvgs, fvg_obj)
+                flipped := true
+
+        if not flipped
+            // Extend standard FVG and retain in array
+            box.set_right(fvg_obj.visual_box, bar_index)
+            array.push(remaining_fvgs, fvg_obj)
+
+active_fvgs := remaining_fvgs
+
+
+// --- 4. Evaluate Retests & Invalidation for IFVGs (Filtering/Rebuilding Pattern) ---
+FVG[] remaining_ifvgs = array.new<FVG>()
+
+if array.size(active_ifvgs) > 0
+    for i = 0 to array.size(active_ifvgs) - 1
+        FVG fvg_obj = array.get(active_ifvgs, i)
+
+        bool keep = true
+        bool invalidated = false
+        bool triggered = false
+
+        // A. Check for Invalidation (Candle body close past the extreme invalidation boundary)
+        if fvg_obj.is_bullish // Bullish IFVG (acting as support)
+            if close < fvg_obj.bottom
+                invalidated := true
+        else // Bearish IFVG (acting as resistance)
+            if close > fvg_obj.top
+                invalidated := true
+
+        // B. Check for Trade Execution Setup
+        if not invalidated and strategy.position_size == 0
+            // Establish Higher Timeframe Bias Alignment
+            bool bias_aligned = fvg_obj.is_bullish ? is_bullish_bias : is_bearish_bias
+
+            if bias_aligned
+                // Determine Entry Level based on inputs
+                float entry_level = fvg_obj.is_bullish ?
+                     (i_entry_type == "Consequent Encroachment (50% Midpoint)" ? fvg_obj.midpoint : fvg_obj.top) :
+                     (i_entry_type == "Consequent Encroachment (50% Midpoint)" ? fvg_obj.midpoint : fvg_obj.bottom)
+
+                if fvg_obj.is_bullish
+                    // Bullish IFVG Retest: low is below or equal to entry level
+                    if low <= entry_level
+                        // Calculate Stop-Loss at the invalidation bottom minus buffer
+                        float sl = fvg_obj.bottom - i_sl_buffer_ticks * syminfo.mintick
+                        float tp = i_tp_mode == "Fixed RR" ?
+                             entry_level + (entry_level - sl) * i_rr :
+                             g_swing_high
+
+                        // Position size calculation
+                        float risk_amount = strategy.equity * (i_risk_percent / 100.0)
+                        float sl_distance = math.abs(entry_level - sl)
+
+                        float trade_qty = i_use_dynamic_sizing and sl_distance > 0 ?
+                             (risk_amount / (sl_distance * syminfo.pointvalue)) :
+                             i_fixed_qty
+
+                        strategy.entry("Buy IFVG", strategy.long, qty=trade_qty, limit=entry_level)
+                        strategy.exit("Exit Buy", from_entry="Buy IFVG", stop=sl, limit=tp)
+                        triggered := true
+                else
+                    // Bearish IFVG Retest: high is above or equal to entry level
+                    if high >= entry_level
+                        // Calculate Stop-Loss at the invalidation top plus buffer
+                        float sl = fvg_obj.top + i_sl_buffer_ticks * syminfo.mintick
+                        float tp = i_tp_mode == "Fixed RR" ?
+                             entry_level - (sl - entry_level) * i_rr :
+                             g_swing_low
+
+                        // Position size calculation
+                        float risk_amount = strategy.equity * (i_risk_percent / 100.0)
+                        float sl_distance = math.abs(sl - entry_level)
+
+                        float trade_qty = i_use_dynamic_sizing and sl_distance > 0 ?
+                             (risk_amount / (sl_distance * syminfo.pointvalue)) :
+                             i_fixed_qty
+
+                        strategy.entry("Sell IFVG", strategy.short, qty=trade_qty, limit=entry_level)
+                        strategy.exit("Exit Sell", from_entry="Sell IFVG", stop=sl, limit=tp)
+                        triggered := true
+
+        if invalidated or triggered
+            keep := false
+            // Finalize box coordinates and configure mitigated visual layout
+            box.set_right(fvg_obj.visual_box, bar_index)
+            if i_show_mitigated
+                box.set_bgcolor(fvg_obj.visual_box, color.new(color.gray, 92))
+                box.set_border_color(fvg_obj.visual_box, color.new(color.gray, 80))
+                box.set_border_style(fvg_obj.visual_box, line.style_dotted)
+                box.set_text(fvg_obj.visual_box, invalidated ? "Invalidated IFVG" : "Triggered IFVG")
+            else
+                box.delete(fvg_obj.visual_box)
+        else
+            // Update right coordinate to extend current IFVG on-chart
+            box.set_right(fvg_obj.visual_box, bar_index)
+            array.push(remaining_ifvgs, fvg_obj)
+
+active_ifvgs := remaining_ifvgs
+
+// Clean up oldest IFVGs to enforce the maximum limit count
+if array.size(active_ifvgs) > i_max_ifvgs
+    FVG oldest = array.shift(active_ifvgs)
+    box.delete(oldest.visual_box)
+
+
+// --- 5. Interactive Dashboard Table ---
+var table dashboard = table.new(
+     position=position.top_right,
+     columns=2,
+     rows=6,
+     bgcolor=color.new(color.black, 30),
+     border_color=color.gray,
+     border_width=1
+ )
+
+if i_show_dashboard and barstate.islast
+    table.cell(dashboard, 0, 0, "Daylo ICT IFVG", text_color=color.white, bgcolor=color.blue)
+    table.cell(dashboard, 1, 0, "Status", text_color=color.white, bgcolor=color.blue)
+
+    // Bias Output
+    string bias_str = i_bias_mode == "None (Trade Both Directions)" ? "None" : (is_bullish_bias ? "Bullish" : is_bearish_bias ? "Bearish" : "Neutral")
+    color bias_color = i_bias_mode == "None (Trade Both Directions)" ? color.gray : (is_bullish_bias ? color.green : is_bearish_bias ? color.red : color.gray)
+    table.cell(dashboard, 0, 1, "HTF Bias", text_color=color.white)
+    table.cell(dashboard, 1, 1, bias_str, text_color=color.white, bgcolor=bias_color)
+
+    // Active standard FVGs
+    table.cell(dashboard, 0, 2, "Active FVGs", text_color=color.white)
+    table.cell(dashboard, 1, 2, str.tostring(array.size(active_fvgs)), text_color=color.white)
+
+    // Active Inverted FVGs
+    table.cell(dashboard, 0, 3, "Active IFVGs", text_color=color.white)
+    table.cell(dashboard, 1, 3, str.tostring(array.size(active_ifvgs)), text_color=color.white)
+
+    // Active Strategy Position Status
+    string pos_str = strategy.position_size > 0 ? "Long" : strategy.position_size < 0 ? "Short" : "Flat"
+    color pos_color = strategy.position_size > 0 ? color.green : strategy.position_size < 0 ? color.red : color.gray
+    table.cell(dashboard, 0, 4, "Position", text_color=color.white)
+    table.cell(dashboard, 1, 4, pos_str, text_color=color.white, bgcolor=pos_color)
+
+    // Current Account Equity
+    table.cell(dashboard, 0, 5, "Account Equity", text_color=color.white)
+    table.cell(dashboard, 1, 5, str.tostring(strategy.equity, "#.##"), text_color=color.white)
