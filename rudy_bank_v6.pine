@@ -1,0 +1,144 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+//@version=6
+indicator("Rudy Bank Indicator v6", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// --- Inputs ---
+grp_sessions = "Sessions (UTC+3)"
+show_asian   = input.bool(true, "Show Asian Session", group = grp_sessions)
+asian_sess   = input.session("0200-0800:1234567", "Asian Session Time", group = grp_sessions)
+asian_col    = input.color(color.new(color.blue, 85), "Asian Color", group = grp_sessions)
+
+show_london  = input.bool(true, "Show London Session", group = grp_sessions)
+london_sess  = input.session("0800-1400:1234567", "London Session Time", group = grp_sessions)
+london_col   = input.color(color.new(color.red, 85), "London Color", group = grp_sessions)
+
+show_ny      = input.bool(true, "Show New York Session", group = grp_sessions)
+ny_sess      = input.session("1400-2000:1234567", "New York Session Time", group = grp_sessions)
+ny_col       = input.color(color.new(color.green, 85), "New York Color", group = grp_sessions)
+
+show_pm      = input.bool(true, "Show PM Session", group = grp_sessions)
+pm_sess      = input.session("2000-0200:1234567", "PM Session Time", group = grp_sessions)
+pm_col       = input.color(color.new(color.orange, 85), "PM Color", group = grp_sessions)
+
+grp_bank = "Bank Engine Logic"
+show_dashboard = input.bool(true, "Show Bank Dashboard", group = grp_bank)
+bank_text_col  = input.color(color.white, "Dashboard Text Color", group = grp_bank)
+bank_bg_col    = input.color(color.new(color.black, 50), "Dashboard BG Color", group = grp_bank)
+
+grp_structure = "Market Structure"
+pivot_lookback = input.int(3, "Pivot Lookback", minval = 1, group = grp_structure)
+structure_col  = input.color(color.fuchsia, "Structure Line Color", group = grp_structure)
+
+// --- Bank Engine Algorithm ---
+[h4_high, h4_low, h4_close] = request.security(syminfo.tickerid, "240", [high[1], low[1], close[1]], lookahead = barmerge.lookahead_on)
+h4_range = h4_high - h4_low
+
+// Daily Code (DC)
+last_digit(n) => n % 10
+dc = last_digit(month) + last_digit(dayofmonth) + last_digit(year)
+
+// Estimated Range (ER)
+er = (month / dayofmonth) * h4_range
+
+// Bounce Level
+bounce_level = h4_close - er
+
+// --- Dashboard ---
+var table bank_table = table.new(position.top_right, 2, 4, border_width = 1)
+if show_dashboard and barstate.islast
+    table.cell(bank_table, 0, 0, "Metric", bgcolor = bank_bg_col, text_color = bank_text_col)
+    table.cell(bank_table, 1, 0, "Value", bgcolor = bank_bg_col, text_color = bank_text_col)
+
+    table.cell(bank_table, 0, 1, "Daily Code", bgcolor = bank_bg_col, text_color = bank_text_col)
+    table.cell(bank_table, 1, 1, str.tostring(dc), bgcolor = bank_bg_col, text_color = bank_text_col)
+
+    table.cell(bank_table, 0, 2, "Est. Range", bgcolor = bank_bg_col, text_color = bank_text_col)
+    table.cell(bank_table, 1, 2, str.tostring(er, format.mintick), bgcolor = bank_bg_col, text_color = bank_text_col)
+
+    table.cell(bank_table, 0, 3, "Bounce Lvl", bgcolor = bank_bg_col, text_color = bank_text_col)
+    table.cell(bank_table, 1, 3, str.tostring(bounce_level, format.mintick), bgcolor = bank_bg_col, text_color = bank_text_col)
+
+// --- Session Logic ---
+is_in_session(sess) =>
+    not na(time("1", sess, "UTC+3"))
+
+asian_active  = show_asian  and is_in_session(asian_sess)
+london_active = show_london and is_in_session(london_sess)
+ny_active     = show_ny     and is_in_session(ny_sess)
+pm_active     = show_pm     and is_in_session(pm_sess)
+
+// Sessions State
+var box[] s_boxes = array.new<box>(4, na)
+var float[] s_his = array.new<float>(4, na)
+var float[] s_los = array.new<float>(4, na)
+
+update_session(idx, active, sess_name, col) =>
+    if active
+        if not active[1]
+            array.set(s_his, idx, high)
+            array.set(s_los, idx, low)
+            b = box.new(bar_index, high, bar_index, low, bgcolor = col, border_color = color.new(col, 50), border_style = line.style_dotted)
+            array.set(s_boxes, idx, b)
+            label.new(bar_index, high, sess_name, color = color.new(color.white, 100), textcolor = color.white, style = label.style_label_down, size = size.small)
+            float(na)
+        else
+            b = array.get(s_boxes, idx)
+            if not na(b)
+                hi = math.max(array.get(s_his, idx), high)
+                lo = math.min(array.get(s_los, idx), low)
+                array.set(s_his, idx, hi)
+                array.set(s_los, idx, lo)
+                box.set_top(b, hi)
+                box.set_bottom(b, lo)
+                box.set_right(b, bar_index)
+            float(na)
+    float(na)
+
+if show_asian
+    update_session(0, asian_active, "Asian", asian_col)
+if show_london
+    update_session(1, london_active, "London", london_col)
+if show_ny
+    update_session(2, ny_active, "New York", ny_col)
+if show_pm
+    update_session(3, pm_active, "PM Session", pm_col)
+
+// --- Market Structure ---
+ph = ta.pivothigh(high, pivot_lookback, pivot_lookback)
+pl = ta.pivotlow(low, pivot_lookback, pivot_lookback)
+
+var float last_ph_price = na
+var float last_pl_price = na
+var string last_ph_type = ""
+var string last_pl_type = ""
+
+if not na(ph)
+    type_ph = na(last_ph_price) ? "H" : (ph > last_ph_price ? "HH" : "LH")
+    label.new(bar_index[pivot_lookback], ph, type_ph, color = color.new(color.white, 100), textcolor = color.white, style = label.style_label_down, size = size.small)
+    label.new(bar_index[pivot_lookback], ph, "●", color = color.new(color.white, 100), textcolor = color.white, style = label.style_label_center, size = size.small)
+    line.new(bar_index[pivot_lookback], ph, bar_index, ph, color = structure_col, width = 1, extend = extend.right)
+    last_ph_price := ph
+    last_ph_type := type_ph
+
+if not na(pl)
+    type_pl = na(last_pl_price) ? "L" : (pl < last_pl_price ? "LL" : "HL")
+    label.new(bar_index[pivot_lookback], pl, type_pl, color = color.new(color.white, 100), textcolor = color.white, style = label.style_label_up, size = size.small)
+    label.new(bar_index[pivot_lookback], pl, "●", color = color.new(color.white, 100), textcolor = color.white, style = label.style_label_center, size = size.small)
+    line.new(bar_index[pivot_lookback], pl, bar_index, pl, color = structure_col, width = 1, extend = extend.right)
+    last_pl_price := pl
+    last_pl_type := type_pl
+
+// --- Decorative Text ---
+var label brand_label = na
+if barstate.islast
+    label.delete(brand_label)
+    brand_label := label.new(bar_index, high, "SERAH WA RUDY BANK +254111829303\nTELEGRAM: @JIMNJOGU\n+254141304980",
+      color = color.new(color.white, 100),
+      textcolor = color.white,
+      style = label.style_label_down,
+      size = size.large,
+      yloc = yloc.abovebar)
+
+plot(close, color = color.new(color.white, 100))
