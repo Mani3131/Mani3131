@@ -1,0 +1,183 @@
+//@version=6
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mani3131
+
+indicator("Opening Manipulation Axiom [Mani3131]", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ==========================================
+// 1. Structural Foundation (The Premise)
+// ==========================================
+// Time over Price: The market is primarily a time-based mechanism driven by algorithms.
+// The "Opening Manipulation" Axiom: The initial minutes of any higher-timeframe candle open represent a manipulation phase.
+
+// ==========================================
+// Inputs
+// ==========================================
+grp_bias = "Step 1: Directional Bias"
+bias = input.string("Bullish", "Directional Bias", options=["Bullish", "Bearish"], group=grp_bias, tooltip="Determine whether the upcoming candle is structurally intended to be a Buy (Bullish) or Sell (Bearish) candle.")
+
+grp_levels = "Step 2: Price Confluence"
+banking_levels_str = input.string("414, 4030, 4023", "Banking Levels (Comma Separated)", group=grp_levels, tooltip="Mathematical Banking Levels (specific mathematical key figures).")
+
+grp_tf = "Step 3: Time Alignment Filter"
+show_4h = input.bool(true, "Monitor 4-Hour Window (10m)", group=grp_tf)
+show_1h = input.bool(true, "Monitor 1-Hour Window (10m)", group=grp_tf)
+show_m30 = input.bool(true, "Monitor 30-Min Window (5m)", group=grp_tf)
+show_m15 = input.bool(true, "Monitor 15-Min Window (3m)", group=grp_tf)
+
+grp_visuals = "Visual Settings"
+bull_color = input.color(color.new(color.green, 85), "Bullish Manipulation Box", group=grp_visuals)
+bear_color = input.color(color.new(color.red, 85), "Bearish Manipulation Box", group=grp_visuals)
+level_color = input.color(color.new(color.gray, 50), "Banking Level Color", group=grp_visuals)
+timezone_input = input.string("UTC+3", "Timezone", group="Settings", tooltip="Align with your local or session timezone (e.g., UTC+3 for EAT).")
+
+// ==========================================
+// Logic & Types
+// ==========================================
+
+// Parse Banking Levels
+f_parse_levels(s_input) =>
+    array<float> levels = array.new<float>()
+    string[] split_str = str.split(s_input, ",")
+    if split_str.size() > 0
+        for i = 0 to split_str.size() - 1
+            string s = split_str.get(i)
+            float val = str.tonumber(str.replace_all(s, " ", ""))
+            if not na(val)
+                levels.push(val)
+    levels
+
+banking_levels = f_parse_levels(banking_levels_str)
+
+type window_state
+    float high = na
+    float low = na
+    int start_time = na
+    int end_time = na
+    bool is_set = false
+    bool is_void = false
+    bool has_traded = false
+    bool tapped_during_window = false
+    float tapped_level_val = na
+    box visual = na
+    label status_lbl = na
+
+// Core logic for processing manipulation windows
+f_process_window(string timeframe_res, int duration_mins, bool active) =>
+    var window_state state = window_state.new()
+
+    // Detect candle open using time() to handle timezones correctly
+    int current_htf_time = time(timeframe_res, "0000-2359:1234567", timezone_input)
+    bool is_new_candle = ta.change(current_htf_time) != 0
+
+    if is_new_candle and active
+        state.high := high
+        state.low := low
+        state.start_time := time
+        state.end_time := time + (duration_mins * 60 * 1000)
+        state.is_set := false
+        state.is_void := false
+        state.has_traded := false
+        state.tapped_during_window := false
+        state.tapped_level_val := na
+
+        color box_bg = bias == "Bullish" ? bull_color : bear_color
+        state.visual := box.new(bar_index, high, bar_index, low, border_color=color.new(color.gray, 50), bgcolor=box_bg)
+        state.status_lbl := label.new(bar_index, high, timeframe_res + " PRINTING", color=color.new(color.black, 100), textcolor=color.white, style=label.style_label_down, size=size.small)
+
+    if not na(state.start_time) and active
+        // Printing Phase
+        if time < state.end_time
+            state.high := math.max(state.high, high)
+            state.low := math.min(state.low, low)
+            state.visual.set_top(state.high)
+            state.visual.set_bottom(state.low)
+            state.visual.set_right(bar_index)
+            state.status_lbl.set_xy(bar_index, state.high)
+
+            // Check if it taps a level DURING the window (Validation Phase)
+            if not state.tapped_during_window
+                for level in banking_levels
+                    if high >= level and low <= level
+                        state.tapped_during_window := true
+                        state.tapped_level_val := level
+
+        // Locked Phase
+        else
+            if not state.is_set
+                state.is_set := true
+                state.status_lbl.set_text(timeframe_res + (state.tapped_during_window ? " VALIDATED" : " LOCKED"))
+                state.status_lbl.set_textcolor(state.tapped_during_window ? color.lime : color.yellow)
+
+            state.visual.set_right(bar_index)
+
+            // Execution (The Sniper Entry) - Rule 4
+            // Entry is executed only when the specific opening time window has elapsed AND price is at/taps a Banking Level
+            if state.is_set and not state.is_void and not state.has_traded
+                float trigger_level = na
+
+                // Case 1: Tapped during window, we check if we are still at or near the level or if it's the first bar after window
+                if state.tapped_during_window
+                    trigger_level := state.tapped_level_val
+                else
+                    // Case 2: Haven't tapped yet, check for a tap now
+                    for level in banking_levels
+                        if high >= level and low <= level
+                            trigger_level := level
+
+                if not na(trigger_level)
+                    state.has_traded := true
+                    label.new(bar_index, bias == "Bullish" ? low : high, "SNIPER ENTRY (" + timeframe_res + ")\nLevel: " + str.tostring(trigger_level), color=bias == "Bullish" ? color.green : color.red, textcolor=color.white, style=bias == "Bullish" ? label.style_label_up : label.style_label_down)
+
+                    // Draw SL visualization for the entry
+                    float sl = bias == "Bullish" ? state.low : state.high
+                    line.new(bar_index, sl, bar_index + 20, sl, color=color.red, width=2, style=line.style_solid)
+                    label.new(bar_index + 20, sl, "HARD SL", style=label.style_none, textcolor=color.red, size=size.small)
+
+            // Invalidation Logic (Rule 5)
+            if not state.is_void
+                bool broken = bias == "Bullish" ? low < state.low : high > state.high
+                if broken
+                    state.is_void := true
+                    state.status_lbl.set_text(timeframe_res + " VOID")
+                    state.status_lbl.set_textcolor(color.red)
+                    state.visual.set_bgcolor(color.new(color.red, 90))
+    state
+
+// ==========================================
+// Execution
+// ==========================================
+w4h  = f_process_window("240", 10, show_4h)
+w1h  = f_process_window("60",  10, show_1h)
+w30m = f_process_window("30",  5,  show_m30)
+w15m = f_process_window("15",  3,  show_m15)
+
+// Plot Banking Levels (Global)
+if barstate.islast
+    for level in banking_levels
+        line.new(bar_index - 500, level, bar_index + 20, level, color=level_color, style=line.style_dashed, width=1)
+        label.new(bar_index + 20, level, "Bank Level: " + str.tostring(level), style=label.style_none, textcolor=color.gray, size=size.small)
+
+// ==========================================
+// Dashboard
+// ==========================================
+var table dashboard = table.new(position.top_right, 2, 5, bgcolor=color.new(color.black, 70), border_width=1, border_color=color.gray)
+
+f_fill_row(table tbl, int row, string tf, window_state ws) =>
+    table.cell(tbl, 0, row, tf, text_color=color.white)
+    string status = na(ws.start_time) ? "Waiting" : (ws.is_void ? "VOID" : (ws.is_set ? (ws.has_traded ? "EXECUTED" : "LOCKED") : "PRINTING"))
+    color c = status == "VOID" ? color.red : (status == "EXECUTED" ? color.aqua : (status == "LOCKED" ? color.green : color.yellow))
+    table.cell(tbl, 1, row, status, text_color=c)
+
+if barstate.islast
+    table.cell(dashboard, 0, 0, "Timeframe", text_color=color.white)
+    table.cell(dashboard, 1, 0, "Status", text_color=color.white)
+
+    f_fill_row(dashboard, 1, "4-Hour", w4h)
+    f_fill_row(dashboard, 2, "1-Hour", w1h)
+    f_fill_row(dashboard, 3, "30-Min", w30m)
+    f_fill_row(dashboard, 4, "15-Min", w15m)
+
+// Branding
+var table brand_tbl = table.new(position.bottom_right, 1, 1)
+table.cell(brand_tbl, 0, 0, "Opening Manipulation Axiom\nMani3131", text_color=color.new(color.gray, 50), text_size=size.small)
