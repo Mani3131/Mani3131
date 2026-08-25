@@ -1,0 +1,157 @@
+//@version=6
+indicator("Daily Bias Strategy + Global Sessions (UTC+3)", overlay=true, max_boxes_count=500)
+
+// ==========================================
+// 1. TIMEZONE & SESSION SETTINGS (UTC+3 Kenya)
+// ==========================================
+// Using "GMT+3" to guarantee robust cross-broker compatibility in TradingView.
+// Invalid "UTC+3" timezone string caused sessions to fall back to exchange time and misalignment.
+string kenya_tz = "GMT+3"
+
+// Global session time strings mapped directly to local East Africa Time (EAT)
+string asia_time = input.session("0300-1200", title="Asian Session (EAT)")
+string lon_time  = input.session("1000-1900", title="London Session (EAT)")
+string ny_time   = input.session("1600-0100", title="New York Session (EAT)")
+
+// Track if current bar falls within the respective global ranges
+bool in_asia = not na(time(timeframe.period, asia_time, kenya_tz))
+bool in_lon  = not na(time(timeframe.period, lon_time,  kenya_tz))
+bool in_ny   = not na(time(timeframe.period, ny_time,   kenya_tz))
+
+// Execution filtering session window (When you prefer active signals to generate)
+string exec_window = input.session("1000-2000", title="Strategy Execution Window (EAT)")
+bool in_exec_session = not na(time(timeframe.period, exec_window, kenya_tz))
+
+// Session shade style configuration
+string shade_style = input.string("Bounded Box", title="Session Shade Style", options=["Bounded Box", "Full Height"])
+
+// ==========================================
+// 2. HIGHER TIME FRAME REFERENCE (PDH / PDL)
+// ==========================================
+// Using high[1] and low[1] with lookahead_off ensures non-repainting historical HTF values
+float pdh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_off)
+float pdl = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_off)
+float daily_mid = (pdh + pdl) / 2
+
+plot(pdh, title="Previous Day High (PDH)", color=color.green, linewidth=1, style=plot.style_stepline)
+plot(pdl, title="Previous Day Low (PDL)", color=color.red, linewidth=1, style=plot.style_stepline)
+// Corrected compile error: style must be plot.style_line (or default), as plot() does not support linestyle
+plot(daily_mid, title="Daily Equilibrium (50%)", color=color.new(color.gray, 30), linewidth=1, style=plot.style_line)
+
+// ==========================================
+// 3. INTRADAY STRUCTURE TRIGGER LOGIC
+// ==========================================
+int fast_len = input.int(9, title="Fast Structure EMA")
+int slow_len = input.int(21, title="Slow Structure EMA")
+
+float fast_ema = ta.ema(close, fast_len)
+float slow_ema = ta.ema(close, slow_len)
+
+// Core Signal Formulas
+bool swept_pdl   = ta.lowest(low, 5) < pdl or close < daily_mid
+bool structure_bullish = ta.crossover(fast_ema, slow_ema)
+bool buy_signal  = in_exec_session and swept_pdl and structure_bullish
+
+bool swept_pdh   = ta.highest(high, 5) > pdh or close > daily_mid
+bool structure_bearish = ta.crossunder(fast_ema, slow_ema)
+bool sell_signal = in_exec_session and swept_pdh and structure_bearish
+
+// Filtering consecutive repeating signals using a robust state machine
+// 0 = no signal yet, 1 = last was buy, -1 = last was sell
+var int signal_state = 0
+bool valid_buy = false
+bool valid_sell = false
+
+if buy_signal and signal_state != 1
+    valid_buy := true
+    signal_state := 1
+
+if sell_signal and signal_state != -1
+    valid_sell := true
+    signal_state := -1
+
+// ==========================================
+// 4. VISUAL SIGNALS & GEOMETRIC BOXES
+// ==========================================
+// Signal arrows
+plotshape(valid_buy, title="Buy Arrow", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.normal, text="BUY")
+plotshape(valid_sell, title="Sell Arrow", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.normal, text="SELL")
+
+// High-Precision Session Box drawings (used when Bounded Box style is selected)
+var box asia_box = na
+var box lon_box  = na
+var box ny_box   = na
+
+// Keep track of high/low within each session dynamically
+var float asia_high = na
+var float asia_low  = na
+var float lon_high  = na
+var float lon_low   = na
+var float ny_high   = na
+var float ny_low    = na
+
+// State transitions for sessions
+bool asia_start = in_asia and not in_asia[1]
+bool lon_start  = in_lon  and not in_lon[1]
+bool ny_start   = in_ny   and not in_ny[1]
+
+bool is_bounded = (shade_style == "Bounded Box")
+
+// Asia Session Box Management
+if is_bounded
+    if asia_start
+        asia_high := high
+        asia_low  := low
+        asia_box := box.new(left=bar_index, top=asia_high, right=bar_index, bottom=asia_low,
+                            bgcolor=color.new(color.teal, 94), border_color=color.teal, border_style=line.style_dashed,
+                            extend=extend.none, text="Asia", text_color=color.teal, text_size=size.small,
+                            text_valign="top", text_halign="center")
+    else if in_asia and not na(asia_box)
+        asia_high := math.max(asia_high, high)
+        asia_low  := math.min(asia_low, low)
+        box.set_right(asia_box, bar_index)
+        box.set_top(asia_box, asia_high)
+        box.set_bottom(asia_box, asia_low)
+
+// London Session Box Management
+if is_bounded
+    if lon_start
+        lon_high := high
+        lon_low  := low
+        lon_box := box.new(left=bar_index, top=lon_high, right=bar_index, bottom=lon_low,
+                           bgcolor=color.new(color.blue, 94), border_color=color.blue, border_style=line.style_dashed,
+                           extend=extend.none, text="London", text_color=color.blue, text_size=size.small,
+                           text_valign="top", text_halign="center")
+    else if in_lon and not na(lon_box)
+        lon_high := math.max(lon_high, high)
+        lon_low  := math.min(lon_low, low)
+        box.set_right(lon_box, bar_index)
+        box.set_top(lon_box, lon_high)
+        box.set_bottom(lon_box, lon_low)
+
+// New York Session Box Management
+if is_bounded
+    if ny_start
+        ny_high := high
+        ny_low  := low
+        ny_box := box.new(left=bar_index, top=ny_high, right=bar_index, bottom=ny_low,
+                      bgcolor=color.new(color.orange, 94), border_color=color.orange, border_style=line.style_dashed,
+                      extend=extend.none, text="New York", text_color=color.orange, text_size=size.small,
+                      text_valign="top", text_halign="center")
+    else if in_ny and not na(ny_box)
+        ny_high := math.max(ny_high, high)
+        ny_low  := math.min(ny_low, low)
+        box.set_right(ny_box, bar_index)
+        box.set_top(ny_box, ny_high)
+        box.set_bottom(ny_box, ny_low)
+
+// Full Height shading fallback option
+bgcolor(not is_bounded and in_asia ? color.new(color.teal, 94)   : na, title="Asia Session Shade")
+bgcolor(not is_bounded and in_lon  ? color.new(color.blue, 94)   : na, title="London Session Shade")
+bgcolor(not is_bounded and in_ny   ? color.new(color.orange, 94) : na, title="New York Session Shade")
+
+// ==========================================
+// 5. AUTOMATED ALERTS
+// ==========================================
+alertcondition(valid_buy, title="Buy Alert", message="Strategy Setup: Buy Signal Triggered!")
+alertcondition(valid_sell, title="Sell Alert", message="Strategy Setup: Sell Signal Triggered!")
